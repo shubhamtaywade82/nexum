@@ -28,6 +28,8 @@ import {
   mkdirSync,
   readFileSync,
   writeFileSync,
+  renameSync,
+  unlinkSync,
   readdirSync,
   statSync,
 } from "node:fs";
@@ -192,7 +194,6 @@ export class AttachmentStore {
     const contentPath = join(this.attachmentsDir, shard, id.slice(7));
     if (!existsSync(contentPath)) return false;
     try {
-      const { unlinkSync } = require("node:fs");
       unlinkSync(contentPath);
       // Remove from index.
       const index = this.readIndex().filter((r) => r.id !== id);
@@ -224,7 +225,6 @@ export class AttachmentStore {
   private writeIndex(records: AttachmentRecord[]): void {
     const tmp = `${this.indexFile}.tmp`;
     writeFileSync(tmp, JSON.stringify(records, null, 2));
-    const { renameSync } = require("node:fs");
     renameSync(tmp, this.indexFile);
   }
 

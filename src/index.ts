@@ -127,3 +127,243 @@ export {
 
 // ── Product agents (review item 40) ─────────────────────────────────────────
 export { DevAgent, DEVAGENT_DESCRIPTOR, CryptoAgent, cryptoAgentDescriptor } from "./agents/index.js";
+
+// ── Agent-harness primitives (plugin system, services, capabilities) ────────
+// These are the new agent-runtime primitives that bring Nexum to parity with
+// DeepSeek Harness without rewriting the kernel. See:
+//   - src/platform/plugins/      Plugin/Composition system (P0-1)
+//   - src/core/capabilities/     Capability-based DI (P0-2)
+//   - src/core/services/         Unified Service Registry (P0-3)
+//   - src/skills/                Formal Skill system (P0-4)
+//   - src/subagents/             Formal Subagent service (P0-5)
+//   - src/jobs/                  Job service (P0-6)
+//   - src/compaction/            Compaction service (P0-7)
+//   - src/session-query/         Session query/trace service (P0-8)
+//   - src/context-providers/     Context provider framework (P1-9)
+//   - src/credentials/           Credential service (P1-10)
+//   - src/attachments/           Attachment store (P1-11)
+//   - src/workflow/              Workflow service (P1-12)
+//   - src/webhooks/              Webhook/event ingress (P1-13)
+//   - src/web-service/           Web service (P1-14)
+//   - src/rpc/                   RPC/JSON-RPC agent server (P1-15)
+
+// Plugin system
+export {
+  DefaultPluginHost,
+  PluginRegistry,
+  validateManifest,
+  resolvePluginOrder,
+  definePlugin,
+  pluginFromRegistration,
+  minimalProfile,
+  standardProfile,
+  fullProfile,
+  type NexumPlugin,
+  type PluginManifest,
+  type PluginContext,
+  type PluginHost,
+  type PluginHostOptions,
+  type PluginProfile,
+  type PluginId,
+  type PluginRecord,
+  type PluginState,
+  type ResolveResult,
+} from "./platform/plugins/index.js";
+
+// Capability DI
+export {
+  defineCapabilityToken,
+  CapabilityRegistry,
+  PLUGIN_HOST,
+  type CapabilityToken,
+} from "./core/capabilities/index.js";
+
+// Service registry
+export {
+  ServiceRegistry,
+  type ServiceToken,
+  type ServiceRecord,
+  type ServiceState,
+  type ServiceLifecycle,
+} from "./core/services/index.js";
+
+// Formal Skill system
+export {
+  SkillSystem,
+  FilesystemSkillProvider,
+  InMemorySkillProvider,
+  SkillLoader,
+  SkillCatalog,
+  SkillSelector,
+  SkillInjector,
+  type SkillProvider,
+  type SkillSelectionInput,
+  type SkillSelection,
+  type SkillInjection,
+} from "./skills/index.js";
+
+// Subagent service
+export {
+  SubagentService,
+  InProcessSubagentProvider,
+  ProcessSubagentProvider,
+  ACPSubagentProvider,
+  SDKSubagentProvider,
+  ExternalAgentSubagentProvider,
+  defaultSubagentProviders,
+  type SubagentProvider,
+  type SubagentSpawnRequest,
+  type SubagentHandle,
+  type SubagentResult,
+  type SubagentState,
+  type SubagentProviderType,
+  type SubagentServiceOptions,
+} from "./subagents/index.js";
+
+// Job service
+export {
+  JobService,
+  type JobSpec,
+  type JobId,
+  type JobRecord,
+  type JobState,
+  type JobPriority,
+  type JobListFilter,
+  type JobServiceOptions,
+} from "./jobs/index.js";
+
+// Compaction service
+export {
+  CompactionService,
+  CompactionPolicy,
+  TokenEstimator,
+  RuleBasedSummaryProvider,
+  HistoryReducer,
+  ContextRebuilder,
+  type ConversationMessage,
+  type CompactionInput,
+  type CompactionDecision,
+  type CompactionResult,
+  type SummaryProvider,
+  type CompactionPolicyOptions,
+  type CompactionServiceOptions,
+} from "./compaction/index.js";
+
+// Session query service
+export {
+  SessionQueryService,
+  type EventReadFilter,
+  type EventReadResult,
+  type EventSearchResult,
+  type ToolCallTrace,
+  type SessionTrace,
+  type SessionSearchResult,
+  type SessionQueryServiceOptions,
+} from "./session-query/index.js";
+
+// Context providers
+export {
+  ContextService,
+  WorkspaceContextProvider,
+  FileReferenceProvider,
+  SessionReferenceProvider,
+  TimeContextProvider,
+  RuntimeContextProvider,
+  GitContextProvider,
+  DomainContextProvider,
+  defaultContextProviders,
+  type ContextProvider,
+  type ContextFragment,
+  type ContextFragmentKind,
+  type ContextContributionInput,
+  type ContextAssemblyResult,
+  type ContextServiceOptions,
+} from "./context-providers/index.js";
+
+// Credential service
+export {
+  CredentialService,
+  EnvCredentialProvider,
+  FileCredentialProvider,
+  KeychainCredentialProvider,
+  VaultCredentialProvider,
+  ScopedCredentialService,
+  redact,
+  defaultCredentialProviders,
+  type CredentialSpec,
+  type CredentialRecord,
+  type CredentialScope,
+  type CredentialProvider,
+  type CredentialServiceOptions,
+} from "./credentials/index.js";
+
+// Attachment store
+export {
+  AttachmentStore,
+  hashContent,
+  storeFile,
+  guessMediaType,
+  type AttachmentId,
+  type AttachmentMediaType,
+  type AttachmentRecord,
+  type AttachmentStoreOptions,
+} from "./attachments/index.js";
+
+// Workflow service
+export {
+  WorkflowService,
+  type WorkflowDefinition,
+  type WorkflowInstance,
+  type WorkflowStep,
+  type WorkflowStepContext,
+  type WorkflowStepResult,
+  type WorkflowEvent,
+  type WorkflowCheckpoint,
+  type WorkflowTrigger,
+  type WorkflowInstanceState,
+  type WorkflowServiceOptions,
+} from "./workflow/index.js";
+
+// Webhook service
+export {
+  WebhookService,
+  type WebhookEndpoint,
+  type WebhookEvent,
+  type WebhookRule,
+  type WebhookServiceOptions,
+} from "./webhooks/index.js";
+
+// Web service
+export {
+  WebService,
+  NodeFetchProvider,
+  SimpleWebContentExtractor,
+  StubSearchProvider,
+  FileSearchProvider,
+  defaultWebService,
+  type WebSearchResult,
+  type WebFetchResult,
+  type WebContentExtraction,
+  type SearchProvider,
+  type FetchProvider,
+  type HttpProvider,
+  type BrowserProvider,
+  type WebContentExtractor,
+} from "./web-service/index.js";
+
+// RPC server
+export {
+  RpcServer,
+  registerCoreMethods,
+  PARSE_ERROR,
+  INVALID_REQUEST,
+  METHOD_NOT_FOUND,
+  INVALID_PARAMS,
+  INTERNAL_ERROR,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+  type JsonRpcError,
+  type RpcMethodHandler,
+  type RpcContext,
+  type RpcServerOptions,
+} from "./rpc/index.js";
