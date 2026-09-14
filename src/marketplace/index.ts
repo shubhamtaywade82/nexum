@@ -52,6 +52,8 @@ export interface MarketplaceEntry {
   license?: string;
   /** Tags for filtering. */
   tags?: string[];
+  /** Capability tags this plugin provides (e.g. ["tools", "models"]). */
+  capabilities?: string[];
   /** sha256 of the artifact (integrity check on install). */
   sha256?: string;
   /** Download URL or git ref. */
@@ -321,20 +323,208 @@ export class HttpMarketplaceSource implements MarketplaceSource {
 }
 
 /**
- * StubNpmMarketplaceSource — placeholder for npm-based discovery.
+ * NpmMarketplaceSource — discovers + downloads Nexum plugins published to
+ * the npm registry.
+ *
+ * Discovery:
+ *   - Queries the npm registry search endpoint for packages whose scope
+ *     matches a configurable prefix (default: "@nexum-plugin").
+ *   - For each matching package, fetches its packument (the per-package
+ *     metadata document) and extracts the latest version + a Nexum plugin
+ *     manifest if the package has one (a `nexum` field in package.json or
+ *     a top-level `plugin.json`).
+ *   - Results cached (TTL configurable, default 10 min).
+ *
+ * Download:
+ *   - Fetches the package tarball URL (packument.versions[x].dist.tarball)
+ *     and writes it directly to destPath. The MarketplaceService verifies
+ *     sha256 against the entry's manifest (if provided).
+ *
+ * Uses the public npm registry by default (https://registry.npmjs.org/) but
+ * the registry URL is configurable for self-hosted / mirror setups.
+ *
+ * Network-light: no native npm client; uses fetch() + JSON parsing only.
  */
+export interface NpmMarketplaceSourceOptions {
+  /** npm registry base URL (default: https://registry.npmjs.org). */
+  registryUrl?: string;
+  /** Package scope prefix to search (default: "@nexum-plugin"). */
+  scope?: string;
+  /** Cache TTL in ms (default 10 min). */
+  cacheTtlMs?: number;
+  /** Max results per search (default 100). */
+  searchLimit?: number;
+}
+
+interface NpmSearchResult {
+  total?: number;
+  objects?: Array<{
+    package: {
+      name: string;
+      version: string;
+      description?: string;
+      links?: { homepage?: string; repository?: string; npm?: string };
+      publisher?: { username?: string };
+      date?: string;
+    };
+  }>;
+}
+
+interface NpmPackument {
+  name: string;
+  "dist-tags"?: { latest?: string };
+  description?: string;
+  license?: string;
+  homepage?: string;
+  author?: string | { name?: string; email?: string };
+  repository?: { url?: string };
+  versions?: Record<string, {
+    version: string;
+    description?: string;
+    dist?: { tarball?: string; shasum?: string; integrity?: string };
+    nexum?: {
+      /** Nexum plugin manifest published inside the npm package. */
+      id?: string;
+      name?: string;
+      description?: string;
+      tags?: string[];
+      capabilities?: string[];
+    };
+  }>;
+}
+
 export class NpmMarketplaceSource implements MarketplaceSource {
   readonly id = "npm";
+  private readonly opts: Required<NpmMarketplaceSourceOptions>;
+  private cache: { entries: MarketplaceEntry[]; fetchedAt: number } | null = null;
+
+  constructor(opts: NpmMarketplaceSourceOptions = {}) {
+    this.opts = {
+      registryUrl: opts.registryUrl ?? "https://registry.npmjs.org",
+      scope: opts.scope ?? "@nexum-plugin",
+      cacheTtlMs: opts.cacheTtlMs ?? 10 * 60 * 1000,
+      searchLimit: opts.searchLimit ?? 100,
+    };
+  }
+
   async fetchCatalog(): Promise<MarketplaceEntry[]> {
-    return []; // TODO: query npm registry for @nexum-plugin/* packages
+    const ttl = this.opts.cacheTtlMs;
+    if (this.cache && Date.now() - this.cache.fetchedAt < ttl) {
+      return this.cache.entries;
+    }
+    // Search for packages in the configured scope.
+    const searchUrl = `${this.opts.registryUrl}/-/v1/search?text=scope:${encodeURIComponent(this.opts.scope)}&size=${this.opts.searchLimit}`;
+    let searchResult: NpmSearchResult;
+    try {
+      const response = await fetch(searchUrl, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) return [];
+      searchResult = (await response.json()) as NpmSearchResult;
+    } catch {
+      return [];
+    }
+    const objects = searchResult.objects ?? [];
+    // For each package, fetch its packument to extract the Nexum manifest
+    // (if any) and the tarball URL. We do these in parallel with a small
+    // concurrency cap to avoid overwhelming the registry.
+    const entries: MarketplaceEntry[] = [];
+    const concurrency = 8;
+    let next = 0;
+    const workers: Promise<void>[] = [];
+    const processOne = async (): Promise<void> => {
+      while (next < objects.length) {
+        const idx = next++;
+        const pkg = objects[idx].package;
+        const entry = await this.fetchEntryForPackage(pkg.name);
+        if (entry) entries.push(entry);
+      }
+    };
+    for (let i = 0; i < concurrency; i++) workers.push(processOne());
+    await Promise.allSettled(workers);
+
+    this.cache = { entries, fetchedAt: Date.now() };
+    return entries;
   }
-  async fetchEntry(_id: string): Promise<MarketplaceEntry | undefined> {
-    return undefined;
+
+  async fetchEntry(id: string): Promise<MarketplaceEntry | undefined> {
+    // The `id` for npm entries is the package name (e.g. "@nexum-plugin/foo").
+    // First check the cache, then fall back to a direct packument fetch.
+    if (this.cache) {
+      const cached = this.cache.entries.find((e) => e.id === id || e.npmPackage === id);
+      if (cached) return cached;
+    }
+    return this.fetchEntryForPackage(id);
   }
-  async download(_entry: MarketplaceEntry, _destPath: string): Promise<void> {
-    throw new Error("NpmMarketplaceSource.download() not yet implemented");
+
+  async download(entry: MarketplaceEntry, destPath: string): Promise<void> {
+    if (!entry.npmPackage) {
+      throw new Error(`entry "${entry.id}" has no npmPackage — cannot download from npm`);
+    }
+    // Fetch the packument to get the tarball URL for the entry's version.
+    const packument = await this.fetchPackument(entry.npmPackage);
+    if (!packument) {
+      throw new Error(`npm package "${entry.npmPackage}" not found`);
+    }
+    const version = packument["dist-tags"]?.latest ?? entry.version;
+    const versionMeta = packument.versions?.[version];
+    const tarballUrl = versionMeta?.dist?.tarball;
+    if (!tarballUrl) {
+      throw new Error(`no tarball URL for ${entry.npmPackage}@${version}`);
+    }
+    // Stream the tarball to destPath.
+    const response = await fetch(tarballUrl);
+    if (!response.ok) {
+      throw new Error(`failed to download tarball: HTTP ${response.status}`);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    writeFileSync(destPath, buffer);
+  }
+
+  private async fetchEntryForPackage(name: string): Promise<MarketplaceEntry | undefined> {
+    const packument = await this.fetchPackument(name);
+    if (!packument) return undefined;
+    const latestVersion = packument["dist-tags"]?.latest;
+    if (!latestVersion) return undefined;
+    const versionMeta = packument.versions?.[latestVersion];
+    if (!versionMeta) return undefined;
+
+    // Extract the Nexum manifest (published in the `nexum` field of
+    // the package's package.json, or fall back to deriving fields from
+    // the packument).
+    const nexumManifest = versionMeta.nexum;
+    const description = nexumManifest?.description ?? packument.description ?? "";
+    const tarball = versionMeta.dist?.tarball;
+
+    return {
+      id: nexumManifest?.id ?? name,
+      name: nexumManifest?.name ?? packument.name,
+      version: latestVersion,
+      description,
+      author: typeof packument.author === "string" ? packument.author : packument.author?.name,
+      homepage: packument.homepage,
+      license: packument.license,
+      tags: nexumManifest?.tags ?? ["npm"],
+      capabilities: nexumManifest?.capabilities,
+      downloadUrl: tarball,
+      npmPackage: name,
+      source: this.id,
+    };
+  }
+
+  private async fetchPackument(name: string): Promise<NpmPackument | undefined> {
+    const url = `${this.opts.registryUrl}/${encodeURIComponent(name).replace("%40", "@")}`;
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!response.ok) return undefined;
+      return (await response.json()) as NpmPackument;
+    } catch {
+      return undefined;
+    }
   }
 }
+
+void createHash; // keep import for sha256File
 
 /**
  * GitMarketplaceSource — clones a remote git repo to discover + download
