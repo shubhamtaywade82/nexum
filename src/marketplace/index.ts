@@ -25,9 +25,11 @@
  * npm install) are stubbed and ready for future implementation.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 
 // ── Contracts ───────────────────────────────────────────────────────────────
 
@@ -335,24 +337,183 @@ export class NpmMarketplaceSource implements MarketplaceSource {
 }
 
 /**
- * StubGitMarketplaceSource — placeholder for git-based discovery.
+ * GitMarketplaceSource — clones a remote git repo to discover + download
+ * plugins. Each entry's `gitUrl` is a git remote (HTTPS or SSH); each entry
+ * may reference a subdirectory within the repo via `downloadUrl` (interpreted
+ * as `path/to/subdir` within the clone).
+ *
+ * Catalog discovery:
+ *   - The source's `repoUrl` is cloned (shallow, depth=1) to a temp dir.
+ *   - The repo's root is scanned for `marketplace.json` (a JSON array of
+ *     MarketplaceEntry) or for individual `<id>/plugin.json` manifests.
+ *   - Results are cached (TTL configurable, default 5 min).
+ *
+ * Download:
+ *   - For an entry, the repo is cloned again (or reuses the cached clone)
+ *     and the entry's `downloadUrl` (subdirectory path) is tarred into the
+ *     destPath. The caller (MarketplaceService) verifies sha256.
+ *
+ * Requires `git` on PATH. Uses child_process.spawn — no native bindings.
  */
+export interface GitMarketplaceSourceOptions {
+  /** Cache TTL in ms (default 5 min). */
+  cacheTtlMs?: number;
+  /** Extra args passed to git clone (e.g. ["--branch", "main"]). */
+  cloneArgs?: string[];
+  /** Whether to use shallow clones (default true, --depth=1). */
+  shallow?: boolean;
+}
+
 export class GitMarketplaceSource implements MarketplaceSource {
   readonly id: string;
-  constructor(id: string, private readonly repoUrl: string) {
+  private readonly repoUrl: string;
+  private readonly opts: GitMarketplaceSourceOptions;
+  private cache: { entries: MarketplaceEntry[]; clonedAt: number } | null = null;
+
+  constructor(id: string, repoUrl: string, opts: GitMarketplaceSourceOptions = {}) {
     this.id = id;
-    void repoUrl;
+    this.repoUrl = repoUrl;
+    this.opts = opts;
   }
+
   async fetchCatalog(): Promise<MarketplaceEntry[]> {
-    return []; // TODO: clone repo, read manifest
+    const ttl = this.opts.cacheTtlMs ?? 5 * 60 * 1000;
+    if (this.cache && Date.now() - this.cache.clonedAt < ttl) {
+      return this.cache.entries;
+    }
+    // Clone the repo to a temp dir and scan for plugin manifests.
+    const cloneDir = mkdtempSync(join(tmpdir(), "nexum-mkt-git-"));
+    try {
+      const rc = await gitClone(this.repoUrl, cloneDir, {
+        shallow: this.opts.shallow ?? true,
+        extraArgs: this.opts.cloneArgs,
+      });
+      if (rc !== 0) return [];
+      // Look for marketplace.json (single catalog file).
+      const catalogPath = join(cloneDir, "marketplace.json");
+      let entries: MarketplaceEntry[] = [];
+      if (existsSync(catalogPath)) {
+        try {
+          const data = JSON.parse(readFileSync(catalogPath, "utf8"));
+          if (Array.isArray(data)) {
+            // Tag every entry with the source id so callers know where it came from.
+            entries = (data as MarketplaceEntry[]).map((e) => ({ ...e, source: this.id }));
+          }
+        } catch {
+          // corrupt — fall through to per-directory scan
+        }
+      }
+      // Fall back to scanning each top-level directory for plugin.json.
+      if (entries.length === 0) {
+        const subdirs = listSubdirectories(cloneDir);
+        for (const dir of subdirs) {
+          const manifestPath = join(dir, "plugin.json");
+          if (!existsSync(manifestPath)) continue;
+          try {
+            const data = JSON.parse(readFileSync(manifestPath, "utf8"));
+            if (isValidEntry(data)) {
+              entries.push({
+                ...data,
+                gitUrl: this.repoUrl,
+                source: this.id,
+              } as MarketplaceEntry);
+            }
+          } catch {
+            // skip corrupt
+          }
+        }
+      }
+      this.cache = { entries, clonedAt: Date.now() };
+      return entries;
+    } finally {
+      // Best-effort cleanup of the temp clone.
+      try {
+        rmSync(cloneDir, { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
+    }
   }
-  async fetchEntry(_id: string): Promise<MarketplaceEntry | undefined> {
-    return undefined;
+
+  async fetchEntry(id: string): Promise<MarketplaceEntry | undefined> {
+    const catalog = await this.fetchCatalog();
+    return catalog.find((e) => e.id === id);
   }
-  async download(_entry: MarketplaceEntry, _destPath: string): Promise<void> {
-    throw new Error("GitMarketplaceSource.download() not yet implemented (git clone)");
+
+  async download(entry: MarketplaceEntry, destPath: string): Promise<void> {
+    // Clone the entry's gitUrl (or the source's repoUrl if entry has none)
+    // to a temp dir, then copy the entry's subdirectory (downloadUrl) into
+    // a tarball at destPath.
+    const gitUrl = entry.gitUrl ?? this.repoUrl;
+    const subDir = entry.downloadUrl ?? ""; // subdirectory within the clone
+    const cloneDir = mkdtempSync(join(tmpdir(), "nexum-mkt-dl-"));
+    try {
+      const rc = await gitClone(gitUrl, cloneDir, {
+        shallow: this.opts.shallow ?? true,
+        extraArgs: this.opts.cloneArgs,
+      });
+      if (rc !== 0) {
+        throw new Error(`git clone failed (exit code ${rc}) for ${gitUrl}`);
+      }
+      // Locate the subdir within the clone.
+      const srcDir = subDir ? join(cloneDir, subDir) : cloneDir;
+      if (!existsSync(srcDir)) {
+        throw new Error(`subdirectory "${subDir}" not found in cloned repo`);
+      }
+      // Tar the directory to destPath.
+      const tarRc = await runCommand("tar", ["-czf", destPath, "-C", srcDir, "."]);
+      if (tarRc !== 0) {
+        throw new Error(`tar failed (exit code ${tarRc})`);
+      }
+    } finally {
+      try {
+        rmSync(cloneDir, { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
+    }
   }
 }
+
+/** Run `git clone <url> <dest>` with optional shallow flag. Returns exit code. */
+function gitClone(url: string, dest: string, opts: { shallow?: boolean; extraArgs?: string[] }): Promise<number> {
+  const args = ["clone", ...(opts.shallow ? ["--depth", "1"] : []), ...(opts.extraArgs ?? []), url, dest];
+  return runCommand("git", args);
+}
+
+/** Spawn a command, capture stdout/stderr, return exit code. */
+function runCommand(cmd: string, args: string[]): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    child.on("error", (err) => {
+      reject(new Error(`failed to spawn "${cmd}": ${err.message}`));
+    });
+    child.on("exit", (code) => {
+      resolve(code ?? 0);
+    });
+  });
+}
+
+/** List immediate subdirectories of a path (skips .git). */
+function listSubdirectories(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name !== ".git")
+      .map((e) => join(dir, e.name));
+  } catch {
+    return [];
+  }
+}
+
+/** Quick structural validation of a marketplace entry. */
+function isValidEntry(value: unknown): value is MarketplaceEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.id === "string" && typeof v.name === "string" && typeof v.version === "string";
+}
+
+// Re-export `tmpdir` consumer so imports stay used.
+void statSync;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

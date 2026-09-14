@@ -301,6 +301,8 @@ export class InProcessSubagentProvider implements SubagentProvider {
 
 // ── Process provider (spawns a child Nexum process) ─────────────────────────
 
+import { spawn, type ChildProcess } from "node:child_process";
+
 export interface ProcessProviderOptions {
   /** Path to the Nexum CLI binary (default: process.argv[1]). */
   binaryPath?: string;
@@ -308,24 +310,33 @@ export interface ProcessProviderOptions {
   cwd?: string;
   /** Extra args passed to the child (e.g. ["--profile", "minimal"]). */
   extraArgs?: string[];
+  /** Spawned subprocess env (defaults to process.env). */
+  env?: Record<string, string>;
+  /** Timeout for child startup (ms, default 5000). */
+  startupTimeoutMs?: number;
 }
 
 /**
- * ProcessSubagentProvider — spawns a child `nexum` process for each
- * subagent, communicating via newline-delimited JSON-RPC over stdio.
+ * ProcessSubagentProvider — spawns a child `nexum rpc` process for each
+ * subagent, communicating via newline-delimited JSON-RPC 2.0 over stdio.
  *
- * This is the real multi-process implementation. Each subagent is a
- * separate Node.js process running `nexum rpc`, which exposes the
- * JSON-RPC agent server (src/rpc/). The parent sends `agent.execute`
- * requests; the child responds with results.
+ * Wire protocol (matches src/rpc/RpcServer):
+ *   parent → child:  `{"jsonrpc":"2.0","id":<id>,"method":"agent.execute","params":{...}}\n`
+ *   child  → parent: `{"jsonrpc":"2.0","id":<id>,"result":{...}}\n`
  *
  * Continuable children keep the process alive between messages; one-shot
  * children terminate after the first response.
+ *
+ * Failure modes handled:
+ *   - Child process exits before responding → promise rejects with exit code
+ *   - Parent calls interrupt() → SIGTERM the child + reject the promise
+ *   - Child stderr output → captured as `metadata.stderr` in SubagentResult
+ *   - Child startup timeout → reject with "child did not start"
  */
 export class ProcessSubagentProvider implements SubagentProvider {
   readonly type = "process" as const;
   private readonly handles = new Map<string, SubagentHandle>();
-  private readonly processes = new Map<string, { kill: () => void }>();
+  private readonly children = new Map<string, ChildProcess>();
   private readonly opts: ProcessProviderOptions;
 
   constructor(opts: ProcessProviderOptions = {}) {
@@ -334,34 +345,167 @@ export class ProcessSubagentProvider implements SubagentProvider {
 
   async spawn(
     request: SubagentSpawnRequest,
-    parent?: ExecutionContext,
+    _parent?: ExecutionContext,
   ): Promise<SubagentHandle> {
     const subagentId = newDelegationId();
     const providerRunId = newRunId();
     const continuable = request.continuable ?? false;
+    const binaryPath = this.opts.binaryPath ?? process.argv[1];
+    if (!binaryPath) {
+      throw new Error("ProcessSubagentProvider: no binaryPath and no process.argv[1]");
+    }
 
-    // Spawn is implemented as a deferred promise: we don't actually fork a
-    // process here (that requires the rpc server + child_process plumbing,
-    // which is substantial). Instead we provide a working handle whose
-    // send/interrupt/resume/fork operate on the in-memory protocol shape,
-    // and we mark the spawned process as killable via stopAll().
-    //
-    // To make this practically useful, we simulate execution by resolving
-    // the result with a structured "not-yet-implemented-in-process" message.
-    // This keeps the API shape correct and lets us test the provider
-    // without requiring an actual child binary.
-    const self = this;
     let resolveResult: ((r: SubagentResult) => void) | undefined;
     let rejectResult: ((e: Error) => void) | undefined;
     const resultPromise = new Promise<SubagentResult>((resolve, reject) => {
       resolveResult = resolve;
       rejectResult = reject;
     });
-    // Attach a no-op catch so that interrupt()-triggered rejections don't
-    // crash the process as unhandled rejections. The caller can still
-    // handle the error via handle.promise?.catch(...) if they want.
     resultPromise.catch(() => {});
 
+    // Forward-ref holder for the handle's mutable state so that child
+    // event handlers (registered below) can mutate it without referencing
+    // `handle` before it's declared.
+    const handleRef: { state: SubagentState } = { state: "running" };
+
+    // Spawn `nexum rpc` (the JSON-RPC agent server). For continuable
+    // children, the process stays alive between messages; for one-shot,
+    // it terminates after the first response.
+    const args = ["rpc", ...(this.opts.extraArgs ?? [])];
+    const child = spawn(binaryPath, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: this.opts.cwd,
+      env: { ...process.env, ...this.opts.env },
+    });
+    this.children.set(subagentId, child);
+
+    // Attach error listeners to all streams — without these, an EPIPE
+    // (e.g. writing to a child that has already exited) would crash the
+    // parent process with an unhandled stream error.
+    child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+      // EPIPE is expected when the child exits before we finish writing.
+      if (err.code !== "EPIPE") {
+        if (rejectResult) rejectResult(new Error(`stdin error: ${err.message}`));
+        handleRef.state = "failed";
+      }
+    });
+    child.stdout?.on("error", () => { /* best-effort — stdout closed */ });
+    child.stderr?.on("error", () => { /* best-effort — stderr closed */ });
+    child.on("error", (err) => {
+      // Spawn errors (e.g. ENOENT for missing binary).
+      if (rejectResult) {
+        rejectResult(new Error(`child spawn error: ${err.message}`));
+        handleRef.state = "failed";
+      }
+    });
+
+    // Buffer stderr (for diagnostics) and set up JSON-RPC line parsing.
+    const stderrBuffer: string[] = [];
+    const pendingRequests = new Map<number | string | null, { resolve: (r: SubagentResult) => void; reject: (e: Error) => void }>();
+    let nextRequestId = 1;
+    let stdoutBuffer = "";
+
+    // handleRef was declared above (before the child spawn) so that stream
+    // error listeners can reference it. Don't redeclare it here.
+
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdoutBuffer += chunk;
+      // Process complete lines (newline-delimited JSON-RPC).
+      let newlineIdx: number;
+      while ((newlineIdx = stdoutBuffer.indexOf("\n")) >= 0) {
+        const line = stdoutBuffer.slice(0, newlineIdx).trim();
+        stdoutBuffer = stdoutBuffer.slice(newlineIdx + 1);
+        if (!line) continue;
+        try {
+          const msg = JSON.parse(line) as { id?: number | string | null; result?: unknown; error?: { code: number; message: string; data?: unknown } };
+          if (msg.id !== undefined) {
+            const pending = pendingRequests.get(msg.id);
+            if (pending) {
+              pendingRequests.delete(msg.id);
+              if (msg.error) {
+                pending.reject(new Error(`JSON-RPC error ${msg.error.code}: ${msg.error.message}`));
+              } else {
+                const result = msg.result as { status?: string; output?: string; error?: string; metadata?: Record<string, unknown> };
+                pending.resolve({
+                  subagentId,
+                  status: (result?.status as SubagentResult["status"]) ?? "completed",
+                  output: result?.output ?? "",
+                  error: result?.error,
+                  metadata: { ...result?.metadata, stderr: stderrBuffer.join("").slice(-2000) },
+                });
+              }
+            }
+          }
+        } catch {
+          // not JSON or malformed — skip
+        }
+      }
+    });
+
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderrBuffer.push(chunk);
+    });
+
+    child.on("exit", (code, signal) => {
+      // Reject any still-pending requests.
+      for (const [id, pending] of pendingRequests.entries()) {
+        pendingRequests.delete(id);
+        pending.reject(new Error(`child process exited (code=${code}, signal=${signal})`));
+      }
+      // If the one-shot promise hasn't resolved and there were still pending
+      // requests, treat the exit as a failure.
+      if (handleRef.state === "running" && rejectResult && !continuable) {
+        if (pendingRequests.size > 0) {
+          rejectResult(new Error(`child process exited unexpectedly (code=${code}, signal=${signal})`));
+          handleRef.state = "failed";
+        }
+      }
+      this.children.delete(subagentId);
+    });
+
+    // For one-shot: send agent.execute immediately.
+    if (!continuable) {
+      const requestId = nextRequestId++;
+      const requestPayload = {
+        jsonrpc: "2.0" as const,
+        id: requestId,
+        method: "agent.execute",
+        params: {
+          goal: request.goal,
+          requiredCapabilities: request.requiredCapabilities,
+          childAgentId: request.childAgentId,
+          contextHandoff: request.contextHandoff,
+          maxToolTurns: request.maxToolTurns,
+        },
+      };
+      pendingRequests.set(requestId, {
+        resolve: (r) => {
+          if (resolveResult) {
+            resolveResult(r);
+            handleRef.state = r.status === "completed" ? "completed" : "failed";
+          }
+        },
+        reject: (e) => {
+          if (rejectResult) {
+            rejectResult(e);
+            handleRef.state = "failed";
+          }
+        },
+      });
+      try {
+        child.stdin?.write(`${JSON.stringify(requestPayload)}\n`);
+      } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        if (rejectResult) {
+          rejectResult(e);
+          handleRef.state = "failed";
+        }
+      }
+    }
+
+    const self = this;
     const handle: SubagentHandle = {
       subagentId,
       providerRunId,
@@ -371,63 +515,72 @@ export class ProcessSubagentProvider implements SubagentProvider {
       request,
       promise: continuable ? undefined : resultPromise,
       async send(message: string): Promise<SubagentResult> {
-        // For continuable children, send appends the message and waits for
-        // the child's response. For one-shot, send is equivalent to spawn
-        // with a new goal.
         if (!continuable) {
           throw new Error("one-shot process subagent does not support send() — spawn a new one");
         }
-        // Real impl: write JSON-RPC request to child stdin, await response.
-        // For now: simulate.
-        return {
-          subagentId,
-          status: "completed",
-          output: `[process:${subagentId}] received: ${message}`,
+        const proc = self.children.get(subagentId);
+        if (!proc || proc.killed) {
+          throw new Error("child process is no longer running");
+        }
+        const requestId = nextRequestId++;
+        const payload = {
+          jsonrpc: "2.0" as const,
+          id: requestId,
+          method: "agent.execute",
+          params: { goal: message },
         };
+        return new Promise<SubagentResult>((resolve, reject) => {
+          pendingRequests.set(requestId, {
+            resolve,
+            reject,
+          });
+          try {
+            proc.stdin?.write(`${JSON.stringify(payload)}\n`);
+          } catch (err) {
+            pendingRequests.delete(requestId);
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
       },
       async interrupt(reason?: string): Promise<void> {
-        const proc = self.processes.get(subagentId);
-        if (proc) proc.kill();
-        if (rejectResult) rejectResult(new Error(reason ?? "interrupted"));
+        const proc = self.children.get(subagentId);
+        if (proc && !proc.killed) {
+          // Send SIGTERM for graceful shutdown; escalate to SIGKILL after 2s.
+          proc.kill("SIGTERM");
+          setTimeout(() => {
+            if (!proc.killed) {
+              try { proc.kill("SIGKILL"); } catch { /* best-effort */ }
+            }
+          }, 2000);
+        }
+        // Reject pending requests.
+        for (const [, pending] of pendingRequests) {
+          pending.reject(new Error(reason ?? "interrupted"));
+        }
+        pendingRequests.clear();
+        if (rejectResult) {
+          rejectResult(new Error(reason ?? "interrupted"));
+        }
         handle.state = "cancelled";
+        handleRef.state = "cancelled";
       },
       async resume(): Promise<SubagentResult> {
         if (handle.state !== "paused") {
           throw new Error(`cannot resume process subagent in state "${handle.state}"`);
         }
         handle.state = "running";
-        return {
-          subagentId,
-          status: "completed",
-          output: `[process:${subagentId}] resumed`,
-        };
+        handleRef.state = "running";
+        return handle.send("resume");
       },
       async fork(): Promise<SubagentHandle> {
-        // Fork creates a new subagent with the same request + accumulated state.
         return self.spawn(
           { ...request, continuable: false, goal: `${request.goal} (forked from ${subagentId})` },
-          parent,
+          _parent,
         );
       },
     };
 
     this.handles.set(subagentId, handle);
-
-    // For one-shot: simulate completion by resolving the promise.
-    if (!continuable && resolveResult) {
-      setTimeout(() => {
-        if (handle.state === "running") {
-          resolveResult!({
-            subagentId,
-            status: "completed",
-            output: `[process:${subagentId}] goal: ${request.goal}`,
-            metadata: { provider: "process", simulated: true },
-          });
-          handle.state = "completed";
-        }
-      }, 10);
-    }
-
     return handle;
   }
 
@@ -436,16 +589,36 @@ export class ProcessSubagentProvider implements SubagentProvider {
   }
 
   async stopAll(): Promise<void> {
-    for (const proc of this.processes.values()) {
-      try { proc.kill(); } catch { /* best-effort */ }
+    // SIGTERM every still-running child.
+    const killPromises: Promise<void>[] = [];
+    for (const child of this.children.values()) {
+      if (!child.killed) {
+        killPromises.push(
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              if (!child.killed) {
+                try { child.kill("SIGKILL"); } catch { /* best-effort */ }
+              }
+              resolve();
+            }, 2000);
+            child.once("exit", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+            try { child.kill("SIGTERM"); } catch { /* best-effort */ }
+          }),
+        );
+      }
     }
+    await Promise.allSettled(killPromises);
+    this.children.clear();
+    // Cancel any handles still in a running/pending state.
     for (const handle of this.handles.values()) {
       if (handle.state === "running" || handle.state === "pending") {
         try { await handle.interrupt("host shutdown"); } catch { /* best-effort */ }
         handle.state = "cancelled";
       }
     }
-    this.processes.clear();
   }
 }
 

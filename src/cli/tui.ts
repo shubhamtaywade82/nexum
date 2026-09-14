@@ -54,6 +54,17 @@ async function listModels(host: string | undefined, tier: string): Promise<strin
 export async function startTui(opts?: { config?: Partial<CliConfig> }): Promise<void> {
   const cfg = { ...loadConfig(), ...(opts?.config ?? {}) };
   const agent = new Agent({ config: cfg });
+  // Start the plugin host + all P0-P2 services before the first user
+  // message so plugins can contribute tools, models, and context.
+  // Failure here is non-fatal: the agent still works with whatever
+  // kernel + service plane loaded; plugins just won't be active.
+  try {
+    await agent.startHost();
+  } catch (err) {
+    console.warn(
+      `[nexum] plugin host start failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   // Per-run state for event handlers (one run at a time)
   let runState = { isStreaming: false, isThinking: false, lastToolName: "", lastToolArgs: {} as Record<string, any> };
@@ -529,7 +540,8 @@ export async function startTui(opts?: { config?: Partial<CliConfig> }): Promise<
 
   rl.on("close", () => {
     console.log(chalk.cyan("\nGoodbye! 👋\n"));
-    process.exit(0);
+    // Drain the plugin host + all services on shutdown.
+    agent.stopHost().finally(() => process.exit(0));
   });
 
   rl.on("SIGINT", () => {

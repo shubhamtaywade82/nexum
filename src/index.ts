@@ -355,6 +355,12 @@ export {
 export {
   RpcServer,
   registerCoreMethods,
+  registerJobMethods,
+  registerSubagentMethods,
+  registerWorkflowMethods,
+  registerWebhookMethods,
+  registerControlPlaneMethods,
+  registerAllServiceMethods,
   PARSE_ERROR,
   INVALID_REQUEST,
   METHOD_NOT_FOUND,
@@ -412,6 +418,7 @@ export {
   type InstalledPlugin,
   type MarketplaceSource,
   type MarketplaceServiceOptions,
+  type GitMarketplaceSourceOptions,
 } from "./marketplace/index.js";
 
 // Control plane (observability + control)
