@@ -367,3 +367,66 @@ export {
   type RpcContext,
   type RpcServerOptions,
 } from "./rpc/index.js";
+
+// ── P2 — Productization primitives ─────────────────────────────────────────
+//   - src/settings/            Settings service (P2-16)
+//   - src/profiles/            Profile/bundle system (P2-17)
+//   - src/marketplace/         Plugin marketplace (P2-18)
+//   - src/control-plane/       Runtime observability + control (P2-19)
+
+// Settings service
+export {
+  SettingsService,
+  registerDefaultSpecs,
+  type SettingSpec,
+  type SettingValue,
+  type SettingNamespace,
+  type SettingUpdate,
+  type SettingsChangeEvent,
+  type SettingsServiceOptions,
+} from "./settings/index.js";
+
+// Profile/bundle system
+export {
+  ProfileRegistry,
+  ProfileLoader,
+  ProfileComposer,
+  ProfileResolver,
+  cliProfileBundle,
+  serverProfileBundle,
+  cryptoBotProfileBundle,
+  registerBuiltinProfiles,
+  type ProfileBundle,
+  type ProfileRecord,
+  type ComposedProfile,
+  type ProfileLoaderOptions,
+} from "./profiles/index.js";
+
+// Plugin marketplace
+export {
+  MarketplaceService,
+  HttpMarketplaceSource,
+  NpmMarketplaceSource,
+  GitMarketplaceSource,
+  type MarketplaceEntry,
+  type InstalledPlugin,
+  type MarketplaceSource,
+  type MarketplaceServiceOptions,
+} from "./marketplace/index.js";
+
+// Control plane (observability + control)
+export {
+  ControlPlaneService,
+  registerDefaultMetrics,
+  type MetricSpec,
+  type MetricSnapshot,
+  type MetricType,
+  type HealthCheck,
+  type HealthReport,
+  type HealthStatus,
+  type RuntimePhase,
+  type RuntimeStatus,
+  type ControlAction,
+  type ControlRequest,
+  type ControlResponse,
+} from "./control-plane/index.js";
