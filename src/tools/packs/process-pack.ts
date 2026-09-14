@@ -20,6 +20,9 @@ export interface ProcessPackOptions {
   onOutput?: PackShellOutput;
   /** Resource accounting (review item 27) — tracked + persisted per execution. */
   accountant?: ShellExecutionAccountant;
+  sandbox?: boolean;
+  image?: string;
+  timeoutSec?: number;
 }
 
 /**
@@ -32,6 +35,9 @@ export function processPack(opts: ProcessPackOptions): ToolPack {
     workspaceRoot: opts.root,
     onOutput: opts.onOutput,
     accountant: opts.accountant,
+    sandbox: opts.sandbox,
+    image: opts.image,
+    timeoutSec: opts.timeoutSec,
   });
   const entries: ToolPackEntry[] = [
     {
@@ -67,13 +73,17 @@ export function processPack(opts: ProcessPackOptions): ToolPack {
 // ── compat factories (same behavior as pre-split packs) ──────────────────────
 
 /** @deprecated mount processPack instead (review item 21). */
-export function shellPack(root: string, onOutput?: PackShellOutput): ToolPack {
-  const opts: ConstructorParameters<typeof ShellTool>[0] = { workspaceRoot: root };
+export function shellPack(
+  root: string,
+  onOutput?: PackShellOutput,
+  shellOpts?: { sandbox?: boolean; image?: string; timeoutSec?: number },
+): ToolPack {
+  const opts: ConstructorParameters<typeof ShellTool>[0] = { workspaceRoot: root, ...shellOpts };
   if (onOutput) opts.onOutput = onOutput;
   const shell = new ShellTool(opts);
   return packOf(
     "shell",
-    "Shell command execution (Docker-sandboxed when available).",
+    shell.sandbox ? "Shell command execution (Docker-sandboxed when available)." : "Shell command execution (host).",
     "process",
     [[shell, { risk: "high", sideEffects: { filesystem: true, process: true, network: true } }]],
     "Shell",

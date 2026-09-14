@@ -32,6 +32,7 @@ export interface CliConfig {
   systemPrompt?: string;
   shellImage?: string;
   shellTimeoutSec?: number;
+  sandbox?: boolean;
   languages?: Record<string, LanguageOverride>;
   lsp?: LspCliConfig;
   toolSelectionMode?: "heuristic" | "llm" | "hybrid";
@@ -94,6 +95,7 @@ interface ConfigFile {
   systemPrompt?: string;
   shellImage?: string;
   shellTimeoutSec?: number;
+  sandbox?: boolean;
   toolSelectionMode?: string;
   maxActiveTools?: number;
   apiKeys?: string[];
@@ -324,6 +326,7 @@ export function loadConfig(): CliConfig {
     systemPrompt,
     shellImage: readEnv("SHELL_IMAGE") || file.shellImage,
     shellTimeoutSec,
+    sandbox: readEnvFlag("SANDBOX", file.sandbox ?? true),
     toolSelectionMode,
     maxActiveTools,
     apiKeys: apiKeys.length ? apiKeys : undefined,

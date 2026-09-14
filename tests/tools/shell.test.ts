@@ -150,6 +150,22 @@ describe("ShellTool", () => {
     expect(onOutput).toHaveBeenCalledWith("stderr", "warn\n");
     expect(result).toMatchObject({ exitCode: 0, stdout: "hi\n", stderr: "warn\n" });
   });
+
+  it("spawns on the host with sh when sandbox is false", async () => {
+    const proc = fakeProc();
+    mockSpawn.mockReturnValue(proc);
+
+    const tool = new ShellTool({ workspaceRoot: "/tmp/ws", sandbox: false });
+    const promise = tool.call({ command: "echo host" });
+
+    expect(mockSpawn).toHaveBeenCalledWith("sh", ["-c", "echo host"], { cwd: "/tmp/ws" });
+
+    proc.stdout.emit("data", Buffer.from("host\n"));
+    proc.emit("close", 0);
+
+    const result = await promise;
+    expect(result).toMatchObject({ exitCode: 0, stdout: "host\n" });
+  });
 });
 
 // timeoutSec arrives as untyped JSON from the model. It was read with a bare

@@ -93,7 +93,9 @@ export function contextStripTokens(state: RuntimeState, activeView?: ViewId, now
       // Mode/Model now live in the top Header — this row is the footer
       // status line: connection/sandbox/git, then usage figures.
       push("● Connected", 1, "healthy");
-      if (state.sandboxAvailable != null) {
+      if (state.sandboxEnabled === false) {
+        push("⊞ Host (No Sandbox)", 2, "active");
+      } else if (state.sandboxAvailable != null) {
         push(state.sandboxAvailable ? "⊞ Sandbox ✓" : "⊞ Sandbox ✗", 2, state.sandboxAvailable ? "healthy" : "error");
       }
       const branch = state.git.branch || state.session.branch;

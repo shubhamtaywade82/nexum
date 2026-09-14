@@ -15,6 +15,10 @@ import { App } from "./App.js";
 import { validateAsl, generateAslGraph } from "../asl/commands.js";
 import { envIs } from "../platform/environment.js";
 import { workspaceStateDir } from "../platform/paths.js";
+import { BRAND } from "../platform/brand.js";
+
+/** Matches App.tsx double–Ctrl+C window; SIGINT must not restore the terminal on first press. */
+const EXIT_CONFIRM_MS = 1500;
 
 function enableTerminalFeatures(): () => void {
   if (!process.stdin.isTTY) return () => {};
@@ -25,10 +29,30 @@ function enableTerminalFeatures(): () => void {
     restored = true;
     process.stdout.write("\x1b[?2004l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l\x1b[?25h");
   };
-  process.once("SIGINT", cleanup);
-  process.once("SIGTERM", cleanup);
+  // Restore the primary buffer only on process exit — not on the first SIGINT.
+  // A SIGINT handler that resets the terminal before Ink/App unmount leaves the
+  // TUI running in a broken screen while Ctrl+C appears to do nothing.
   process.once("exit", cleanup);
   return cleanup;
+}
+
+function registerForceQuitHandlers(unmount: () => void, restoreTerminal: () => void): void {
+  if (!process.stdin.isTTY) return;
+  let lastSigintAt = 0;
+  process.on("SIGINT", () => {
+    const now = Date.now();
+    if (now - lastSigintAt < EXIT_CONFIRM_MS) {
+      unmount();
+      restoreTerminal();
+      process.exit(130);
+    }
+    lastSigintAt = now;
+  });
+  process.on("SIGTERM", () => {
+    unmount();
+    restoreTerminal();
+    process.exit(143);
+  });
 }
 
 function currentBranch(workspaceRoot: string): string {
@@ -45,14 +69,19 @@ function currentBranch(workspaceRoot: string): string {
 }
 
 // One-time, non-blocking check — whether run_shell's Docker sandbox (see
-// tools/shell.ts's own lazy ensureDockerAvailable) is actually reachable, so
-// the footer's Sandbox indicator reflects reality instead of assuming it's
-// always up. Async so a slow/missing `docker` binary can't delay first paint
-// the way a blocking execSync would.
-function checkDockerAvailable(): Promise<boolean> {
+// tools/shell.ts's own lazy ensureDockerAvailable) is actually reachable and
+// the sandbox image is present locally, so the footer's Sandbox indicator
+// reflects reality instead of assuming it's always up.
+function checkDockerAvailable(image?: string): Promise<boolean> {
   return new Promise((resolve) => {
     const probe = spawn("docker", ["info"], { stdio: "ignore" });
-    probe.on("close", (code) => resolve(code === 0));
+    probe.on("close", (code) => {
+      if (code !== 0) return resolve(false);
+      if (!image) return resolve(true);
+      const imgProbe = spawn("docker", ["image", "inspect", image], { stdio: "ignore" });
+      imgProbe.on("close", (imgCode) => resolve(imgCode === 0));
+      imgProbe.on("error", () => resolve(false));
+    });
     probe.on("error", () => resolve(false));
   });
 }
@@ -116,7 +145,13 @@ const cfg = loadConfig();
   store.attach(bus);
   const detectedProject = detectProjectInfo(cfg.workspaceRoot);
   bus.publish({ type: "project.detected", info: detectedProject });
-  checkDockerAvailable().then((available) => bus.publish({ type: "sandbox.detected", available }));
+  if (cfg.sandbox === false) {
+    bus.publish({ type: "sandbox.detected", available: false, enabled: false });
+  } else {
+    checkDockerAvailable(cfg.shellImage ?? BRAND.sandboxImage).then((available) =>
+      bus.publish({ type: "sandbox.detected", available, enabled: true }),
+    );
+  }
 
   const agent = new Agent({ config: cfg });
   agent.setProjectInfo(detectedProject);
@@ -163,9 +198,12 @@ const cfg = loadConfig();
   };
 
   const disableFeatures = enableTerminalFeatures();
-  const { waitUntilExit } = render(
+  const instance = render(
     React.createElement(App, { bus, store, agent: shellAgent, workspaceRoot: cfg.workspaceRoot, initialTask }),
+    { exitOnCtrlC: false },
   );
-  await waitUntilExit();
+  registerForceQuitHandlers(() => instance.unmount(), disableFeatures);
+  await instance.waitUntilExit();
   disableFeatures();
+  process.exit(0);
 })();

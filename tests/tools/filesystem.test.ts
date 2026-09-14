@@ -68,6 +68,23 @@ describe("ReadFileTool", () => {
     await expect(tool.call({ path: "../../etc/passwd" })).rejects.toBeInstanceOf(PathEscapeError);
   });
 
+  it("reads an absolute path that is inside the workspace root", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    await writeFile(join(dir, "a.txt"), "hello from absolute");
+    const tool = new ReadFileTool(dir);
+
+    const result = await tool.call({ path: join(dir, "a.txt") });
+
+    expect(result.content).toBe("hello from absolute");
+  });
+
+  it("rejects an absolute path that escapes the workspace root", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    const tool = new ReadFileTool(dir);
+
+    await expect(tool.call({ path: "/etc/passwd" })).rejects.toBeInstanceOf(PathEscapeError);
+  });
+
   it("rejects reads through symlinks that escape the workspace root", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     const outside = await mkdtemp(join(tmpdir(), "outside-"));

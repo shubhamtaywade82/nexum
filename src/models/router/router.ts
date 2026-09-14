@@ -105,6 +105,7 @@ export class Router {
     // ModelAvailabilityChecker should ideally have filtered it out already,
     // but if it slips through, don't fail the whole turn over it.
     if (e instanceof ProviderError && /subscription/i.test(e.message)) return true;
+    if (e instanceof ProviderError && /exceed.*context/i.test(e.message)) return true;
     return false;
   }
 }

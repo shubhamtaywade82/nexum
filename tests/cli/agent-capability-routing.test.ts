@@ -529,7 +529,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     expect(bodies[1].messages.some((m: any) => String(m.content ?? "").includes("delegate_to_local"))).toBe(true);
   });
 
-  it("goes straight to the configured cloud primary model by default — no quick-model attempt, no self-consistency sampling", async () => {
+  it("escalates to the configured cloud primary model for complex architecture prompts when tier is cloud", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     (globalThis as any).fetch = jest.fn().mockImplementation(async () => chatResponse("answered by cloud primary"));
 
@@ -540,21 +540,15 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
         tier: "cloud",
         apiKey: "k",
         model: "gemma4:31b",
-        enableSelfConsistency: true, // would sample 3x on an ambiguous prompt if this ever reached the quick path
+        enableSelfConsistency: true,
       },
       events: { onModelUsed },
     });
 
-    const reply = await agent.runUserMessage("should I call this a UserAccount or an Account");
+    const reply = await agent.runUserMessage("What architecture should I use for this microservice?");
 
     expect(reply).toBe("answered by cloud primary");
-    // The turn's own chat call goes straight to the configured primary — no
-    // catalog refresh (no /api/tags or /v1/models call), no self-consistency
-    // sampling, no quick-model attempt beforehand. (A second call follows:
-    // the always-on post-completion summarization every answered turn
-    // triggers — unrelated to routing, same as the other tests in this file.)
     expect(chatBodies()[0].model).toBe("gemma4:31b");
-    expect(chatBodies().every((b) => b.model === "gemma4:31b")).toBe(true);
     expect(onModelUsed).toHaveBeenCalledWith("cloud", "gemma4:31b");
 
     // delegate_to_local is still offered to the cloud primary, so it can
@@ -562,6 +556,37 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     // the option (the whole point of "delegates, doesn't just try quick").
     const tools = (chatBodies()[0].tools ?? []) as Array<{ function: { name: string } }>;
     expect(tools.some((t) => t.function.name === "delegate_to_local")).toBe(true);
+  });
+
+  it("routes conversational queries to local quick model even when tier is cloud", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    let call = 0;
+    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
+      call += 1;
+      if (call === 1) {
+        return modelsListResponse([
+          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+        ]);
+      }
+      return chatResponse("hello from quick");
+    });
+
+    const onModelUsed = jest.fn();
+    const agent = new Agent({
+      config: {
+        workspaceRoot: dir,
+        tier: "cloud",
+        apiKey: "k",
+        model: "gemma4:31b",
+      },
+      events: { onModelUsed },
+    });
+
+    const reply = await agent.runUserMessage("hi");
+
+    expect(reply).toBe("hello from quick");
+    expect(chatBodies()[0].model).toBe("minicpm5-1b");
+    expect(onModelUsed).toHaveBeenCalledWith("local", "minicpm5-1b");
   });
 
   it("routes background memory summarization through 'quick' instead of the primary model (regression: it used to share the primary's own connection and could queue behind the next turn's request)", async () => {
@@ -579,7 +604,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
           { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
         ]);
       }
-      if (call === 3) return chatResponse("hello!"); // the turn's own answer, on the cloud primary
+      if (call === 3) return chatResponse("implemented binary search"); // the turn's own answer, on the cloud primary
       if (call >= 4) return chatResponse("- said hello"); // generateSummary's own call
       return chatResponse("unused");
     });
@@ -598,8 +623,8 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
       },
     });
 
-    const reply = await agent.runUserMessage("hi");
-    expect(reply).toBe("hello!");
+    const reply = await agent.runUserMessage("implement binary search");
+    expect(reply).toBe("implemented binary search");
     // Summarization is fire-and-forget; give pending microtasks/timers a tick to run.
     await new Promise((r) => setTimeout(r, 0));
 

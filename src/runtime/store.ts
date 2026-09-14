@@ -576,7 +576,7 @@ export function reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState {
     case "project.detected":
       return { ...state, project: event.info };
     case "sandbox.detected":
-      return { ...state, sandboxAvailable: event.available };
+      return { ...state, sandboxAvailable: event.available, sandboxEnabled: event.enabled ?? true };
     case "mode.changed":
       return { ...state, mode: event.mode };
     case "mode.agent":

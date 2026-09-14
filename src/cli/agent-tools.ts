@@ -82,9 +82,13 @@ export class AgentToolManager {
     }
   }
 
-  registerBaseTools(root: string, onOutput?: ToolOnOutput): void {
+  registerBaseTools(
+    root: string,
+    onOutput?: ToolOnOutput,
+    shellOpts?: { sandbox?: boolean; image?: string; timeoutSec?: number },
+  ): void {
     this.registerToolPack(filesystemPack(root));
-    this.registerToolPack(shellPack(root, onOutput));
+    this.registerToolPack(shellPack(root, onOutput, shellOpts));
     this.registerToolPack(searchPack(root));
     this.registerToolPack(gitPack(root));
     this.registerToolPack(projectPack(root));

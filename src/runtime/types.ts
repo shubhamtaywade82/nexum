@@ -458,6 +458,8 @@ export interface RuntimeState {
   /** Whether run_shell's Docker sandbox is actually reachable — checked once
    * at bootstrap (see tui/index.ts), undefined until that check resolves. */
   sandboxAvailable?: boolean;
+  /** Whether the Docker sandbox is enabled (false when NEXUM_SANDBOX=false / host mode). */
+  sandboxEnabled?: boolean;
   mode: RuntimeMode;
   agentMode: AgentMode;
   status: string;

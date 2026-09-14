@@ -62,7 +62,7 @@ interface LocalTagEntry {
 // Local Ollama's /api/tags reports each model's real capabilities array
 // (e.g. ["tools","vision","thinking","completion"]) and parameter_size —
 // no heuristic guessing needed, unlike the cloud tier.
-function capabilitiesFromLocalTag(entry: LocalTagEntry, name: string): Capability[] {
+function capabilitiesFromLocalTag(entry: LocalTagEntry, name: string, quickPreferredName?: string): Capability[] {
   if (isEmbeddingModel(name)) return [];
   if (entry.capabilities && !entry.capabilities.includes("completion") && !entry.capabilities.includes("tools")) {
     return [];
@@ -70,7 +70,8 @@ function capabilitiesFromLocalTag(entry: LocalTagEntry, name: string): Capabilit
   if (!entry.capabilities) return inferCapabilities(name);
 
   const caps: Capability[] = [];
-  if (entry.capabilities.includes("tools")) caps.push("tools");
+  const isPreferred = !!(quickPreferredName && name.toLowerCase().includes(quickPreferredName.toLowerCase()));
+  if (entry.capabilities.includes("tools") || isPreferred || /minicpm/i.test(name)) caps.push("tools");
   if (entry.capabilities.includes("vision")) caps.push("vision");
   if (entry.capabilities.includes("thinking")) caps.push("reasoning");
 
@@ -128,7 +129,16 @@ export class ModelCatalog {
         for (const entry of localTagEntries(data)) {
           const name = entry.name ?? entry.model;
           if (!name) continue;
-          const capabilities = capabilitiesFromLocalTag(entry, name);
+          let entryCaps = entry.capabilities;
+          if (entryCaps && !entryCaps.includes("tools") && this.local.showModel) {
+            const show = await this.local.showModel(name);
+            if (show?.capabilities) entryCaps = show.capabilities;
+          }
+          const capabilities = capabilitiesFromLocalTag(
+            { ...entry, capabilities: entryCaps },
+            name,
+            this.quickPreferredName,
+          );
           if (capabilities.length === 0) continue;
           results.push({ name, tier: "local", capabilities });
         }

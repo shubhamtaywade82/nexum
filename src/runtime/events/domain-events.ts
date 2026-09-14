@@ -31,6 +31,6 @@ export type DomainEvent =
     }
   | { type: "skills.changed"; skills: SkillState[] }
   | { type: "project.detected"; info: ProjectInfo }
-  | { type: "sandbox.detected"; available: boolean }
+  | { type: "sandbox.detected"; available: boolean; enabled?: boolean }
   // which model the operator/product selected (world state, not a call)
   | { type: "model.changed"; provider?: string; name: string };

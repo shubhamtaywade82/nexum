@@ -164,7 +164,11 @@ export class Agent {
     this.conversation = new AgentConversation();
 
     this.tools = new AgentToolManager();
-    this.tools.registerBaseTools(cfg.workspaceRoot, (stream, chunk) => this.emit("onShellOutput", stream, chunk));
+    this.tools.registerBaseTools(
+      cfg.workspaceRoot,
+      (stream, chunk) => this.emit("onShellOutput", stream, chunk),
+      { sandbox: cfg.sandbox, image: cfg.shellImage, timeoutSec: cfg.shellTimeoutSec },
+    );
     this.tools.registerHybridTools(this.stack.localWorker);
     this.tools.registerClarificationTool(this);
 
@@ -362,11 +366,10 @@ export class Agent {
     // Local to this call, not a class field: AgentStepRunner reuses the same Agent
     // across plan steps and retries, each via a fresh runUserMessage call — a class
     // field would leak escalation state across unrelated steps/retries.
-    // cfg.tier is never a silent default (config.ts falls back to "local" only
-    // when nothing configures it) — "cloud" here always means the user
-    // explicitly configured a cloud primary, which should be the real default
-    // for the turn rather than trying "quick" first and hoping it's enough.
-    let escalated = this.stack.provider.currentTier === "cloud";
+    // Hybrid local+cloud routing: turns attempt the quick model first
+    // (local-preferred) unless the heuristic pre-filter, self-consistency
+    // divergence, or explicit hints escalate to the primary model.
+    let escalated = false;
     let delegationAddendumInjected = false;
     const injectDelegationAddendum = () => {
       if (this.stack.localWorker && !delegationAddendumInjected) {
@@ -796,11 +799,8 @@ export class Agent {
   }
 
   // ponytail: keyword classification, not an LLM intent classifier — cheap and
-  // deterministic. No longer gates whether the local "quick" model gets tried
-  // at all (every turn attempts it first, unless the configured primary is
-  // cloud — see runUserMessage's `escalated` initializer) — these patterns
-  // only pick the ESCALATION TARGET for when the model self-escalates via the
-  // escalate_task tool, reusing Router's existing vision/reasoning routing.
+  // deterministic. These patterns pick the ESCALATION TARGET for when the model
+  // self-escalates via the escalate_task tool, reusing Router's existing vision/reasoning routing.
   private static readonly VISION_PATTERN = /\b(screenshot|diagram|image|photo|picture)\b|\.(png|jpe?g|gif|webp)\b/;
   private static readonly REASONING_PATTERN =
     /\b(architecture|trade-?offs?|root cause|design decision|why does|why is|think through|deep dive)\b/;

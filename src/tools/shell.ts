@@ -20,6 +20,8 @@ export interface ShellToolOptions {
    * bytes, exit status — and persists each execution's metadata.
    */
   accountant?: ShellExecutionAccountant;
+  /** Whether to execute inside a Docker sandbox (default: true). Set false for direct host execution. */
+  sandbox?: boolean;
 }
 
 export class ShellTool extends Tool {
@@ -32,6 +34,7 @@ export class ShellTool extends Tool {
   static readonly KILL_POLL_INTERVAL_MS = 300;
   static readonly KILL_ESCALATION_MS = 3000;
 
+  readonly sandbox: boolean;
   private readonly root: string;
   private readonly image: string;
   private readonly timeoutSec: number;
@@ -51,6 +54,7 @@ export class ShellTool extends Tool {
 
   constructor(opts: ShellToolOptions) {
     super();
+    this.sandbox = opts.sandbox ?? true;
     this.root = opts.workspaceRoot;
     this.image = opts.image ?? ShellTool.DEFAULT_IMAGE;
     this.timeoutSec = opts.timeoutSec ?? ShellTool.DEFAULT_TIMEOUT_SEC;
@@ -66,7 +70,9 @@ export class ShellTool extends Tool {
   }
 
   get description(): string {
-    return "Run a shell command inside an isolated Docker sandbox rooted at the workspace.";
+    return this.sandbox
+      ? "Run a shell command inside an isolated Docker sandbox rooted at the workspace."
+      : "Run a shell command on the host rooted at the workspace.";
   }
 
   override get capabilities(): string[] {
@@ -134,50 +140,58 @@ export class ShellTool extends Tool {
 
     // Stay synchronous once the answer is known, so the child's listeners are
     // attached in the same tick as the call rather than a microtask later.
-    const known = this.dockerAvailable;
-    const dockerAvailable = known !== null ? known : await this.ensureDockerAvailable();
-    if (!dockerAvailable) {
-      return {
-        exitCode: -1,
-        stdout: "",
-        stderr: "docker is not available: dockerd is not reachable (is Docker running?)",
-        truncated: false,
-        error: "DockerUnavailableError",
-      };
+    if (this.sandbox) {
+      const known = this.dockerAvailable;
+      const dockerAvailable = known !== null ? known : await this.ensureDockerAvailable();
+      if (!dockerAvailable) {
+        return {
+          exitCode: -1,
+          stdout: "",
+          stderr: "docker is not available: dockerd is not reachable (is Docker running?)",
+          truncated: false,
+          error: "DockerUnavailableError",
+        };
+      }
     }
 
-    const container = `nexum-${randomBytes(4).toString("hex")}`;
+    const container = this.sandbox ? `nexum-${randomBytes(4).toString("hex")}` : undefined;
 
     // lifecycle accounting (review item 27): limits + live samples + duration
     // + output bytes + exit status, persisted on completion
     const record = this.accountant?.begin({
-      containerId: container,
+      containerId: container ?? "host",
       runId: callCtx?.runId,
       agentId: callCtx?.agentId,
       toolCallId: callCtx?.invocation?.id,
       command: String(command).slice(0, 500),
-      cpuLimit: this.cpus,
-      memoryLimitMb: this.memory,
+      cpuLimit: this.sandbox ? this.cpus : "host",
+      memoryLimitMb: this.sandbox ? this.memory : "host",
       pidsLimit: 128,
-      networkMode: "none",
-      image: this.image,
+      networkMode: this.sandbox ? "none" : "host",
+      image: this.sandbox ? this.image : "host",
       timeoutSec,
     });
-    const stopSampling = record ? this.accountant!.sampleContainer(record) : undefined;
+    const stopSampling = record && container ? this.accountant!.sampleContainer(record) : undefined;
 
     return new Promise((resolvePromise) => {
-      const child = spawn("docker", this.dockerArgs(container, command, timeoutSec));
+      const child = this.sandbox
+        ? spawn("docker", this.dockerArgs(container!, command, timeoutSec))
+        : spawn("sh", ["-c", command], { cwd: this.root });
       let stdout = Buffer.alloc(0);
       let stderr = Buffer.alloc(0);
       let settled = false;
       let killedForOverflow = false;
 
-      // cancellation reaches the sandbox (review item 16): aborting the run's
-      // signal kills the container instead of leaving it running to timeout
+      const killChild = () => {
+        child.kill("SIGKILL");
+        if (container) void this.escalateKill(container);
+      };
+
+      // cancellation reaches the process (review item 16): aborting the run's
+      // signal kills the container/process instead of leaving it running to timeout
       const onAbort = () => {
         if (settled) return;
-        child.kill("SIGKILL");
-        void this.escalateKill(container);
+        killChild();
       };
       if (callCtx?.signal) {
         if (callCtx.signal.aborted) onAbort();
@@ -204,9 +218,8 @@ export class ShellTool extends Tool {
         if (stdout.byteLength + stderr.byteLength <= ShellTool.MAX_OUTPUT_BYTES) return;
 
         killedForOverflow = true;
-        child.kill("SIGKILL");
-        this.logger.warn(`[ShellTool] ${container} exceeded output ceiling — SIGKILL issued`);
-        void this.escalateKill(container);
+        killChild();
+        this.logger.warn(`[ShellTool] ${container ?? "host"} exceeded output ceiling — SIGKILL issued`);
       };
 
       child.stdout.on("data", (chunk: Buffer) => {
@@ -224,23 +237,18 @@ export class ShellTool extends Tool {
       const hardTimeout = setTimeout(
         () => {
           if (settled) return;
-          this.logger.warn(`[ShellTool] hard timeout on ${container}`);
-          void this.escalateKill(container).then(() => {
-            // Hand back whatever the command managed to emit. Returning an empty
-            // stdout gave the model zero diagnostics about an overrunning build
-            // or test run, so its only move was to retry the same command --
-            // straight into the loop detector.
-            finish({
-              exitCode: -1,
-              stdout: stdout.subarray(0, ShellTool.MAX_OUTPUT_BYTES).toString("utf-8"),
-              stderr:
-                stderr.subarray(0, ShellTool.MAX_OUTPUT_BYTES).toString("utf-8") +
-                `\n[sandbox exceeded hard timeout after ${timeoutSec}s]`,
-              truncated:
-                stdout.byteLength > ShellTool.MAX_OUTPUT_BYTES || stderr.byteLength > ShellTool.MAX_OUTPUT_BYTES,
-              timeoutSec,
-              error: "TimeoutError",
-            });
+          this.logger.warn(`[ShellTool] hard timeout on ${container ?? "host"}`);
+          killChild();
+          finish({
+            exitCode: -1,
+            stdout: stdout.subarray(0, ShellTool.MAX_OUTPUT_BYTES).toString("utf-8"),
+            stderr:
+              stderr.subarray(0, ShellTool.MAX_OUTPUT_BYTES).toString("utf-8") +
+              `\n[exceeded hard timeout after ${timeoutSec}s]`,
+            truncated:
+              stdout.byteLength > ShellTool.MAX_OUTPUT_BYTES || stderr.byteLength > ShellTool.MAX_OUTPUT_BYTES,
+            timeoutSec,
+            error: "TimeoutError",
           });
         },
         (timeoutSec + 15) * 1000,
@@ -258,7 +266,7 @@ export class ShellTool extends Tool {
           return;
         }
 
-        this.logger.info(`[ShellTool] ${container} exited ${exitCode}`);
+        this.logger.info(`[ShellTool] ${container ?? "host"} exited ${exitCode}`);
         finish({
           exitCode,
           stdout: stdout.subarray(0, ShellTool.MAX_OUTPUT_BYTES).toString("utf-8"),
@@ -269,7 +277,7 @@ export class ShellTool extends Tool {
       });
 
       child.on("error", (err) => {
-        finish({ exitCode: -1, stdout: "", stderr: `failed to spawn docker: ${err.message}`, truncated: false });
+        finish({ exitCode: -1, stdout: "", stderr: `failed to spawn ${this.sandbox ? "docker" : "process"}: ${err.message}`, truncated: false });
       });
     });
   }

@@ -4,10 +4,8 @@
  * when self-escalating via the escalate_task tool.
  *
  * This is keyword classification, not an LLM intent classifier — cheap and
- * deterministic. No longer gates whether the local "quick" model gets tried
- * at all (every turn attempts it first, unless the configured primary is
- * cloud — see Agent.runUserMessage's `escalated` initializer) — these patterns
- * only pick the ESCALATION TARGET for when the model self-escalates.
+ * deterministic. These patterns pick the ESCALATION TARGET for when the model
+ * self-escalates via the escalate_task tool.
  */
 export const VISION_PATTERN = /\b(screenshot|diagram|image|photo|picture)\b|\.(png|jpe?g|gif|webp)\b/;
 export const REASONING_PATTERN =

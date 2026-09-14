@@ -180,4 +180,13 @@ describe("loadConfig host/tier interaction", () => {
     process.env.DEVAGENT_TIER = "cloud";
     expect(loadConfig().host).toBe("https://proxy.example");
   });
+
+  it("defaults sandbox to true", () => {
+    expect(loadConfig().sandbox).toBe(true);
+  });
+
+  it("disables sandbox when NEXUM_SANDBOX=false", () => {
+    process.env.NEXUM_SANDBOX = "false";
+    expect(loadConfig().sandbox).toBe(false);
+  });
 });

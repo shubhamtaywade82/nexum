@@ -80,6 +80,7 @@ export interface ChatOptions {
    * mid-flight, and both requests went to whichever model was set last while
    * `routedModel` reported the wrong one. */
   model?: string;
+  options?: Record<string, unknown>;
 }
 
 export interface ProviderOptions {
@@ -246,6 +247,9 @@ export class Provider {
       model,
       messages: messages as unknown as SdkMessage[],
       tools: opts.tools as any,
+      ...(this.tier === "local" || opts.options
+        ? { options: { ...(this.tier === "local" ? { num_ctx: 16384 } : {}), ...(opts.options ?? {}) } }
+        : {}),
     };
 
     try {
@@ -274,6 +278,18 @@ export class Provider {
       return { models: await client.listModels() };
     } catch (err) {
       throw mapSdkError(err, this.tier, this.model, this.apiKeys.length);
+    }
+  }
+
+  /** Queries local /api/show for accurate capabilities missed by /api/tags. */
+  async showModel(model: string): Promise<{ capabilities?: string[] } | null> {
+    if (this.tier !== "local") return null;
+    const client = this.buildClient();
+    try {
+      const info = await client.modelsClient.show({ model });
+      return { capabilities: info.capabilities as string[] | undefined };
+    } catch {
+      return null;
     }
   }
 }
