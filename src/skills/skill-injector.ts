@@ -50,10 +50,7 @@ export class SkillInjector {
       estimatedTokens += skillTokens;
     }
 
-    const content =
-      parts.length === 0
-        ? ""
-        : `## Relevant Skills\n\n${parts.join("\n\n---\n\n")}\n`;
+    const content = parts.length === 0 ? "" : `## Relevant Skills\n\n${parts.join("\n\n---\n\n")}\n`;
 
     return { content, injectedSkillIds, estimatedTokens };
   }

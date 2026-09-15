@@ -12,7 +12,6 @@ import {
   resolvePluginOrder,
   validateManifest,
   type NexumPlugin,
-  type PluginHost,
 } from "../../src/platform/plugins/index.js";
 
 describe("DefaultPluginHost", () => {
@@ -230,12 +229,9 @@ describe("DefaultPluginHost", () => {
 describe("pluginFromRegistration", () => {
   it("wraps a simple registration callback as a plugin", async () => {
     let called = false;
-    const plugin = pluginFromRegistration(
-      { id: "reg", name: "Reg", version: "1.0.0" },
-      () => {
-        called = true;
-      },
-    );
+    const plugin = pluginFromRegistration({ id: "reg", name: "Reg", version: "1.0.0" }, () => {
+      called = true;
+    });
     const host = new DefaultPluginHost();
     host.register(plugin);
     await host.start();

@@ -26,14 +26,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
-  readdirSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // ── Contracts ───────────────────────────────────────────────────────────────
@@ -87,17 +80,9 @@ export interface WorkflowDefinition {
 }
 
 export type WorkflowTrigger =
-  | { kind: "manual" }
-  | { kind: "cron"; expression: string }
-  | { kind: "event"; eventType: string };
+  { kind: "manual" } | { kind: "cron"; expression: string } | { kind: "event"; eventType: string };
 
-export type WorkflowInstanceState =
-  | "pending"
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type WorkflowInstanceState = "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
 
 export interface WorkflowInstance {
   id: WorkflowInstanceId;
@@ -121,7 +106,14 @@ export interface WorkflowInstance {
 export interface WorkflowEvent {
   instanceId: WorkflowInstanceId;
   stepId?: WorkflowStepId;
-  type: "instance.started" | "instance.completed" | "instance.failed" | "step.started" | "step.completed" | "step.failed" | "step.skipped";
+  type:
+    | "instance.started"
+    | "instance.completed"
+    | "instance.failed"
+    | "step.started"
+    | "step.completed"
+    | "step.failed"
+    | "step.skipped";
   ts: string;
   data?: Record<string, unknown>;
 }
@@ -321,11 +313,7 @@ export class WorkflowService {
 
   // ── internals ───────────────────────────────────────────────────────────
 
-  private async runSteps(
-    def: WorkflowDefinition,
-    instance: WorkflowInstance,
-    signal: AbortSignal,
-  ): Promise<void> {
+  private async runSteps(def: WorkflowDefinition, instance: WorkflowInstance, signal: AbortSignal): Promise<void> {
     // Topo-sort steps by dependencies (Kahn's algorithm, stable).
     const sorted = topoSortSteps(def.steps);
 
@@ -337,7 +325,12 @@ export class WorkflowService {
       const allDepsComplete = deps.every((d) => instance.stepStates[d] === "completed");
       if (!allDepsComplete) {
         instance.stepStates[step.id] = "skipped";
-        this.emitEvent({ instanceId: instance.id, stepId: step.id, type: "step.skipped", ts: new Date().toISOString() });
+        this.emitEvent({
+          instanceId: instance.id,
+          stepId: step.id,
+          type: "step.skipped",
+          ts: new Date().toISOString(),
+        });
         continue;
       }
 
@@ -346,7 +339,12 @@ export class WorkflowService {
         const ctx = this.makeStepContext(instance, step.id, signal);
         if (!step.condition(ctx)) {
           instance.stepStates[step.id] = "skipped";
-          this.emitEvent({ instanceId: instance.id, stepId: step.id, type: "step.skipped", ts: new Date().toISOString() });
+          this.emitEvent({
+            instanceId: instance.id,
+            stepId: step.id,
+            type: "step.skipped",
+            ts: new Date().toISOString(),
+          });
           continue;
         }
       }
@@ -374,7 +372,12 @@ export class WorkflowService {
       this.emitEvent({
         instanceId: instance.id,
         stepId: step.id,
-        type: result.status === "completed" ? "step.completed" : result.status === "failed" ? "step.failed" : "step.skipped",
+        type:
+          result.status === "completed"
+            ? "step.completed"
+            : result.status === "failed"
+              ? "step.failed"
+              : "step.skipped",
         ts: new Date().toISOString(),
         data: result.error ? { error: result.error } : undefined,
       });
@@ -439,7 +442,7 @@ function topoSortSteps(steps: WorkflowStep[]): WorkflowStep[] {
   const indeg = new Map<WorkflowStepId, number>();
   for (const s of steps) indeg.set(s.id, 0);
   for (const s of steps) {
-    for (const d of s.dependsOn ?? []) {
+    for (const _d of s.dependsOn ?? []) {
       indeg.set(s.id, (indeg.get(s.id) ?? 0) + 1);
     }
   }

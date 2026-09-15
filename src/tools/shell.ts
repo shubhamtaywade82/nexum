@@ -245,8 +245,7 @@ export class ShellTool extends Tool {
             stderr:
               stderr.subarray(0, ShellTool.MAX_OUTPUT_BYTES).toString("utf-8") +
               `\n[exceeded hard timeout after ${timeoutSec}s]`,
-            truncated:
-              stdout.byteLength > ShellTool.MAX_OUTPUT_BYTES || stderr.byteLength > ShellTool.MAX_OUTPUT_BYTES,
+            truncated: stdout.byteLength > ShellTool.MAX_OUTPUT_BYTES || stderr.byteLength > ShellTool.MAX_OUTPUT_BYTES,
             timeoutSec,
             error: "TimeoutError",
           });
@@ -277,7 +276,12 @@ export class ShellTool extends Tool {
       });
 
       child.on("error", (err) => {
-        finish({ exitCode: -1, stdout: "", stderr: `failed to spawn ${this.sandbox ? "docker" : "process"}: ${err.message}`, truncated: false });
+        finish({
+          exitCode: -1,
+          stdout: "",
+          stderr: `failed to spawn ${this.sandbox ? "docker" : "process"}: ${err.message}`,
+          truncated: false,
+        });
       });
     });
   }

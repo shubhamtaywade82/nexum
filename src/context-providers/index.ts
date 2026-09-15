@@ -40,14 +40,7 @@ import { join } from "node:path";
 // ── Contracts ───────────────────────────────────────────────────────────────
 
 export type ContextFragmentKind =
-  | "workspace"
-  | "file-reference"
-  | "session-reference"
-  | "time"
-  | "runtime"
-  | "git"
-  | "domain"
-  | "custom";
+  "workspace" | "file-reference" | "session-reference" | "time" | "runtime" | "git" | "domain" | "custom";
 
 export interface ContextFragment {
   /** Which provider contributed this fragment. */

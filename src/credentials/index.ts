@@ -66,8 +66,6 @@ export interface CredentialProvider {
 
 // ── Redaction ───────────────────────────────────────────────────────────────
 
-const REDACTED = "***REDACTED***";
-
 export function redact(value: string): string {
   if (!value) return "";
   if (value.length <= 8) return "***";

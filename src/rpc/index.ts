@@ -74,10 +74,7 @@ export const INTERNAL_ERROR = -32603;
 
 // ── Method handler ──────────────────────────────────────────────────────────
 
-export type RpcMethodHandler = (
-  params: unknown,
-  context: RpcContext,
-) => Promise<unknown> | unknown;
+export type RpcMethodHandler = (params: unknown, context: RpcContext) => Promise<unknown> | unknown;
 
 export interface RpcContext {
   /** The raw request (for accessing id, etc.). */
@@ -295,22 +292,61 @@ export function registerCoreMethods(
  * @param server  the RPC server
  * @param jobs    the JobService instance (from agent.jobs)
  */
-export function registerJobMethods(server: RpcServer, jobs: {
-  submit<T = unknown>(spec: { description: string; run: (signal: AbortSignal) => Promise<T>; timeoutMs?: number; priority?: string; tags?: string[]; maxOutputLines?: number; scope?: { sessionId?: string; runId?: string } }): string;
-  status(jobId: string): { id: string; description: string; state: string; priority: string; tags: string[]; createdAt: string; startedAt?: string; finishedAt?: string; output: string[]; error?: string; result?: unknown; scope?: { sessionId?: string; runId?: string } } | undefined;
-  output(jobId: string): string[];
-  cancel(jobId: string, reason?: string): Promise<void>;
-  kill(jobId: string, reason?: string): Promise<void>;
-  list(filter?: { state?: string; tag?: string; sessionId?: string; runId?: string }): Array<{ id: string; description: string; state: string; tags: string[] }>;
-  counts(): Record<string, number>;
-}): void {
+export function registerJobMethods(
+  server: RpcServer,
+  jobs: {
+    submit<T = unknown>(spec: {
+      description: string;
+      run: (signal: AbortSignal) => Promise<T>;
+      timeoutMs?: number;
+      priority?: string;
+      tags?: string[];
+      maxOutputLines?: number;
+      scope?: { sessionId?: string; runId?: string };
+    }): string;
+    status(jobId: string):
+      | {
+          id: string;
+          description: string;
+          state: string;
+          priority: string;
+          tags: string[];
+          createdAt: string;
+          startedAt?: string;
+          finishedAt?: string;
+          output: string[];
+          error?: string;
+          result?: unknown;
+          scope?: { sessionId?: string; runId?: string };
+        }
+      | undefined;
+    output(jobId: string): string[];
+    cancel(jobId: string, reason?: string): Promise<void>;
+    kill(jobId: string, reason?: string): Promise<void>;
+    list(filter?: {
+      state?: string;
+      tag?: string;
+      sessionId?: string;
+      runId?: string;
+    }): Array<{ id: string; description: string; state: string; tags: string[] }>;
+    counts(): Record<string, number>;
+  },
+): void {
   // jobs.submit — submit a background job.
   // Note: the `run` function is NOT serializable. RPC clients must pass
   // the job spec as a JSON object; the embedding app translates it to a
   // real JobSpec before calling jobs.submit. For a generic RPC boundary,
   // we accept a "deferred" spec that the host resolves later.
   server.method("jobs.submit", (params) => {
-    const p = params as { description: string; timeoutMs?: number; priority?: string; tags?: string[]; scope?: { sessionId?: string; runId?: string } } | undefined;
+    const p = params as
+      | {
+          description: string;
+          timeoutMs?: number;
+          priority?: string;
+          tags?: string[];
+          scope?: { sessionId?: string; runId?: string };
+        }
+      | undefined;
     if (!p || typeof p.description !== "string") {
       throw new Error("jobs.submit requires { description: string }");
     }
@@ -322,7 +358,11 @@ export function registerJobMethods(server: RpcServer, jobs: {
       tags: p.tags,
       timeoutMs: p.timeoutMs,
       scope: p.scope,
-      run: async () => ({ description: p.description, status: "completed", note: "rpc-submitted job ran a no-op; supply a real run fn on the host" }),
+      run: async () => ({
+        description: p.description,
+        status: "completed",
+        note: "rpc-submitted job ran a no-op; supply a real run fn on the host",
+      }),
     });
     return { id };
   });
@@ -378,14 +418,51 @@ export function registerJobMethods(server: RpcServer, jobs: {
  * @param server  the RPC server
  * @param subs    the SubagentService instance (from agent.subagents)
  */
-export function registerSubagentMethods(server: RpcServer, subs: {
-  spawn(request: { provider: string; goal: string; requiredCapabilities?: string[]; childAgentId?: string; contextHandoff?: string[]; budgetShare?: number; maxToolTurns?: number; continuable?: boolean; metadata?: Record<string, unknown> }, parent?: unknown): Promise<{ subagentId: string; providerRunId: string; provider: string; continuable: boolean; state: string; request: unknown }>;
-  inspect(subagentId: string): { subagentId: string; provider: string; state: string; continuable: boolean; request: unknown } | undefined;
-  list(state?: string): Array<{ subagentId: string; provider: string; state: string; continuable: boolean }>;
-  cancel(subagentId: string, reason?: string): Promise<void>;
-}): void {
+export function registerSubagentMethods(
+  server: RpcServer,
+  subs: {
+    spawn(
+      request: {
+        provider: string;
+        goal: string;
+        requiredCapabilities?: string[];
+        childAgentId?: string;
+        contextHandoff?: string[];
+        budgetShare?: number;
+        maxToolTurns?: number;
+        continuable?: boolean;
+        metadata?: Record<string, unknown>;
+      },
+      parent?: unknown,
+    ): Promise<{
+      subagentId: string;
+      providerRunId: string;
+      provider: string;
+      continuable: boolean;
+      state: string;
+      request: unknown;
+    }>;
+    inspect(
+      subagentId: string,
+    ): { subagentId: string; provider: string; state: string; continuable: boolean; request: unknown } | undefined;
+    list(state?: string): Array<{ subagentId: string; provider: string; state: string; continuable: boolean }>;
+    cancel(subagentId: string, reason?: string): Promise<void>;
+  },
+): void {
   server.method("subagents.spawn", async (params) => {
-    const p = params as { provider?: string; goal?: string; requiredCapabilities?: string[]; childAgentId?: string; contextHandoff?: string[]; budgetShare?: number; maxToolTurns?: number; continuable?: boolean; metadata?: Record<string, unknown> } | undefined;
+    const p = params as
+      | {
+          provider?: string;
+          goal?: string;
+          requiredCapabilities?: string[];
+          childAgentId?: string;
+          contextHandoff?: string[];
+          budgetShare?: number;
+          maxToolTurns?: number;
+          continuable?: boolean;
+          metadata?: Record<string, unknown>;
+        }
+      | undefined;
     if (!p || typeof p.goal !== "string" || typeof p.provider !== "string") {
       throw new Error("subagents.spawn requires { provider: string; goal: string }");
     }
@@ -433,26 +510,47 @@ export function registerSubagentMethods(server: RpcServer, subs: {
  *   workflows.pause, workflows.cancel, workflows.resume, workflows.get,
  *   workflows.list, workflows.events
  */
-export function registerWorkflowMethods(server: RpcServer, wfs: {
-  register(definition: unknown): unknown;
-  createInstance(workflowId: string, trigger?: unknown): { id: string; workflowId: string; status: string; stepStates: Record<string, unknown>; stepOutputs: Record<string, unknown>; state: Record<string, unknown>; createdAt: string };
-  start(instanceId: string): Promise<{ id: string; workflowId: string; status: string; error?: string; finishedAt?: string }>;
-  pause(instanceId: string): Promise<void>;
-  cancel(instanceId: string, reason?: string): Promise<void>;
-  resume(instanceId: string): Promise<unknown>;
-  getInstance(instanceId: string): unknown;
-  listInstances(filter?: { workflowId?: string; status?: string }): Array<{ id: string; workflowId: string; status: string; createdAt: string }>;
-  eventsFor(instanceId: string): Array<unknown>;
-}): void {
+export function registerWorkflowMethods(
+  server: RpcServer,
+  wfs: {
+    register(definition: unknown): unknown;
+    createInstance(
+      workflowId: string,
+      trigger?: unknown,
+    ): {
+      id: string;
+      workflowId: string;
+      status: string;
+      stepStates: Record<string, unknown>;
+      stepOutputs: Record<string, unknown>;
+      state: Record<string, unknown>;
+      createdAt: string;
+    };
+    start(
+      instanceId: string,
+    ): Promise<{ id: string; workflowId: string; status: string; error?: string; finishedAt?: string }>;
+    pause(instanceId: string): Promise<void>;
+    cancel(instanceId: string, reason?: string): Promise<void>;
+    resume(instanceId: string): Promise<unknown>;
+    getInstance(instanceId: string): unknown;
+    listInstances(filter?: {
+      workflowId?: string;
+      status?: string;
+    }): Array<{ id: string; workflowId: string; status: string; createdAt: string }>;
+    eventsFor(instanceId: string): Array<unknown>;
+  },
+): void {
   server.method("workflows.register", (params) => {
-    const p = params as { definition?: { id?: string; name?: string; version?: string; steps?: unknown[] } } | undefined;
+    const p = params as
+      { definition?: { id?: string; name?: string; version?: string; steps?: unknown[] } } | undefined;
     if (!p || !p.definition) throw new Error("workflows.register requires { definition }");
     return wfs.register(p.definition);
   });
 
   server.method("workflows.createInstance", (params) => {
     const p = params as { workflowId?: string; trigger?: unknown } | undefined;
-    if (!p || typeof p.workflowId !== "string") throw new Error("workflows.createInstance requires { workflowId: string }");
+    if (!p || typeof p.workflowId !== "string")
+      throw new Error("workflows.createInstance requires { workflowId: string }");
     return wfs.createInstance(p.workflowId, p.trigger);
   });
 
@@ -504,15 +602,24 @@ export function registerWorkflowMethods(server: RpcServer, wfs: {
  *   webhooks.addRule, webhooks.receive (test ingress), webhooks.listEvents,
  *   webhooks.counts
  */
-export function registerWebhookMethods(server: RpcServer, whs: {
-  registerEndpoint(endpoint: unknown): unknown;
-  unregisterEndpoint(id: string): boolean;
-  listEndpoints(): Array<{ id: string; path: string; active: boolean; tags?: string[] }>;
-  addRule(rule: unknown): unknown;
-  receive(input: { endpointId: string; type: string; payload: unknown; rawBody: string; headers: Record<string, string> }): Promise<unknown>;
-  listEvents(filter?: { endpointId?: string; verified?: boolean; type?: string }): Array<unknown>;
-  counts(): { verified: number; unverified: number; delivered: number; total: number };
-}): void {
+export function registerWebhookMethods(
+  server: RpcServer,
+  whs: {
+    registerEndpoint(endpoint: unknown): unknown;
+    unregisterEndpoint(id: string): boolean;
+    listEndpoints(): Array<{ id: string; path: string; active: boolean; tags?: string[] }>;
+    addRule(rule: unknown): unknown;
+    receive(input: {
+      endpointId: string;
+      type: string;
+      payload: unknown;
+      rawBody: string;
+      headers: Record<string, string>;
+    }): Promise<unknown>;
+    listEvents(filter?: { endpointId?: string; verified?: boolean; type?: string }): Array<unknown>;
+    counts(): { verified: number; unverified: number; delivered: number; total: number };
+  },
+): void {
   server.method("webhooks.registerEndpoint", (params) => {
     const p = params as { endpoint?: { id?: string; path?: string; secret?: string } } | undefined;
     if (!p || !p.endpoint) throw new Error("webhooks.registerEndpoint requires { endpoint }");
@@ -536,7 +643,9 @@ export function registerWebhookMethods(server: RpcServer, whs: {
   });
 
   server.method("webhooks.receive", (params) => {
-    const p = params as { endpointId?: string; type?: string; payload?: unknown; rawBody?: string; headers?: Record<string, string> } | undefined;
+    const p = params as
+      | { endpointId?: string; type?: string; payload?: unknown; rawBody?: string; headers?: Record<string, string> }
+      | undefined;
     if (!p || typeof p.endpointId !== "string" || typeof p.type !== "string" || typeof p.rawBody !== "string") {
       throw new Error("webhooks.receive requires { endpointId, type, rawBody, headers }");
     }
@@ -568,13 +677,31 @@ export function registerWebhookMethods(server: RpcServer, whs: {
  *   control.status, control.health, control.metrics, control.control,
  *   control.phase
  */
-export function registerControlPlaneMethods(server: RpcServer, cp: {
-  status(statusInput?: { activeRuns?: number; queuedJobs?: number; activeSubagents?: number }): { phase: string; activeRuns: number; queuedJobs: number; activeSubagents: number; memoryUsageMb: number; uptimeMs: number; startedAt: string };
-  health(): Promise<{ overall: string; checks: Array<{ name: string; status: string; message?: string; checkedAt?: string }> }>;
-  metricsSnapshot(): Array<{ name: string; type: string; value: number; labels?: Record<string, string> }>;
-  control(request: { action: string; target?: string; reason?: string }): { action: string; accepted: boolean; message?: string };
-  getPhase(): string;
-}): void {
+export function registerControlPlaneMethods(
+  server: RpcServer,
+  cp: {
+    status(statusInput?: { activeRuns?: number; queuedJobs?: number; activeSubagents?: number }): {
+      phase: string;
+      activeRuns: number;
+      queuedJobs: number;
+      activeSubagents: number;
+      memoryUsageMb: number;
+      uptimeMs: number;
+      startedAt: string;
+    };
+    health(): Promise<{
+      overall: string;
+      checks: Array<{ name: string; status: string; message?: string; checkedAt?: string }>;
+    }>;
+    metricsSnapshot(): Array<{ name: string; type: string; value: number; labels?: Record<string, string> }>;
+    control(request: { action: string; target?: string; reason?: string }): {
+      action: string;
+      accepted: boolean;
+      message?: string;
+    };
+    getPhase(): string;
+  },
+): void {
   server.method("control.status", (params) => {
     const p = (params as { activeRuns?: number; queuedJobs?: number; activeSubagents?: number } | undefined) ?? {};
     return cp.status(p);

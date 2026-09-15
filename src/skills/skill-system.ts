@@ -19,12 +19,7 @@
  * context, not call functions).
  */
 
-import type {
-  SkillInjection,
-  SkillProvider,
-  SkillSelectionInput,
-  SkillSystemOptions,
-} from "./formal-types.js";
+import type { SkillInjection, SkillProvider, SkillSelectionInput, SkillSystemOptions } from "./formal-types.js";
 import { SkillLoader } from "./skill-loader.js";
 import { SkillCatalog } from "./skill-catalog.js";
 import { SkillSelector } from "./skill-selector.js";

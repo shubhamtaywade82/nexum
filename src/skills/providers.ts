@@ -46,7 +46,9 @@ export class InMemorySkillProvider implements SkillProvider {
   }
 
   async list(): Promise<SkillMeta[]> {
-    return [...this.skills.values()].map(({ body: _body, references: _refs, scripts: _s, templates: _t, ...meta }) => meta);
+    return [...this.skills.values()].map(
+      ({ body: _body, references: _refs, scripts: _s, templates: _t, ...meta }) => meta,
+    );
   }
 
   async load(meta: SkillMeta): Promise<SkillContent> {

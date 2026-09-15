@@ -22,16 +22,11 @@
 
 import type { AgentRuntime, ExecutionContext, ExecutionResult } from "../core/types.js";
 import type { AgentRegistry } from "../runtime/agent/agent-runtime.js";
-import { newAgentId, newDelegationId, newRunId } from "../core/identity.js";
+import { newDelegationId, newRunId } from "../core/identity.js";
 
 // ── Contracts ───────────────────────────────────────────────────────────────
 
-export type SubagentProviderType =
-  | "in-process"
-  | "process"
-  | "acp"
-  | "sdk"
-  | "external";
+export type SubagentProviderType = "in-process" | "process" | "acp" | "sdk" | "external";
 
 export interface SubagentSpawnRequest {
   /** Which provider backend to use. */
@@ -79,13 +74,7 @@ export interface SubagentHandle {
   fork(): Promise<SubagentHandle>;
 }
 
-export type SubagentState =
-  | "pending"
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type SubagentState = "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
 
 export interface SubagentResult {
   subagentId: string;
@@ -151,10 +140,7 @@ export class SubagentService {
     return [...this.providers.keys()];
   }
 
-  async spawn(
-    request: SubagentSpawnRequest,
-    parent?: ExecutionContext,
-  ): Promise<SubagentHandle> {
+  async spawn(request: SubagentSpawnRequest, parent?: ExecutionContext): Promise<SubagentHandle> {
     const provider = this.providers.get(request.provider);
     if (!provider) {
       throw new Error(
@@ -163,9 +149,7 @@ export class SubagentService {
       );
     }
     if (this.activeCount >= this.maxConcurrent) {
-      throw new Error(
-        `subagent concurrency limit reached (${this.activeCount}/${this.maxConcurrent})`,
-      );
+      throw new Error(`subagent concurrency limit reached (${this.activeCount}/${this.maxConcurrent})`);
     }
     const sessionId = parent?.sessionId ?? "default";
     const sessionCount = this.perSessionCount.get(sessionId) ?? 0;
@@ -240,10 +224,7 @@ export class InProcessSubagentProvider implements SubagentProvider {
 
   constructor(private readonly opts: InProcessProviderOptions) {}
 
-  async spawn(
-    request: SubagentSpawnRequest,
-    parent?: ExecutionContext,
-  ): Promise<SubagentHandle> {
+  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
     const subagentId = newDelegationId();
     const providerRunId = newRunId();
 
@@ -258,7 +239,7 @@ export class InProcessSubagentProvider implements SubagentProvider {
       continuable: request.continuable ?? false,
       state: "pending",
       request,
-      async send(message: string): Promise<SubagentResult> {
+      async send(_message: string): Promise<SubagentResult> {
         // For continuable children, send appends to the session.
         // For one-shot children, send is equivalent to spawning a new run
         // with the same goal + the new message.
@@ -343,10 +324,7 @@ export class ProcessSubagentProvider implements SubagentProvider {
     this.opts = opts;
   }
 
-  async spawn(
-    request: SubagentSpawnRequest,
-    _parent?: ExecutionContext,
-  ): Promise<SubagentHandle> {
+  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
     const subagentId = newDelegationId();
     const providerRunId = newRunId();
     const continuable = request.continuable ?? false;
@@ -389,8 +367,12 @@ export class ProcessSubagentProvider implements SubagentProvider {
         handleRef.state = "failed";
       }
     });
-    child.stdout?.on("error", () => { /* best-effort — stdout closed */ });
-    child.stderr?.on("error", () => { /* best-effort — stderr closed */ });
+    child.stdout?.on("error", () => {
+      /* best-effort — stdout closed */
+    });
+    child.stderr?.on("error", () => {
+      /* best-effort — stderr closed */
+    });
     child.on("error", (err) => {
       // Spawn errors (e.g. ENOENT for missing binary).
       if (rejectResult) {
@@ -401,7 +383,10 @@ export class ProcessSubagentProvider implements SubagentProvider {
 
     // Buffer stderr (for diagnostics) and set up JSON-RPC line parsing.
     const stderrBuffer: string[] = [];
-    const pendingRequests = new Map<number | string | null, { resolve: (r: SubagentResult) => void; reject: (e: Error) => void }>();
+    const pendingRequests = new Map<
+      number | string | null,
+      { resolve: (r: SubagentResult) => void; reject: (e: Error) => void }
+    >();
     let nextRequestId = 1;
     let stdoutBuffer = "";
 
@@ -418,7 +403,11 @@ export class ProcessSubagentProvider implements SubagentProvider {
         stdoutBuffer = stdoutBuffer.slice(newlineIdx + 1);
         if (!line) continue;
         try {
-          const msg = JSON.parse(line) as { id?: number | string | null; result?: unknown; error?: { code: number; message: string; data?: unknown } };
+          const msg = JSON.parse(line) as {
+            id?: number | string | null;
+            result?: unknown;
+            error?: { code: number; message: string; data?: unknown };
+          };
           if (msg.id !== undefined) {
             const pending = pendingRequests.get(msg.id);
             if (pending) {
@@ -426,7 +415,12 @@ export class ProcessSubagentProvider implements SubagentProvider {
               if (msg.error) {
                 pending.reject(new Error(`JSON-RPC error ${msg.error.code}: ${msg.error.message}`));
               } else {
-                const result = msg.result as { status?: string; output?: string; error?: string; metadata?: Record<string, unknown> };
+                const result = msg.result as {
+                  status?: string;
+                  output?: string;
+                  error?: string;
+                  metadata?: Record<string, unknown>;
+                };
                 pending.resolve({
                   subagentId,
                   status: (result?.status as SubagentResult["status"]) ?? "completed",
@@ -505,6 +499,7 @@ export class ProcessSubagentProvider implements SubagentProvider {
       }
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
     const handle: SubagentHandle = {
       subagentId,
@@ -549,7 +544,11 @@ export class ProcessSubagentProvider implements SubagentProvider {
           proc.kill("SIGTERM");
           setTimeout(() => {
             if (!proc.killed) {
-              try { proc.kill("SIGKILL"); } catch { /* best-effort */ }
+              try {
+                proc.kill("SIGKILL");
+              } catch {
+                /* best-effort */
+              }
             }
           }, 2000);
         }
@@ -597,7 +596,11 @@ export class ProcessSubagentProvider implements SubagentProvider {
           new Promise<void>((resolve) => {
             const timer = setTimeout(() => {
               if (!child.killed) {
-                try { child.kill("SIGKILL"); } catch { /* best-effort */ }
+                try {
+                  child.kill("SIGKILL");
+                } catch {
+                  /* best-effort */
+                }
               }
               resolve();
             }, 2000);
@@ -605,7 +608,11 @@ export class ProcessSubagentProvider implements SubagentProvider {
               clearTimeout(timer);
               resolve();
             });
-            try { child.kill("SIGTERM"); } catch { /* best-effort */ }
+            try {
+              child.kill("SIGTERM");
+            } catch {
+              /* best-effort */
+            }
           }),
         );
       }
@@ -615,7 +622,11 @@ export class ProcessSubagentProvider implements SubagentProvider {
     // Cancel any handles still in a running/pending state.
     for (const handle of this.handles.values()) {
       if (handle.state === "running" || handle.state === "pending") {
-        try { await handle.interrupt("host shutdown"); } catch { /* best-effort */ }
+        try {
+          await handle.interrupt("host shutdown");
+        } catch {
+          /* best-effort */
+        }
         handle.state = "cancelled";
       }
     }
@@ -652,10 +663,7 @@ export class ACPSubagentProvider implements SubagentProvider {
     this.opts = opts;
   }
 
-  async spawn(
-    request: SubagentSpawnRequest,
-    _parent?: ExecutionContext,
-  ): Promise<SubagentHandle> {
+  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
     if (!this.opts.endpoint) {
       throw new Error("ACPSubagentProvider requires an endpoint (set via AcpProviderOptions.endpoint)");
     }
@@ -671,6 +679,7 @@ export class ACPSubagentProvider implements SubagentProvider {
     });
     resultPromise.catch(() => {});
     const acpSessionId = `acp_${subagentId}`;
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
 
     const handle: SubagentHandle = {
@@ -692,7 +701,7 @@ export class ACPSubagentProvider implements SubagentProvider {
             },
             body: JSON.stringify({ message }),
           });
-          const data = await response.json() as { output?: string; error?: string };
+          const data = (await response.json()) as { output?: string; error?: string };
           return {
             subagentId,
             status: data.error ? "failed" : "completed",
@@ -735,10 +744,7 @@ export class ACPSubagentProvider implements SubagentProvider {
         return handle.send("resume");
       },
       async fork(): Promise<SubagentHandle> {
-        return self.spawn(
-          { ...request, goal: `${request.goal} (forked from ${subagentId})` },
-          _parent,
-        );
+        return self.spawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` }, _parent);
       },
     };
 
@@ -759,7 +765,7 @@ export class ACPSubagentProvider implements SubagentProvider {
             contextHandoff: request.contextHandoff,
           }),
         });
-        const data = await response.json() as { output?: string; error?: string; sessionId?: string };
+        const data = (await response.json()) as { output?: string; error?: string; sessionId?: string };
         if (resolveResult) {
           resolveResult({
             subagentId,
@@ -788,7 +794,11 @@ export class ACPSubagentProvider implements SubagentProvider {
   async stopAll(): Promise<void> {
     for (const handle of this.handles.values()) {
       if (handle.state === "running" || handle.state === "pending") {
-        try { await handle.interrupt("host shutdown"); } catch { /* best-effort */ }
+        try {
+          await handle.interrupt("host shutdown");
+        } catch {
+          /* best-effort */
+        }
       }
     }
   }
@@ -825,10 +835,7 @@ export class SDKSubagentProvider implements SubagentProvider {
     this.opts = opts;
   }
 
-  async spawn(
-    request: SubagentSpawnRequest,
-    _parent?: ExecutionContext,
-  ): Promise<SubagentHandle> {
+  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
     if (!this.opts.runtimeFactory) {
       throw new Error("SDKSubagentProvider requires a runtimeFactory (set via SdkProviderOptions)");
     }
@@ -848,6 +855,7 @@ export class SDKSubagentProvider implements SubagentProvider {
     });
     resultPromise.catch(() => {});
 
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
     const messages: string[] = [];
 
@@ -885,10 +893,7 @@ export class SDKSubagentProvider implements SubagentProvider {
         return handle.send("resume");
       },
       async fork(): Promise<SubagentHandle> {
-        return self.spawn(
-          { ...request, goal: `${request.goal} (forked from ${subagentId})` },
-          _parent,
-        );
+        return self.spawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` }, _parent);
       },
     };
 
@@ -920,7 +925,11 @@ export class SDKSubagentProvider implements SubagentProvider {
   async stopAll(): Promise<void> {
     for (const handle of this.handles.values()) {
       if (handle.state === "running" || handle.state === "pending") {
-        try { await handle.interrupt("host shutdown"); } catch { /* best-effort */ }
+        try {
+          await handle.interrupt("host shutdown");
+        } catch {
+          /* best-effort */
+        }
         handle.state = "cancelled";
       }
     }
@@ -964,10 +973,7 @@ export class ExternalAgentSubagentProvider implements SubagentProvider {
     this.opts = opts;
   }
 
-  async spawn(
-    request: SubagentSpawnRequest,
-    _parent?: ExecutionContext,
-  ): Promise<SubagentHandle> {
+  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
     const subagentId = newDelegationId();
     const providerRunId = newRunId();
     const continuable = request.continuable ?? false;
@@ -980,6 +986,7 @@ export class ExternalAgentSubagentProvider implements SubagentProvider {
     });
     resultPromise.catch(() => {});
 
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
 
     const handle: SubagentHandle = {
@@ -1012,10 +1019,7 @@ export class ExternalAgentSubagentProvider implements SubagentProvider {
         return handle.send("resume");
       },
       async fork(): Promise<SubagentHandle> {
-        return self.spawn(
-          { ...request, goal: `${request.goal} (forked from ${subagentId})` },
-          _parent,
-        );
+        return self.spawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` }, _parent);
       },
     };
 
@@ -1047,7 +1051,11 @@ export class ExternalAgentSubagentProvider implements SubagentProvider {
   async stopAll(): Promise<void> {
     for (const handle of this.handles.values()) {
       if (handle.state === "running" || handle.state === "pending") {
-        try { await handle.interrupt("host shutdown"); } catch { /* best-effort */ }
+        try {
+          await handle.interrupt("host shutdown");
+        } catch {
+          /* best-effort */
+        }
         handle.state = "cancelled";
       }
     }

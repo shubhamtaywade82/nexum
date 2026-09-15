@@ -7,9 +7,7 @@ import { SessionQueryService } from "../../../session-query/index.js";
 import { definePlugin } from "../types.js";
 
 /** Token for the shared SessionQueryService. */
-export const SESSION_QUERY_SERVICE = defineCapabilityToken<SessionQueryService>(
-  "nexum:session-query:service",
-);
+export const SESSION_QUERY_SERVICE = defineCapabilityToken<SessionQueryService>("nexum:session-query:service");
 
 export interface SessionQueryServicePluginOptions {
   /** Pass through to SessionQueryServiceOptions. */

@@ -5,11 +5,7 @@ import { describe, it, expect, beforeEach } from "@jest/globals";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  SkillSystem,
-  FilesystemSkillProvider,
-  InMemorySkillProvider,
-} from "../../src/skills/index.js";
+import { SkillSystem, FilesystemSkillProvider, InMemorySkillProvider } from "../../src/skills/index.js";
 import type { SkillContent } from "../../src/skills/types.js";
 
 // Re-export for test convenience.

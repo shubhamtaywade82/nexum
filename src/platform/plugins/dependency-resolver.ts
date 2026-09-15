@@ -62,7 +62,7 @@ export function resolvePluginOrder(plugins: NexumPlugin[]): ResolveResult {
   const indeg = new Map<PluginId, number>();
   for (const id of ids) indeg.set(id, 0);
   for (const id of ids) {
-    for (const d of deps.get(id) ?? []) {
+    for (const _d of deps.get(id) ?? []) {
       indeg.set(id, (indeg.get(id) ?? 0) + 1);
     }
   }

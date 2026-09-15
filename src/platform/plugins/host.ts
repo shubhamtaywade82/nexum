@@ -119,15 +119,11 @@ export class DefaultPluginHost implements PluginHost {
     const plugins = this.registry.plugins();
     const result = resolvePluginOrder(plugins);
     if (this.failOnCycle && result.cycles.length > 0) {
-      const described = result.cycles
-        .map((c) => c.join(" → "))
-        .join("; ");
+      const described = result.cycles.map((c) => c.join(" → ")).join("; ");
       throw new Error(`dependency cycle(s) detected: ${described}`);
     }
     if (this.failOnMissingDependency && result.missing.length > 0) {
-      const described = result.missing
-        .map((m) => `${m.id} → [${m.missing.join(", ")}]`)
-        .join("; ");
+      const described = result.missing.map((m) => `${m.id} → [${m.missing.join(", ")}]`).join("; ");
       throw new Error(`missing dependencies: ${described}`);
     }
     return result.order;
@@ -143,7 +139,6 @@ export class DefaultPluginHost implements PluginHost {
 
     for (const id of order) {
       const plugin = this.registry.requirePlugin(id);
-      const record = this.registry.require(id);
 
       // setup()
       if (plugin.setup) {
@@ -259,6 +254,7 @@ export class DefaultPluginHost implements PluginHost {
   // ── internals ───────────────────────────────────────────────────────────
 
   private makeContext(manifest: NexumPlugin["manifest"]): PluginContext {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
     return {
       manifest,
