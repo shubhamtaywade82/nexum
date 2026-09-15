@@ -108,6 +108,7 @@ export { CAPABILITY_WEIGHTS } from "./models/router/model-selection.js";
 
 // ── The application-level Agent (CLI/TUI composition root) ──────────────────
 export { Agent, type AgentEvents, type AgentOptions } from "./cli/agent.js";
+export { startRpcServer, type RpcCliOptions } from "./cli/rpc.js";
 
 // ── Tool packs (products mount these) ───────────────────────────────────────
 export {
@@ -339,6 +340,7 @@ export {
   NodeFetchProvider,
   SimpleWebContentExtractor,
   StubSearchProvider,
+  DuckDuckGoSearchProvider,
   FileSearchProvider,
   defaultWebService,
   type WebSearchResult,
@@ -419,6 +421,7 @@ export {
   type MarketplaceSource,
   type MarketplaceServiceOptions,
   type GitMarketplaceSourceOptions,
+  type NpmMarketplaceSourceOptions,
 } from "./marketplace/index.js";
 
 // Control plane (observability + control)

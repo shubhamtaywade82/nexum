@@ -275,11 +275,116 @@ export class SimpleWebContentExtractor implements WebContentExtractor {
 
 /**
  * StubSearchProvider — returns empty results (for tests / placeholder).
+ *
+ * @deprecated Use DuckDuckGoSearchProvider as the default. StubSearchProvider
+ * is kept for tests and offline use.
  */
 export class StubSearchProvider implements SearchProvider {
   readonly id = "stub-search";
   async search(_query: string, _opts?: { maxResults?: number }): Promise<WebSearchResult[]> {
     return [];
+  }
+}
+
+/**
+ * DuckDuckGoSearchProvider — performs real web searches via DuckDuckGo's
+ * HTML Lite endpoint (https://lite.duckduckgo.com/lite/).
+ *
+ * Why DuckDuckGo Lite?
+ *   - No API key required (works out of the box).
+ *   - No rate limits for reasonable personal/research use.
+ *   - HTML-only response (small, parseable, no JS).
+ *   - Privacy-respecting (no tracking, no user identification).
+ *
+ * Parsing:
+ *   - Fetches the HTML search results page.
+ *   - Extracts result anchors + snippets via regex (the HTML is stable
+ *     enough for this; if DuckDuckGo changes the layout, parsing will
+ *     degrade gracefully by returning fewer results).
+ *
+ * This is the default SearchProvider for `defaultWebService()`. For
+ * production-grade search (Bing, Google, Brave, SearXNG), implement a
+ * custom `SearchProvider` against the upstream API and pass it to
+ * `WebService.setSearchProvider()`.
+ *
+ * @experimental
+ */
+export class DuckDuckGoSearchProvider implements SearchProvider {
+  readonly id = "duckduckgo";
+  private readonly fetchProvider: FetchProvider;
+  private readonly extractor: WebContentExtractor;
+  private readonly endpoint: string;
+
+  constructor(opts?: {
+    fetchProvider?: FetchProvider;
+    extractor?: WebContentExtractor;
+    endpoint?: string;
+  }) {
+    this.fetchProvider = opts?.fetchProvider ?? new NodeFetchProvider();
+    this.extractor = opts?.extractor ?? new SimpleWebContentExtractor();
+    this.endpoint = opts?.endpoint ?? "https://lite.duckduckgo.com/lite/";
+  }
+
+  async search(query: string, opts?: { maxResults?: number }): Promise<WebSearchResult[]> {
+    const max = opts?.maxResults ?? 10;
+    // POST a form-encoded query to DuckDuckGo Lite.
+    // The endpoint expects: q=<query>&kl=<region> (default: us-en)
+    const body = `q=${encodeURIComponent(query)}&kl=us-en`;
+    let result: WebFetchResult;
+    try {
+      result = await this.fetchProvider.fetch(this.endpoint, {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "nexum-agent-runtime/2.0 (+https://github.com/shubhamtaywade82/nexum)",
+          "Accept": "text/html",
+        },
+        timeoutMs: 15000,
+      });
+    } catch {
+      return [];
+    }
+    if (result.status !== 200) return [];
+    // Parse the HTML for result links + snippets.
+    // DuckDuckGo Lite uses <a class="result-link" href="...">title</a>
+    // and a sibling <td class="result-snippet">snippet</td>.
+    return this.parseResults(result.body, max);
+  }
+
+  /**
+   * Parse DuckDuckGo Lite HTML into WebSearchResult[].
+   * Uses simple regex matching; degrades gracefully on layout changes.
+   */
+  private parseResults(html: string, max: number): WebSearchResult[] {
+    const results: WebSearchResult[] = [];
+    // Match anchor tags that link to external URLs (skip duckduckgo.com).
+    // DuckDuckGo Lite wraps results in <a class="result-link" href="URL">Title</a>
+    const anchorRegex = /<a[^>]*class="[^"]*result-link[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = anchorRegex.exec(html)) !== null && results.length < max) {
+      const url = decodeHtmlEntities(match[1]);
+      // Skip internal DuckDuckGo links.
+      if (url.startsWith("https://duckduckgo.com") || url.startsWith("/")) continue;
+      const title = decodeHtmlEntities(stripTags(match[2])).trim();
+      if (!title || !url) continue;
+      // Look for a snippet near this anchor (next ~500 chars of HTML).
+      const afterAnchor = html.slice(match.index + match[0].length, match.index + match[0].length + 1000);
+      const snippetMatch = afterAnchor.match(/<td[^>]*class="[^"]*result-snippet[^"]*"[^>]*>([\s\S]*?)<\/td>/i);
+      const snippet = snippetMatch ? decodeHtmlEntities(stripTags(snippetMatch[1])).trim() : "";
+      results.push({ title, url, snippet });
+    }
+
+    // Fallback: if the result-link regex didn't match, try a more permissive
+    // anchor extraction (some DDG layouts vary).
+    if (results.length === 0) {
+      const fallbackAnchor = /<a[^>]*href="(https?:\/\/(?!duckduckgo\.com)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+      while ((match = fallbackAnchor.exec(html)) !== null && results.length < max) {
+        const url = decodeHtmlEntities(match[1]);
+        const title = decodeHtmlEntities(stripTags(match[2])).trim();
+        if (!title || !url) continue;
+        results.push({ title, url, snippet: "" });
+      }
+    }
+    return results;
   }
 }
 
@@ -317,11 +422,28 @@ export class FileSearchProvider implements SearchProvider {
   }
 }
 
-/** Factory: default web service with Node fetch + simple extractor. */
+// ── HTML parsing helpers ────────────────────────────────────────────────────
+
+function stripTags(html: string): string {
+  return html.replace(/<[^>]+>/g, "");
+}
+
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+/** Factory: default web service with Node fetch + DuckDuckGo search + simple extractor. */
 export function defaultWebService(): WebService {
+  const fetchProvider = new NodeFetchProvider();
   return new WebService()
-    .setFetchProvider(new NodeFetchProvider())
-    .setHttpProvider(new NodeFetchProvider())
+    .setFetchProvider(fetchProvider)
+    .setHttpProvider(fetchProvider)
     .setExtractor(new SimpleWebContentExtractor())
-    .setSearchProvider(new StubSearchProvider());
+    .setSearchProvider(new DuckDuckGoSearchProvider({ fetchProvider }));
 }
