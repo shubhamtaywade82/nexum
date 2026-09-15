@@ -33,6 +33,22 @@ import { DynamicToolSelector } from "../tools/discovery.js";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
 
+// ── Agent-harness primitives (P0+P1+P2) ──────────────────────────────────
+import { DefaultPluginHost, standardProfile, type PluginHost } from "../platform/plugins/index.js";
+import { SettingsService, registerDefaultSpecs } from "../settings/index.js";
+import { ProfileRegistry, registerBuiltinProfiles } from "../profiles/index.js";
+import { ControlPlaneService, registerDefaultMetrics } from "../control-plane/index.js";
+import { CredentialService } from "../credentials/index.js";
+import { JobService } from "../jobs/index.js";
+import { SubagentService } from "../subagents/index.js";
+import { CompactionService } from "../compaction/index.js";
+import { SessionQueryService } from "../session-query/index.js";
+import { ContextService, defaultContextProviders } from "../context-providers/index.js";
+import { AttachmentStore } from "../attachments/index.js";
+import { WorkflowService } from "../workflow/index.js";
+import { WebhookService } from "../webhooks/index.js";
+import { WebService, defaultWebService } from "../web-service/index.js";
+
 import { LOCAL_DELEGATION_SYSTEM_ADDENDUM } from "../tools/delegate-tool.js";
 import { detectEscalationHint, isLookupPrompt } from "./agent-escalation.js";
 // ── Kernel (agent execution kernel) ───────────────────────────────────
@@ -110,6 +126,36 @@ export class Agent {
   readonly approvals: ApprovalManager;
   /** Run scopes, cancellation, planned missions. */
   readonly execution: ExecutionManager;
+
+  // ── Agent-harness primitives (P0+P1+P2) ──────────────────────────────
+  /** Plugin host mounting the standard profile on startup. */
+  readonly pluginHost: PluginHost;
+  /** Runtime-introspectable + mutable configuration. */
+  readonly settings: SettingsService;
+  /** Profile registry (built-in + user profiles). */
+  readonly profiles: ProfileRegistry;
+  /** Runtime observability + control (metrics, health, controls). */
+  readonly controlPlane: ControlPlaneService;
+  /** Managed credentials (env/file/keychain/vault). */
+  readonly credentials: CredentialService;
+  /** Generic background job management. */
+  readonly jobs: JobService;
+  /** Multi-provider subagent service (in-process, process, ACP, SDK, external). */
+  readonly subagents: SubagentService;
+  /** Token-aware context compaction. */
+  readonly compaction: CompactionService;
+  /** Read-only query layer over durable session data. */
+  readonly sessionQuery: SessionQueryService;
+  /** Composable context providers (workspace, time, git, domain, ...). */
+  readonly contextProviders: ContextService;
+  /** Content-addressed attachment storage. */
+  readonly attachments: AttachmentStore;
+  /** Durable, resumable workflow runtime. */
+  readonly workflows: WorkflowService;
+  /** Verified external event ingress. */
+  readonly webhooks: WebhookService;
+  /** Separated web capability providers (search/fetch/http/browser). */
+  readonly web: WebService;
 
   private readonly planCheckpoint: CheckpointStore;
   private readonly loopDetector = new LoopDetector();
@@ -268,6 +314,95 @@ export class Agent {
       runStep: (message) => this.runUserMessage(message),
       onStepChange: (step) => this.emit("onMissionStep", step),
     });
+
+    // ── Agent-harness primitives wiring (P0+P1+P2) ─────────────────────
+    // Mount the standard plugin profile + all P0-P2 services on the Agent
+    // composition root. This makes every Nexum CLI instance a full agent
+    // host with plugin composition, settings, control plane, credentials,
+    // jobs, subagents, compaction, session query, context providers,
+    // attachments, workflows, webhooks, and web service.
+    //
+    // The plugin host is constructed but NOT started here — the caller
+    // (CLI / TUI) is responsible for calling `await agent.startHost()`
+    // before the first user message, so that plugin setup doesn't block
+    // constructor-time concerns like UI rendering.
+    this.pluginHost = new DefaultPluginHost({ workspaceRoot: cfg.workspaceRoot });
+    this.pluginHost.registerAll(standardProfile.plugins());
+
+    // Settings service with default specs.
+    this.settings = new SettingsService({ rootDir: statePaths.dir });
+    registerDefaultSpecs(this.settings);
+
+    // Profile registry with built-in profiles.
+    this.profiles = new ProfileRegistry();
+    registerBuiltinProfiles(this.profiles);
+
+    // Control plane with default metrics.
+    this.controlPlane = new ControlPlaneService();
+    registerDefaultMetrics(this.controlPlane);
+
+    // Credential service (env + file providers).
+    this.credentials = new CredentialService({ rootDir: statePaths.dir });
+
+    // Job service.
+    this.jobs = new JobService({ maxConcurrent: 8 });
+
+    // Subagent service (in-process provider wired to this runtime).
+    this.subagents = new SubagentService({
+      runtime: this.runtime,
+      agents: this.runtime.agents,
+      maxConcurrent: this.settings.get("subagent.maxConcurrent") as number | undefined,
+      maxTotalPerSession: this.settings.get("subagent.maxPerSession") as number | undefined,
+    });
+
+    // Compaction service.
+    this.compaction = new CompactionService();
+
+    // Session query service (backed by the workspace's session + event stores).
+    this.sessionQuery = new SessionQueryService({
+      // These are wired later when the embedding app provides them — the
+      // service is functional without them (returns empty results).
+    });
+
+    // Context providers (default set).
+    this.contextProviders = new ContextService();
+    for (const provider of defaultContextProviders()) {
+      this.contextProviders.registerProvider(provider);
+    }
+
+    // Attachment store.
+    this.attachments = new AttachmentStore({ rootDir: statePaths.dir });
+
+    // Workflow service (durable, persisted to .nexum/workflows/).
+    this.workflows = new WorkflowService({ rootDir: statePaths.dir });
+
+    // Webhook service (persisted to .nexum/webhooks/).
+    this.webhooks = new WebhookService({ rootDir: statePaths.dir });
+
+    // Web service (Node fetch + simple extractor).
+    this.web = defaultWebService();
+  }
+
+  /**
+   * Start the plugin host and all mounted services. Must be called before
+   * the first user message if any plugin contributes tools, models, or
+   * context that the agent needs. Safe to call multiple times.
+   */
+  async startHost(): Promise<void> {
+    await this.pluginHost.start();
+    this.controlPlane.start();
+    this.emit("onStatus", `plugin host started (${this.pluginHost.all().length} plugins)`);
+  }
+
+  /**
+   * Stop the plugin host and drain all services. Called on shutdown.
+   */
+  async stopHost(): Promise<void> {
+    this.controlPlane.drain();
+    await this.jobs.stopAll();
+    await this.subagents.stopAll();
+    await this.pluginHost.stop();
+    this.controlPlane.stop();
   }
 
   on<E extends AgentEventName>(event: E, handler: AgentEventHandler<E>): this {

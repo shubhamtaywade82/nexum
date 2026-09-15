@@ -154,6 +154,20 @@ const cfg = loadConfig();
   }
 
   const agent = new Agent({ config: cfg });
+  // Start the plugin host + all P0-P2 services before the first user
+  // message so plugins can contribute tools, models, and context.
+  // Failure here is non-fatal: the agent still works with whatever
+  // kernel + service plane loaded; plugins just won't be active.
+  try {
+    await agent.startHost();
+  } catch (err) {
+    bus.publish({
+      type: "logs.appended",
+      level: "warn",
+      source: "plugins",
+      message: `plugin host start failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
   agent.setProjectInfo(detectedProject);
 
   // Agent.on<E extends AgentEventName> is structurally compatible with
@@ -205,5 +219,11 @@ const cfg = loadConfig();
   registerForceQuitHandlers(() => instance.unmount(), disableFeatures);
   await instance.waitUntilExit();
   disableFeatures();
+  // Drain the plugin host + all services on shutdown.
+  try {
+    await agent.stopHost();
+  } catch {
+    // best-effort — process is exiting anyway
+  }
   process.exit(0);
 })();
