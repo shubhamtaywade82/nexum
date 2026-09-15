@@ -125,11 +125,14 @@ describe("DuckDuckGoSearchProvider", () => {
     expect(results[0].url).toBe("https://example.com/fallback");
   });
 
-  it("sends POST with form-encoded body and User-Agent header", async () => {
+  it("sends GET with query params and User-Agent header", async () => {
     mockFetch.response.body = "";
     await provider.search("test query");
     expect(mockFetch.calls.length).toBe(1);
-    expect(mockFetch.calls[0].opts?.headers?.["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    // URL should contain the query as a param (encodeURIComponent produces %20 for spaces).
+    expect(mockFetch.calls[0].url).toContain("q=test%20query");
+    expect(mockFetch.calls[0].url).toContain("kl=us-en");
+    // User-Agent header should identify Nexum.
     expect(mockFetch.calls[0].opts?.headers?.["User-Agent"]).toMatch(/nexum-agent-runtime/);
   });
 

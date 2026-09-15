@@ -29,7 +29,8 @@ import { EventEmitter } from "node:events";
 // ── Contracts ───────────────────────────────────────────────────────────────
 
 export type SettingValue = string | number | boolean | string[] | Record<string, unknown>;
-export type SettingNamespace = "model" | "tool" | "policy" | "sandbox" | "subagent" | "mcp" | "workspace" | "ui" | "custom";
+export type SettingNamespace =
+  "model" | "tool" | "policy" | "sandbox" | "subagent" | "mcp" | "workspace" | "ui" | "custom";
 
 export interface SettingSpec {
   /** Dotted path: "namespace.key" or "namespace.group.key". */
@@ -208,7 +209,13 @@ export class SettingsService extends EventEmitter {
   }
 
   /** Get a redacted view of all settings (for `nexum settings list`). */
-  redacted(): Array<{ key: string; label: string; value: SettingValue; namespace: SettingNamespace; editable: boolean }> {
+  redacted(): Array<{
+    key: string;
+    label: string;
+    value: SettingValue;
+    namespace: SettingNamespace;
+    editable: boolean;
+  }> {
     return this.list().map((s) => ({
       key: s.key,
       label: s.label,
@@ -280,7 +287,10 @@ export function registerDefaultSpecs(service: SettingsService): void {
     type: "string",
     namespace: "model",
     editable: true,
-    validate: (v) => (["scored", "local-first", "cloud-first"].includes(String(v)) ? undefined : "must be scored|local-first|cloud-first"),
+    validate: (v) =>
+      ["scored", "local-first", "cloud-first"].includes(String(v))
+        ? undefined
+        : "must be scored|local-first|cloud-first",
   });
   service.registerSpec({
     key: "model.maxConcurrent",
@@ -319,7 +329,8 @@ export function registerDefaultSpecs(service: SettingsService): void {
     type: "string",
     namespace: "policy",
     editable: true,
-    validate: (v) => (["parity", "standard", "restricted"].includes(String(v)) ? undefined : "must be parity|standard|restricted"),
+    validate: (v) =>
+      ["parity", "standard", "restricted"].includes(String(v)) ? undefined : "must be parity|standard|restricted",
   });
   service.registerSpec({
     key: "policy.autoApprove",
@@ -392,6 +403,7 @@ export function registerDefaultSpecs(service: SettingsService): void {
     type: "string",
     namespace: "ui",
     editable: true,
-    validate: (v) => (["compact", "comfortable", "spacious"].includes(String(v)) ? undefined : "must be compact|comfortable|spacious"),
+    validate: (v) =>
+      ["compact", "comfortable", "spacious"].includes(String(v)) ? undefined : "must be compact|comfortable|spacious",
   });
 }

@@ -16,7 +16,6 @@ import {
   ACPSubagentProvider,
   SDKSubagentProvider,
   ExternalAgentSubagentProvider,
-  type SubagentHandle,
 } from "../../src/subagents/index.js";
 import { DefaultAgentRuntime, devAgentDescriptor } from "../../src/runtime/agent/agent-runtime.js";
 
@@ -106,9 +105,7 @@ describe("ProcessSubagentProvider", () => {
 describe("ACPSubagentProvider", () => {
   it("spawn throws without an endpoint", async () => {
     const provider = new ACPSubagentProvider();
-    await expect(
-      provider.spawn({ provider: "acp", goal: "test" }),
-    ).rejects.toThrow(/requires an endpoint/);
+    await expect(provider.spawn({ provider: "acp", goal: "test" })).rejects.toThrow(/requires an endpoint/);
   });
 
   it("spawn returns a handle when endpoint is set (one-shot, may fail to connect)", async () => {
@@ -138,9 +135,7 @@ describe("SDKSubagentProvider", () => {
 
   it("spawn throws without a runtimeFactory", async () => {
     const provider = new SDKSubagentProvider();
-    await expect(
-      provider.spawn({ provider: "sdk", goal: "test" }),
-    ).rejects.toThrow(/requires a runtimeFactory/);
+    await expect(provider.spawn({ provider: "sdk", goal: "test" })).rejects.toThrow(/requires a runtimeFactory/);
   });
 
   it("spawns with an isolated runtime", async () => {
@@ -240,9 +235,9 @@ describe("SubagentService (with all providers)", () => {
   });
 
   it("throws when spawning with an unregistered provider", async () => {
-    await expect(
-      service.spawn({ provider: "acp", goal: "test" }),
-    ).rejects.toThrow(/no subagent provider registered for "acp"/);
+    await expect(service.spawn({ provider: "acp", goal: "test" })).rejects.toThrow(
+      /no subagent provider registered for "acp"/,
+    );
   });
 
   it("spawn + list + cancel", async () => {
@@ -268,8 +263,8 @@ describe("SubagentService (with all providers)", () => {
       });
     }
     // 5th should throw.
-    await expect(
-      service.spawn({ provider: "process", goal: "5th", continuable: true }),
-    ).rejects.toThrow(/concurrency limit/);
+    await expect(service.spawn({ provider: "process", goal: "5th", continuable: true })).rejects.toThrow(
+      /concurrency limit/,
+    );
   });
 });

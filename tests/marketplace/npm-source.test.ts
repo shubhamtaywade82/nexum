@@ -13,7 +13,9 @@ import { NpmMarketplaceSource } from "../../src/marketplace/index.js";
 // Save the original global fetch so we can restore it after each test.
 const originalFetch = global.fetch;
 
-function mockFetch(handler: (url: string) => { ok: boolean; json?: unknown; arrayBuffer?: ArrayBuffer; status?: number }): typeof fetch {
+function mockFetch(
+  handler: (url: string) => { ok: boolean; json?: unknown; arrayBuffer?: ArrayBuffer; status?: number },
+): typeof fetch {
   return (async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const response = handler(url);
@@ -225,10 +227,7 @@ describe("NpmMarketplaceSource", () => {
 
     it("throws when entry has no npmPackage", async () => {
       await expect(
-        source.download(
-          { id: "x", name: "X", version: "1.0.0", source: "npm" },
-          join(tmpDir, "x.tgz"),
-        ),
+        source.download({ id: "x", name: "X", version: "1.0.0", source: "npm" }, join(tmpDir, "x.tgz")),
       ).rejects.toThrow(/has no npmPackage/);
     });
 

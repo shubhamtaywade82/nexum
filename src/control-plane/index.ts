@@ -85,10 +85,10 @@ export interface RuntimeStatus {
 }
 
 export type ControlAction =
-  | "pause"      // stop accepting new work
-  | "resume"     // accept new work again
-  | "drain"      // finish in-flight work, then stop
-  | "shutdown";  // immediate shutdown
+  | "pause" // stop accepting new work
+  | "resume" // accept new work again
+  | "drain" // finish in-flight work, then stop
+  | "shutdown"; // immediate shutdown
 
 export interface ControlRequest {
   action: ControlAction;
@@ -163,7 +163,7 @@ export class ControlPlaneService extends EventEmitter {
     const key = metricKey(name, labels);
     const existing = this.values.get(key);
     const buckets = existing?.buckets ?? {};
-    const bucketKeys = (spec.buckets ?? [1, 5, 10, 50, 100, 500, 1000]);
+    const bucketKeys = spec.buckets ?? [1, 5, 10, 50, 100, 500, 1000];
     for (const boundary of bucketKeys) {
       if (value <= boundary) {
         const bucketKey = `<=${boundary}`;
@@ -307,31 +307,112 @@ export class ControlPlaneService extends EventEmitter {
 
 /** Register a default set of metrics for an agent runtime. */
 export function registerDefaultMetrics(service: ControlPlaneService): void {
-  service.registerMetric({ name: "agent.runs.total", type: "counter", description: "Total agent runs started", labels: ["agent"] });
-  service.registerMetric({ name: "agent.runs.active", type: "gauge", description: "Currently active agent runs", labels: ["agent"] });
-  service.registerMetric({ name: "agent.runs.completed", type: "counter", description: "Completed agent runs", labels: ["agent", "status"] });
-  service.registerMetric({ name: "agent.runs.failed", type: "counter", description: "Failed agent runs", labels: ["agent"] });
+  service.registerMetric({
+    name: "agent.runs.total",
+    type: "counter",
+    description: "Total agent runs started",
+    labels: ["agent"],
+  });
+  service.registerMetric({
+    name: "agent.runs.active",
+    type: "gauge",
+    description: "Currently active agent runs",
+    labels: ["agent"],
+  });
+  service.registerMetric({
+    name: "agent.runs.completed",
+    type: "counter",
+    description: "Completed agent runs",
+    labels: ["agent", "status"],
+  });
+  service.registerMetric({
+    name: "agent.runs.failed",
+    type: "counter",
+    description: "Failed agent runs",
+    labels: ["agent"],
+  });
 
-  service.registerMetric({ name: "tool.calls.total", type: "counter", description: "Total tool calls", labels: ["tool"] });
-  service.registerMetric({ name: "tool.calls.failed", type: "counter", description: "Failed tool calls", labels: ["tool"] });
-  service.registerMetric({ name: "tool.calls.duration_ms", type: "histogram", description: "Tool call duration (ms)", labels: ["tool"], buckets: [1, 10, 50, 100, 500, 1000, 5000] });
+  service.registerMetric({
+    name: "tool.calls.total",
+    type: "counter",
+    description: "Total tool calls",
+    labels: ["tool"],
+  });
+  service.registerMetric({
+    name: "tool.calls.failed",
+    type: "counter",
+    description: "Failed tool calls",
+    labels: ["tool"],
+  });
+  service.registerMetric({
+    name: "tool.calls.duration_ms",
+    type: "histogram",
+    description: "Tool call duration (ms)",
+    labels: ["tool"],
+    buckets: [1, 10, 50, 100, 500, 1000, 5000],
+  });
 
-  service.registerMetric({ name: "model.calls.total", type: "counter", description: "Total model calls", labels: ["model"] });
-  service.registerMetric({ name: "model.tokens.prompt", type: "counter", description: "Prompt tokens consumed", labels: ["model"] });
-  service.registerMetric({ name: "model.tokens.completion", type: "counter", description: "Completion tokens produced", labels: ["model"] });
-  service.registerMetric({ name: "model.latency_ms", type: "histogram", description: "Model call latency (ms)", labels: ["model"], buckets: [50, 200, 500, 1000, 5000, 30000] });
+  service.registerMetric({
+    name: "model.calls.total",
+    type: "counter",
+    description: "Total model calls",
+    labels: ["model"],
+  });
+  service.registerMetric({
+    name: "model.tokens.prompt",
+    type: "counter",
+    description: "Prompt tokens consumed",
+    labels: ["model"],
+  });
+  service.registerMetric({
+    name: "model.tokens.completion",
+    type: "counter",
+    description: "Completion tokens produced",
+    labels: ["model"],
+  });
+  service.registerMetric({
+    name: "model.latency_ms",
+    type: "histogram",
+    description: "Model call latency (ms)",
+    labels: ["model"],
+    buckets: [50, 200, 500, 1000, 5000, 30000],
+  });
 
   service.registerMetric({ name: "subagents.active", type: "gauge", description: "Currently active subagents" });
-  service.registerMetric({ name: "subagents.spawned", type: "counter", description: "Total subagents spawned", labels: ["provider"] });
+  service.registerMetric({
+    name: "subagents.spawned",
+    type: "counter",
+    description: "Total subagents spawned",
+    labels: ["provider"],
+  });
 
   service.registerMetric({ name: "jobs.active", type: "gauge", description: "Currently active jobs" });
-  service.registerMetric({ name: "jobs.completed", type: "counter", description: "Completed jobs", labels: ["status"] });
+  service.registerMetric({
+    name: "jobs.completed",
+    type: "counter",
+    description: "Completed jobs",
+    labels: ["status"],
+  });
 
   service.registerMetric({ name: "compaction.events", type: "counter", description: "Compaction events" });
-  service.registerMetric({ name: "compaction.tokens_saved", type: "counter", description: "Tokens saved by compaction" });
+  service.registerMetric({
+    name: "compaction.tokens_saved",
+    type: "counter",
+    description: "Tokens saved by compaction",
+  });
 
-  service.registerMetric({ name: "webhooks.received", type: "counter", description: "Webhook events received", labels: ["endpoint", "verified"] });
-  service.registerMetric({ name: "webhooks.delivered", type: "counter", description: "Webhook events delivered to handlers", labels: ["endpoint"] });
+  service.registerMetric({
+    name: "webhooks.received",
+    type: "counter",
+    description: "Webhook events received",
+    labels: ["endpoint", "verified"],
+  });
+  service.registerMetric({
+    name: "webhooks.delivered",
+    type: "counter",
+    description: "Webhook events delivered to handlers",
+    labels: ["endpoint"],
+  });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

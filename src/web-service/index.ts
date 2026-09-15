@@ -68,7 +68,11 @@ export interface FetchProvider {
 
 export interface HttpProvider {
   readonly id: string;
-  request(method: string, url: string, opts?: { headers?: Record<string, string>; body?: string; timeoutMs?: number }): Promise<WebFetchResult>;
+  request(
+    method: string,
+    url: string,
+    opts?: { headers?: Record<string, string>; body?: string; timeoutMs?: number },
+  ): Promise<WebFetchResult>;
 }
 
 export interface BrowserProvider {
@@ -155,7 +159,10 @@ export class WebService {
   }
 
   /** Fetch + extract content (convenience method). */
-  async fetchAndExtract(url: string, opts?: { headers?: Record<string, string>; timeoutMs?: number }): Promise<WebContentExtraction> {
+  async fetchAndExtract(
+    url: string,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number },
+  ): Promise<WebContentExtraction> {
     const result = await this.fetch(url, opts);
     if (!this.extractor) {
       return {
@@ -308,11 +315,7 @@ export class DuckDuckGoSearchProvider implements SearchProvider {
   private readonly extractor: WebContentExtractor;
   private readonly endpoint: string;
 
-  constructor(opts?: {
-    fetchProvider?: FetchProvider;
-    extractor?: WebContentExtractor;
-    endpoint?: string;
-  }) {
+  constructor(opts?: { fetchProvider?: FetchProvider; extractor?: WebContentExtractor; endpoint?: string }) {
     this.fetchProvider = opts?.fetchProvider ?? new NodeFetchProvider();
     this.extractor = opts?.extractor ?? new SimpleWebContentExtractor();
     this.endpoint = opts?.endpoint ?? "https://lite.duckduckgo.com/lite/";
@@ -320,16 +323,15 @@ export class DuckDuckGoSearchProvider implements SearchProvider {
 
   async search(query: string, opts?: { maxResults?: number }): Promise<WebSearchResult[]> {
     const max = opts?.maxResults ?? 10;
-    // POST a form-encoded query to DuckDuckGo Lite.
-    // The endpoint expects: q=<query>&kl=<region> (default: us-en)
-    const body = `q=${encodeURIComponent(query)}&kl=us-en`;
+    // DuckDuckGo Lite accepts both GET and POST; use GET with URL params
+    // (simpler + cacheable + matches the FetchProvider.fetch() signature).
+    const url = `${this.endpoint}?q=${encodeURIComponent(query)}&kl=us-en`;
     let result: WebFetchResult;
     try {
-      result = await this.fetchProvider.fetch(this.endpoint, {
+      result = await this.fetchProvider.fetch(url, {
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
           "User-Agent": "nexum-agent-runtime/2.0 (+https://github.com/shubhamtaywade82/nexum)",
-          "Accept": "text/html",
+          Accept: "text/html",
         },
         timeoutMs: 15000,
       });

@@ -28,8 +28,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { workspaceStateDir, globalStateDir } from "../platform/paths.js";
-import type { NexumPlugin, PluginManifest } from "../platform/plugins/types.js";
-import type { SettingValue, SettingNamespace } from "../settings/index.js";
+import type { NexumPlugin } from "../platform/plugins/types.js";
+import type { SettingValue } from "../settings/index.js";
 
 // ── Contracts ───────────────────────────────────────────────────────────────
 
@@ -107,9 +107,7 @@ export class ProfileRegistry {
   require(id: string): ProfileRecord {
     const rec = this.profiles.get(id);
     if (!rec) {
-      throw new Error(
-        `unknown profile "${id}". Registered: ${this.ids().sort().join(", ") || "(none)"}`,
-      );
+      throw new Error(`unknown profile "${id}". Registered: ${this.ids().sort().join(", ") || "(none)"}`);
     }
     return rec;
   }
@@ -388,10 +386,7 @@ function isValidProfileBundle(value: unknown): value is ProfileBundle {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return (
-    typeof v.id === "string" &&
-    typeof v.name === "string" &&
-    typeof v.version === "string" &&
-    Array.isArray(v.plugins)
+    typeof v.id === "string" && typeof v.name === "string" && typeof v.version === "string" && Array.isArray(v.plugins)
   );
 }
 

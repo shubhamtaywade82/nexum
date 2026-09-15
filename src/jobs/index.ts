@@ -30,8 +30,7 @@
  * service itself has no concept of dependencies.
  */
 
-import { randomUUID } from "node:crypto";
-import { newTaskId, type TaskId } from "../core/identity.js";
+import { newTaskId } from "../core/identity.js";
 import { CancellationRegistry, CancelledError, isAbortError } from "../core/cancellation/cancellation.js";
 import { ConcurrencyGate } from "../core/concurrency/gate.js";
 
@@ -62,13 +61,7 @@ export interface JobSpec<T = unknown> {
   scope?: { sessionId?: string; runId?: string };
 }
 
-export type JobState =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "timed-out";
+export type JobState = "pending" | "running" | "completed" | "failed" | "cancelled" | "timed-out";
 
 export interface JobRecord {
   id: JobId;
@@ -222,9 +215,7 @@ export class JobService {
 
   /** Stop all pending/running jobs (host shutdown). */
   async stopAll(): Promise<void> {
-    const active = [...this.jobs.values()].filter(
-      (r) => r.state === "pending" || r.state === "running",
-    );
+    const active = [...this.jobs.values()].filter((r) => r.state === "pending" || r.state === "running");
     await Promise.allSettled(active.map((r) => this.cancel(r.id, "host shutdown")));
   }
 
@@ -277,12 +268,7 @@ export class JobService {
     void maxLines;
   }
 
-  private finishJob(
-    id: JobId,
-    state: JobState,
-    result?: unknown,
-    error?: string,
-  ): void {
+  private finishJob(id: JobId, state: JobState, result?: unknown, error?: string): void {
     const record = this.jobs.get(id);
     if (!record) return;
     record.state = state;

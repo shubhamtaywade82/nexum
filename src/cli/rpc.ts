@@ -36,11 +36,7 @@
 
 import { CliConfig, loadConfig } from "./config.js";
 import { Agent } from "./agent.js";
-import {
-  RpcServer,
-  registerAllServiceMethods,
-  type RpcServerOptions,
-} from "../rpc/index.js";
+import { RpcServer, registerAllServiceMethods, type RpcServerOptions } from "../rpc/index.js";
 
 export interface RpcCliOptions {
   /** Override the workspace root (default: loadConfig().workspaceRoot). */
@@ -57,7 +53,11 @@ export interface RpcCliOptions {
  * after the server stops.
  */
 export async function startRpcServer(opts: RpcCliOptions = {}): Promise<Agent> {
-  const cfg = { ...loadConfig(), ...(opts.config ?? {}), ...(opts.workspaceRoot ? { workspaceRoot: opts.workspaceRoot } : {}) };
+  const cfg = {
+    ...loadConfig(),
+    ...(opts.config ?? {}),
+    ...(opts.workspaceRoot ? { workspaceRoot: opts.workspaceRoot } : {}),
+  };
   const agent = new Agent({ config: cfg });
 
   // Start the plugin host + control plane.
@@ -67,9 +67,7 @@ export async function startRpcServer(opts: RpcCliOptions = {}): Promise<Agent> {
     // Failure here is non-fatal: the agent still works with the kernel
     // service plane; plugins just won't be active. Log to stderr so
     // stdout JSON-RPC stream stays clean.
-    process.stderr.write(
-      `[nexum rpc] plugin host start failed: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+    process.stderr.write(`[nexum rpc] plugin host start failed: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 
   // Register the agent.execute method (the primary method external clients call).

@@ -162,11 +162,7 @@ export class CompactionPolicy {
     };
   }
 
-  private countMessagesToCompact(
-    messages: ConversationMessage[],
-    tokensToRemove: number,
-    keepRecent: number,
-  ): number {
+  private countMessagesToCompact(messages: ConversationMessage[], tokensToRemove: number, keepRecent: number): number {
     const estimator = new TokenEstimator();
     let removed = 0;
     let tokensSaved = 0;

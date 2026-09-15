@@ -61,9 +61,7 @@ export async function startTui(opts?: { config?: Partial<CliConfig> }): Promise<
   try {
     await agent.startHost();
   } catch (err) {
-    console.warn(
-      `[nexum] plugin host start failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    console.warn(`[nexum] plugin host start failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // Per-run state for event handlers (one run at a time)

@@ -25,7 +25,17 @@
  * npm install) are stubbed and ready for future implementation.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -141,14 +151,18 @@ export class MarketplaceService {
 
   /** Search across all sources. */
   async search(query: string, opts?: { tags?: string[]; limit?: number }): Promise<MarketplaceEntry[]> {
-    const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+    const terms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
     const limit = opts?.limit ?? 50;
     const all: MarketplaceEntry[] = [];
     for (const source of this.sources) {
       try {
         const catalog = await source.fetchCatalog();
         for (const entry of catalog) {
-          const text = `${entry.id} ${entry.name} ${entry.description ?? ""} ${(entry.tags ?? []).join(" ")}`.toLowerCase();
+          const text =
+            `${entry.id} ${entry.name} ${entry.description ?? ""} ${(entry.tags ?? []).join(" ")}`.toLowerCase();
           if (terms.every((t) => text.includes(t))) {
             if (opts?.tags && !opts.tags.every((t) => entry.tags?.includes(t))) continue;
             all.push(entry);
@@ -288,7 +302,10 @@ export class HttpMarketplaceSource implements MarketplaceSource {
   readonly id: string;
   private cache: MarketplaceEntry[] | null = null;
 
-  constructor(id: string, private readonly catalogUrl: string) {
+  constructor(
+    id: string,
+    private readonly catalogUrl: string,
+  ) {
     this.id = id;
   }
 
@@ -378,19 +395,22 @@ interface NpmPackument {
   homepage?: string;
   author?: string | { name?: string; email?: string };
   repository?: { url?: string };
-  versions?: Record<string, {
-    version: string;
-    description?: string;
-    dist?: { tarball?: string; shasum?: string; integrity?: string };
-    nexum?: {
-      /** Nexum plugin manifest published inside the npm package. */
-      id?: string;
-      name?: string;
+  versions?: Record<
+    string,
+    {
+      version: string;
       description?: string;
-      tags?: string[];
-      capabilities?: string[];
-    };
-  }>;
+      dist?: { tarball?: string; shasum?: string; integrity?: string };
+      nexum?: {
+        /** Nexum plugin manifest published inside the npm package. */
+        id?: string;
+        name?: string;
+        description?: string;
+        tags?: string[];
+        capabilities?: string[];
+      };
+    }
+  >;
 }
 
 export class NpmMarketplaceSource implements MarketplaceSource {

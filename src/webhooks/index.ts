@@ -357,9 +357,7 @@ function verifyRequest(input: {
   }
 
   // Compute expected signature: HMAC-SHA256(secret, `${ts}.${rawBody}`).
-  const expected = createHmac("sha256", input.secret)
-    .update(`${input.providedTs}.${input.rawBody}`)
-    .digest("hex");
+  const expected = createHmac("sha256", input.secret).update(`${input.providedTs}.${input.rawBody}`).digest("hex");
 
   // Timing-safe compare.
   try {

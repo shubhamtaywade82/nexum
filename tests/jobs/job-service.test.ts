@@ -6,7 +6,7 @@ import { rmSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { JobService, type JobSpec } from "../../src/jobs/index.js";
+import { JobService } from "../../src/jobs/index.js";
 
 describe("JobService", () => {
   let tmpDir: string;
@@ -100,7 +100,12 @@ describe("JobService", () => {
   describe("list", () => {
     it("lists jobs filtered by state", async () => {
       service.submit({ description: "a", run: async () => 1 });
-      service.submit({ description: "b", run: async () => { throw new Error("x"); } });
+      service.submit({
+        description: "b",
+        run: async () => {
+          throw new Error("x");
+        },
+      });
       await sleep(50);
       const completed = service.list({ state: "completed" });
       const failed = service.list({ state: "failed" });
@@ -150,11 +155,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForState(
-  service: JobService,
-  id: string,
-  states: string | string[],
-): Promise<void> {
+async function waitForState(service: JobService, id: string, states: string | string[]): Promise<void> {
   const target = Array.isArray(states) ? states : [states];
   for (let i = 0; i < 100; i++) {
     const record = service.status(id);

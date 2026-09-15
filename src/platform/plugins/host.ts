@@ -119,15 +119,11 @@ export class DefaultPluginHost implements PluginHost {
     const plugins = this.registry.plugins();
     const result = resolvePluginOrder(plugins);
     if (this.failOnCycle && result.cycles.length > 0) {
-      const described = result.cycles
-        .map((c) => c.join(" → "))
-        .join("; ");
+      const described = result.cycles.map((c) => c.join(" → ")).join("; ");
       throw new Error(`dependency cycle(s) detected: ${described}`);
     }
     if (this.failOnMissingDependency && result.missing.length > 0) {
-      const described = result.missing
-        .map((m) => `${m.id} → [${m.missing.join(", ")}]`)
-        .join("; ");
+      const described = result.missing.map((m) => `${m.id} → [${m.missing.join(", ")}]`).join("; ");
       throw new Error(`missing dependencies: ${described}`);
     }
     return result.order;
@@ -143,7 +139,7 @@ export class DefaultPluginHost implements PluginHost {
 
     for (const id of order) {
       const plugin = this.registry.requirePlugin(id);
-      const record = this.registry.require(id);
+      const _record = this.registry.require(id);
 
       // setup()
       if (plugin.setup) {
@@ -259,15 +255,14 @@ export class DefaultPluginHost implements PluginHost {
   // ── internals ───────────────────────────────────────────────────────────
 
   private makeContext(manifest: NexumPlugin["manifest"]): PluginContext {
-    const self = this;
     return {
       manifest,
-      host: self,
-      workspaceRoot: self.workspaceRoot,
-      log: scopedLogger(self.logger, manifest.id),
-      provide<T>(token: string, value: T): void {
-        if (self.capabilities.has(token)) {
-          const owner = self.capabilityOwner.get(token);
+      host: this,
+      workspaceRoot: this.workspaceRoot,
+      log: scopedLogger(this.logger, manifest.id),
+      provide: <T>(token: string, value: T): void => {
+        if (this.capabilities.has(token)) {
+          const owner = this.capabilityOwner.get(token);
           if (owner && owner !== manifest.id) {
             throw new Error(
               `capability token "${token}" is already provided by plugin "${owner}" ` +
@@ -275,14 +270,14 @@ export class DefaultPluginHost implements PluginHost {
             );
           }
         }
-        self.capabilities.set(token, value);
-        self.capabilityOwner.set(token, manifest.id);
+        this.capabilities.set(token, value);
+        this.capabilityOwner.set(token, manifest.id);
       },
-      lookup<T>(token: string): T | undefined {
-        return self.lookup<T>(token);
+      lookup: <T>(token: string): T | undefined => {
+        return this.lookup<T>(token);
       },
-      declareCapability(tag: string): void {
-        self.registry.declareCapability(manifest.id, tag);
+      declareCapability: (tag: string): void => {
+        this.registry.declareCapability(manifest.id, tag);
       },
     };
   }

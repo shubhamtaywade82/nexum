@@ -60,7 +60,7 @@ export class SkillLoader {
       let metas: SkillMeta[];
       try {
         metas = await provider.list();
-      } catch (err) {
+      } catch {
         // A failing provider shouldn't break the whole system.
         byProvider[provider.id] = 0;
         continue;
