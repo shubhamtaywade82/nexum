@@ -34,7 +34,13 @@ function makeServer(): { server: RpcServer; input: PassThrough; output: PassThro
   return { server, input, output };
 }
 
-async function callMethod(server: RpcServer, input: PassThrough, output: PassThrough, method: string, params?: unknown): Promise<unknown> {
+async function callMethod(
+  server: RpcServer,
+  input: PassThrough,
+  output: PassThrough,
+  method: string,
+  params?: unknown,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const lines: Buffer[] = [];
     const onData = (chunk: Buffer) => {

@@ -139,9 +139,7 @@ export class AttachmentStore {
     // Verify hash integrity.
     const actualId = hashContent(buffer);
     if (actualId !== id) {
-      throw new Error(
-        `attachment integrity check failed: expected ${id}, got ${actualId}`,
-      );
+      throw new Error(`attachment integrity check failed: expected ${id}, got ${actualId}`);
     }
     return buffer;
   }
@@ -233,7 +231,11 @@ export class AttachmentStore {
     const existing = index.findIndex((r) => r.id === record.id);
     if (existing >= 0) {
       // Merge metadata (don't lose existing metadata on re-store).
-      index[existing] = { ...index[existing], ...record, metadata: { ...index[existing].metadata, ...record.metadata } };
+      index[existing] = {
+        ...index[existing],
+        ...record,
+        metadata: { ...index[existing].metadata, ...record.metadata },
+      };
     } else {
       index.push(record);
     }
@@ -248,11 +250,7 @@ export function hashContent(buffer: Buffer): AttachmentId {
 }
 
 /** Quick utility: store a file from disk. */
-export function storeFile(
-  store: AttachmentStore,
-  filePath: string,
-  mediaType?: AttachmentMediaType,
-): AttachmentRecord {
+export function storeFile(store: AttachmentStore, filePath: string, mediaType?: AttachmentMediaType): AttachmentRecord {
   const buffer = readFileSync(filePath);
   const filename = filePath.split("/").pop();
   return store.store(buffer, mediaType ?? guessMediaType(filePath), { filename });
@@ -262,17 +260,27 @@ export function storeFile(
 export function guessMediaType(filename: string): AttachmentMediaType {
   const ext = filename.split(".").pop()?.toLowerCase();
   switch (ext) {
-    case "png": return "image/png";
+    case "png":
+      return "image/png";
     case "jpg":
-    case "jpeg": return "image/jpeg";
-    case "gif": return "image/gif";
-    case "webp": return "image/webp";
-    case "pdf": return "application/pdf";
-    case "zip": return "application/zip";
-    case "json": return "application/json";
-    case "md": return "text/markdown";
-    case "txt": return "text/plain";
-    default: return "application/octet-stream";
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "pdf":
+      return "application/pdf";
+    case "zip":
+      return "application/zip";
+    case "json":
+      return "application/json";
+    case "md":
+      return "text/markdown";
+    case "txt":
+      return "text/plain";
+    default:
+      return "application/octet-stream";
   }
 }
 

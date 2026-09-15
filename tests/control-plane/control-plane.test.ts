@@ -2,10 +2,7 @@
  * Tests for the ControlPlaneService.
  */
 import { describe, it, expect, beforeEach } from "@jest/globals";
-import {
-  ControlPlaneService,
-  registerDefaultMetrics,
-} from "../../src/control-plane/index.js";
+import { ControlPlaneService, registerDefaultMetrics } from "../../src/control-plane/index.js";
 
 describe("ControlPlaneService", () => {
   let service: ControlPlaneService;
@@ -17,9 +14,7 @@ describe("ControlPlaneService", () => {
 
   describe("metric registration", () => {
     it("throws on duplicate registration", () => {
-      expect(() => service.registerMetric({ name: "agent.runs.total", type: "counter" })).toThrow(
-        /already registered/,
-      );
+      expect(() => service.registerMetric({ name: "agent.runs.total", type: "counter" })).toThrow(/already registered/);
     });
   });
 

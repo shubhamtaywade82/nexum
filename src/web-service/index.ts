@@ -68,7 +68,11 @@ export interface FetchProvider {
 
 export interface HttpProvider {
   readonly id: string;
-  request(method: string, url: string, opts?: { headers?: Record<string, string>; body?: string; timeoutMs?: number }): Promise<WebFetchResult>;
+  request(
+    method: string,
+    url: string,
+    opts?: { headers?: Record<string, string>; body?: string; timeoutMs?: number },
+  ): Promise<WebFetchResult>;
 }
 
 export interface BrowserProvider {
@@ -155,7 +159,10 @@ export class WebService {
   }
 
   /** Fetch + extract content (convenience method). */
-  async fetchAndExtract(url: string, opts?: { headers?: Record<string, string>; timeoutMs?: number }): Promise<WebContentExtraction> {
+  async fetchAndExtract(
+    url: string,
+    opts?: { headers?: Record<string, string>; timeoutMs?: number },
+  ): Promise<WebContentExtraction> {
     const result = await this.fetch(url, opts);
     if (!this.extractor) {
       return {

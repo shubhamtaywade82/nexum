@@ -19,7 +19,6 @@
 
 import type { SkillCatalog } from "./skill-catalog.js";
 import type { SkillScored, SkillSelection, SkillSelectionInput } from "./formal-types.js";
-import type { SkillMeta } from "./types.js";
 
 const TAG_WEIGHT = 3;
 const DESCRIPTION_WEIGHT = 1;
@@ -27,12 +26,96 @@ const LANGUAGE_MISMATCH_PENALTY = -10;
 const MIN_SCORE_THRESHOLD = 1;
 const DEFAULT_MAX_SKILLS = 3;
 const STOPWORDS = new Set([
-  "the","a","an","to","of","in","on","for","and","or","but","is","are","was","were","be","been","being",
-  "have","has","had","do","does","did","will","would","could","should","may","might","can","this","that",
-  "these","those","i","you","he","she","it","we","they","what","which","who","when","where","why","how",
-  "with","without","from","into","out","up","down","over","under","again","then","once","here","there",
-  "all","any","both","each","few","more","most","other","some","such","no","nor","not","only","own","same",
-  "so","than","too","very","just","now","my","your","our","their","its",
+  "the",
+  "a",
+  "an",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "and",
+  "or",
+  "but",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "can",
+  "this",
+  "that",
+  "these",
+  "those",
+  "i",
+  "you",
+  "he",
+  "she",
+  "it",
+  "we",
+  "they",
+  "what",
+  "which",
+  "who",
+  "when",
+  "where",
+  "why",
+  "how",
+  "with",
+  "without",
+  "from",
+  "into",
+  "out",
+  "up",
+  "down",
+  "over",
+  "under",
+  "again",
+  "then",
+  "once",
+  "here",
+  "there",
+  "all",
+  "any",
+  "both",
+  "each",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "no",
+  "nor",
+  "not",
+  "only",
+  "own",
+  "same",
+  "so",
+  "than",
+  "too",
+  "very",
+  "just",
+  "now",
+  "my",
+  "your",
+  "our",
+  "their",
+  "its",
 ]);
 
 export class SkillSelector {
@@ -77,9 +160,7 @@ export class SkillSelector {
     const rationale =
       selected.length === 0
         ? "no skills matched the prompt above threshold"
-        : selected
-            .map((s) => `${s.meta.id} (score=${s.score}, tags=[${s.matchedTags.join(",")}])`)
-            .join("; ");
+        : selected.map((s) => `${s.meta.id} (score=${s.score}, tags=[${s.matchedTags.join(",")}])`).join("; ");
 
     return { selected, rationale };
   }

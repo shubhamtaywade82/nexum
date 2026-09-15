@@ -64,9 +64,7 @@ export class PluginRegistry {
   require(id: PluginId): PluginRecord {
     const entry = this.entries.get(id);
     if (!entry) {
-      throw new Error(
-        `unknown plugin "${id}". Registered plugins: ${this.ids().sort().join(", ") || "(none)"}`,
-      );
+      throw new Error(`unknown plugin "${id}". Registered plugins: ${this.ids().sort().join(", ") || "(none)"}`);
     }
     return entry.record;
   }
@@ -79,9 +77,7 @@ export class PluginRegistry {
   requirePlugin(id: PluginId): NexumPlugin {
     const p = this.pluginFor(id);
     if (!p) {
-      throw new Error(
-        `unknown plugin "${id}". Registered plugins: ${this.ids().sort().join(", ") || "(none)"}`,
-      );
+      throw new Error(`unknown plugin "${id}". Registered plugins: ${this.ids().sort().join(", ") || "(none)"}`);
     }
     return p;
   }

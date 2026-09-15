@@ -133,7 +133,10 @@ export class SessionQueryService {
     const limit = opts.limit ?? 50;
     const allRunIds = this.opts.eventStore.listRuns().map((r) => r.runId ?? r) as RunId[];
     const runIds = opts.runIds ?? allRunIds;
-    const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+    const terms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
     const matches: EventSearchResult["matches"] = [];
 
     for (const runId of runIds) {
@@ -212,7 +215,10 @@ export class SessionQueryService {
     }
     // SessionStore.listSessions() returns session metadata; we filter by query.
     const limit = opts.limit ?? 20;
-    const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+    const terms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
     const sessions = this.opts.sessionStore.listSessions();
     const matches: SessionSearchResult["matches"] = [];
 
@@ -241,7 +247,6 @@ export class SessionQueryService {
     if (!this.opts.sessionStore) return null;
     const sessions = this.opts.sessionStore.listSessions().filter((s) => s.id === sessionId);
     if (sessions.length === 0) return null;
-    const session = sessions[0];
 
     // Without explicit run <-> session linkage in SessionStore, we use the
     // event store's run index to find runs that belong to this session.
@@ -263,8 +268,14 @@ export class SessionQueryService {
 
     let duration: { startMs: number; endMs: number } | undefined;
     if (runs.length > 0) {
-      const startMs = Math.min(...runs.map((r) => typeof r.startedAt === "number" ? r.startedAt : new Date(r.startedAt).getTime()));
-      const endMs = Math.max(...runs.map((r) => typeof r.endedAt === "number" ? r.endedAt : (r.endedAt ? new Date(r.endedAt).getTime() : r.startedAt)));
+      const startMs = Math.min(
+        ...runs.map((r) => (typeof r.startedAt === "number" ? r.startedAt : new Date(r.startedAt).getTime())),
+      );
+      const endMs = Math.max(
+        ...runs.map((r) =>
+          typeof r.endedAt === "number" ? r.endedAt : r.endedAt ? new Date(r.endedAt).getTime() : r.startedAt,
+        ),
+      );
       duration = { startMs, endMs };
     }
 
