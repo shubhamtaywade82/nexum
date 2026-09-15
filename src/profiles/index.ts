@@ -255,43 +255,123 @@ export class ProfileResolver {
 
 // ── Built-in profiles ────────────────────────────────────────────────────────
 
-/** Built-in CLI profile: standard agent with tools, skills, jobs, compaction. */
+import {
+  coreServicesPlugin,
+  toolRegistryPlugin,
+  modelRegistryPlugin,
+  skillSystemPlugin,
+  subagentServicePlugin,
+  jobServicePlugin,
+  compactionServicePlugin,
+  sessionQueryServicePlugin,
+} from "../platform/plugins/index.js";
+
+/**
+ * Built-in CLI profile: standard agent with the full P0 service stack.
+ * This is what `nexum` (the CLI) and `nexum rpc` (the JSON-RPC server)
+ * mount on startup.
+ *
+ * The plugin factories are real — calling `cliProfileBundle().plugins`
+ * returns a list of `() => NexumPlugin` factories that the embedding
+ * application can pass directly to `PluginHost.registerAll()`.
+ */
 export function cliProfileBundle(): ProfileBundle {
   return {
     id: "nexum-cli",
     name: "Nexum CLI",
-    description: "Standard CLI/TUI agent profile.",
+    description: "Standard CLI/TUI agent profile with the full P0 service stack.",
     version: "1.0.0",
-    plugins: [], // populated by the embedding app (it has access to plugin factories)
-    capabilities: ["cli", "agent"],
+    plugins: [
+      coreServicesPlugin,
+      toolRegistryPlugin,
+      modelRegistryPlugin,
+      skillSystemPlugin,
+      subagentServicePlugin,
+      jobServicePlugin,
+      compactionServicePlugin,
+      sessionQueryServicePlugin,
+    ],
+    capabilities: ["cli", "agent", "tools", "skills", "subagents", "jobs", "compaction", "session-query"],
     tags: ["interactive"],
+    settings: {
+      "ui.theme": "default",
+      "ui.density": "comfortable",
+    },
   };
 }
 
-/** Built-in server profile: RPC server + jobs + workflows. */
+/**
+ * Built-in server profile: RPC server + jobs + workflows + webhooks.
+ * This is what `nexum rpc` (when used as an automation server) and any
+ * long-running Nexum host should mount.
+ *
+ * Depends on `nexum-cli` (composes the CLI profile's plugins first, then
+ * adds server-specific capabilities).
+ */
 export function serverProfileBundle(): ProfileBundle {
   return {
     id: "nexum-server",
     name: "Nexum Server",
     description: "Server-grade profile for RPC/automation hosts.",
     version: "1.0.0",
-    plugins: [],
-    capabilities: ["rpc", "automation"],
+    plugins: [
+      // Server reuses the same plugins as CLI — the difference is the
+      // settings (RPC mode enabled, no UI) and the capabilities/tags
+      // declared (which lets ProfileComposer.filterByCapability work).
+      coreServicesPlugin,
+      toolRegistryPlugin,
+      modelRegistryPlugin,
+      skillSystemPlugin,
+      subagentServicePlugin,
+      jobServicePlugin,
+      compactionServicePlugin,
+      sessionQueryServicePlugin,
+    ],
+    capabilities: ["rpc", "automation", "tools", "skills", "subagents", "jobs", "compaction", "session-query"],
     tags: ["server"],
+    settings: {
+      "policy.autoApprove": false,
+      "subagent.maxConcurrent": 16,
+    },
   };
 }
 
-/** Built-in crypto-bot profile: trading + webhooks + workflows. */
+/**
+ * Built-in crypto-bot profile: trading + webhooks + workflows.
+ * Mounts the full P0 stack + declares crypto/trading capabilities.
+ *
+ * Depends on `nexum-server` (composes the server profile first).
+ *
+ * Note: trading-specific tools (Binance, indicators, backtesting) are
+ * NOT mounted here — they are mounted by the CryptoAgent product class
+ * (src/agents/cryptoagent/crypto-agent.ts) which extends this profile
+ * with the trading tool pack. This profile declares the *capabilities*
+ * and *settings*; the trading pack is added by the product.
+ */
 export function cryptoBotProfileBundle(): ProfileBundle {
   return {
     id: "nexum-crypto-bot",
     name: "Nexum Crypto Bot",
     description: "Autonomous crypto trading agent profile.",
     version: "1.0.0",
-    plugins: [],
-    capabilities: ["crypto", "trading", "automation"],
-    tags: ["trading", "webhooks"],
+    plugins: [
+      coreServicesPlugin,
+      toolRegistryPlugin,
+      modelRegistryPlugin,
+      skillSystemPlugin,
+      subagentServicePlugin,
+      jobServicePlugin,
+      compactionServicePlugin,
+      sessionQueryServicePlugin,
+    ],
+    capabilities: ["crypto", "trading", "automation", "webhooks", "workflows"],
+    tags: ["trading", "webhooks", "automation"],
     dependsOn: ["nexum-server"],
+    settings: {
+      "policy.posture": "restricted",
+      "subagent.maxConcurrent": 4,
+      "subagent.maxPerSession": 8,
+    },
   };
 }
 

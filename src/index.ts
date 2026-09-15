@@ -340,6 +340,7 @@ export {
   NodeFetchProvider,
   SimpleWebContentExtractor,
   StubSearchProvider,
+  DuckDuckGoSearchProvider,
   FileSearchProvider,
   defaultWebService,
   type WebSearchResult,

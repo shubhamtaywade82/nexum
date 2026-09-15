@@ -1,6 +1,6 @@
 {
   "name": "@nemesis-oss/nexum",
-  "version": "2.0.0",
+  "version": "2.0.0-alpha.1",
   "description": "Nexum \u2014 open-source agent runtime and harness for autonomous software engineering: capability-routed local & cloud models, Docker sandbox, LSP code intelligence, and a terminal UI.",
   "keywords": [
     "nexum",
@@ -33,6 +33,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "type": "module",
+  "stability": "experimental",
   "engines": {
     "node": ">=22"
   },

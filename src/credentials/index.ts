@@ -331,22 +331,59 @@ export class FileCredentialProvider implements CredentialProvider {
   }
 }
 
-// ── Stubs for future providers ──────────────────────────────────────────────
+// ── Future providers (not yet implemented — see STABILITY.md) ───────────────
+//
+// These providers are explicitly INCOMPLETE. They are exported so consumers
+// can see the intended API shape, but they throw on use. To track their
+// implementation status, see https://github.com/shubhamtaywade82/nexum
+// issues labeled `credentials:keychain` / `credentials:vault`.
 
+/**
+ * @experimental
+ * @incomplete Throws on use — see STABILITY.md.
+ *
+ * KeychainCredentialProvider — reads credentials from the OS keychain
+ * (macOS Keychain, Windows Credential Manager, Linux Secret Service).
+ *
+ * Planned implementation: use `keytar` (npm) to access the OS keychain.
+ * The provider will store each credential under a service name derived
+ * from the workspace root + the credential name.
+ */
 export class KeychainCredentialProvider implements CredentialProvider {
   readonly id = "keychain";
   resolve(): string | undefined {
-    throw new Error("KeychainCredentialProvider not yet implemented (use OS keychain)");
+    // INCOMPLETE: throws until keytar integration is wired up.
+    throw new Error(
+      "KeychainCredentialProvider is not yet implemented. " +
+        "Use EnvCredentialProvider or FileCredentialProvider instead. " +
+        "Track implementation: https://github.com/shubhamtaywade82/nexum/issues",
+    );
   }
   list(): string[] {
     return [];
   }
 }
 
+/**
+ * @experimental
+ * @incomplete Throws on use — see STABILITY.md.
+ *
+ * VaultCredentialProvider — reads credentials from a remote secret manager
+ * (HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, Doppler, etc.).
+ *
+ * Planned implementation: accept a `VaultClient` adapter (so the consumer
+ * can plug in any backend). The provider will cache resolved credentials
+ * with a configurable TTL.
+ */
 export class VaultCredentialProvider implements CredentialProvider {
   readonly id = "vault";
   resolve(): string | undefined {
-    throw new Error("VaultCredentialProvider not yet implemented (HashiCorp Vault / cloud secret manager)");
+    // INCOMPLETE: throws until the VaultClient adapter interface is finalized.
+    throw new Error(
+      "VaultCredentialProvider is not yet implemented. " +
+        "Use EnvCredentialProvider or FileCredentialProvider instead. " +
+        "Track implementation: https://github.com/shubhamtaywade82/nexum/issues",
+    );
   }
   list(): string[] {
     return [];

@@ -199,4 +199,30 @@ describe("built-in profile bundles", () => {
     expect(b.id).toBe("nexum-crypto-bot");
     expect(b.dependsOn).toContain("nexum-server");
   });
+
+  it("cliProfileBundle has populated plugins (not empty)", () => {
+    const b = cliProfileBundle();
+    expect(b.plugins.length).toBeGreaterThan(0);
+    // Each plugin should be a function (factory).
+    expect(typeof b.plugins[0]).toBe("function");
+    // Calling the factory should return a NexumPlugin with a manifest.
+    const plugin = b.plugins[0]();
+    expect(plugin.manifest).toBeDefined();
+    expect(plugin.manifest.id).toBeTruthy();
+  });
+
+  it("serverProfileBundle has populated plugins", () => {
+    const b = serverProfileBundle();
+    expect(b.plugins.length).toBeGreaterThan(0);
+    expect(b.capabilities).toContain("rpc");
+    expect(b.settings).toBeDefined();
+  });
+
+  it("cryptoBotProfileBundle has populated plugins + restricted posture", () => {
+    const b = cryptoBotProfileBundle();
+    expect(b.plugins.length).toBeGreaterThan(0);
+    expect(b.settings?.["policy.posture"]).toBe("restricted");
+    expect(b.capabilities).toContain("crypto");
+    expect(b.capabilities).toContain("trading");
+  });
 });
