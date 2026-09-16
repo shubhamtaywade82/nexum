@@ -247,7 +247,6 @@ export class SessionQueryService {
     if (!this.opts.sessionStore) return null;
     const sessions = this.opts.sessionStore.listSessions().filter((s) => s.id === sessionId);
     if (sessions.length === 0) return null;
-    const _session = sessions[0];
 
     // Without explicit run <-> session linkage in SessionStore, we use the
     // event store's run index to find runs that belong to this session.

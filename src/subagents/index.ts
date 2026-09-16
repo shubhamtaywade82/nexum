@@ -499,7 +499,7 @@ export class ProcessSubagentProvider implements SubagentProvider {
       }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- handle closures need a stable `this` reference
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
     const handle: SubagentHandle = {
       subagentId,
@@ -679,7 +679,7 @@ export class ACPSubagentProvider implements SubagentProvider {
     });
     resultPromise.catch(() => {});
     const acpSessionId = `acp_${subagentId}`;
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- handle closures need a stable `this` reference
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
 
     const handle: SubagentHandle = {
@@ -855,7 +855,7 @@ export class SDKSubagentProvider implements SubagentProvider {
     });
     resultPromise.catch(() => {});
 
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- handle closures need a stable `this` reference
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
     const messages: string[] = [];
 
@@ -986,7 +986,7 @@ export class ExternalAgentSubagentProvider implements SubagentProvider {
     });
     resultPromise.catch(() => {});
 
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- handle closures need a stable `this` reference
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
     const self = this;
 
     const handle: SubagentHandle = {

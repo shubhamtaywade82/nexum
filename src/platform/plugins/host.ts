@@ -139,7 +139,6 @@ export class DefaultPluginHost implements PluginHost {
 
     for (const id of order) {
       const plugin = this.registry.requirePlugin(id);
-      const _record = this.registry.require(id);
 
       // setup()
       if (plugin.setup) {
@@ -255,14 +254,16 @@ export class DefaultPluginHost implements PluginHost {
   // ── internals ───────────────────────────────────────────────────────────
 
   private makeContext(manifest: NexumPlugin["manifest"]): PluginContext {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
+    const self = this;
     return {
       manifest,
-      host: this,
-      workspaceRoot: this.workspaceRoot,
-      log: scopedLogger(this.logger, manifest.id),
-      provide: <T>(token: string, value: T): void => {
-        if (this.capabilities.has(token)) {
-          const owner = this.capabilityOwner.get(token);
+      host: self,
+      workspaceRoot: self.workspaceRoot,
+      log: scopedLogger(self.logger, manifest.id),
+      provide<T>(token: string, value: T): void {
+        if (self.capabilities.has(token)) {
+          const owner = self.capabilityOwner.get(token);
           if (owner && owner !== manifest.id) {
             throw new Error(
               `capability token "${token}" is already provided by plugin "${owner}" ` +
@@ -270,14 +271,14 @@ export class DefaultPluginHost implements PluginHost {
             );
           }
         }
-        this.capabilities.set(token, value);
-        this.capabilityOwner.set(token, manifest.id);
+        self.capabilities.set(token, value);
+        self.capabilityOwner.set(token, manifest.id);
       },
-      lookup: <T>(token: string): T | undefined => {
-        return this.lookup<T>(token);
+      lookup<T>(token: string): T | undefined {
+        return self.lookup<T>(token);
       },
-      declareCapability: (tag: string): void => {
-        this.registry.declareCapability(manifest.id, tag);
+      declareCapability(tag: string): void {
+        self.registry.declareCapability(manifest.id, tag);
       },
     };
   }
