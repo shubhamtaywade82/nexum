@@ -2,6 +2,14 @@
 
 ### Autonomous software engineering, from task to pull request.
 
+> **Status: Developer Preview (2.0.0-alpha)** — the core agent runtime,
+> tool gateway, and CLI are functional and well-tested. Several advertised
+> subsystems (marketplace trust model, plugin sandboxing, keychain/vault
+> credential providers) are explicitly **incomplete** — see
+> [STABILITY.md](./STABILITY.md) and [SECURITY.md](./SECURITY.md) for
+> details. Not yet recommended for production dependency without pinning
+> the exact version.
+
 Nexum is an open-source, local-first engineering agent runtime and terminal workspace that turns software tasks into observable, resumable execution.
 
 **Analyze → Plan → Implement → Verify → Review → Ship**
@@ -151,7 +159,7 @@ src/
     benchmark, platform, browser, observability, ...)  supporting modules
 ```
 
-Public API surface (`@nexum/agent`): `AgentRuntime`, `Agent`, `Task`, `Tool`, `ToolGateway`, `ModelGateway`, `PolicyEngine`, `ExecutionContext`, `ExecutionStrategy` — implementation modules stay private.
+Public API surface (`@nemesis-oss/nexum`): `AgentRuntime`, `Agent`, `Task`, `Tool`, `ToolGateway`, `ModelGateway`, `PolicyEngine`, `ExecutionContext`, `ExecutionStrategy` — implementation modules stay private. See [STABILITY.md](./STABILITY.md) for the full stability tiers.
 
 ## Key Features
 
@@ -239,7 +247,7 @@ const response = await router.route("reasoning", [{ role: "user", content: "..."
 Or use the `Agent` class directly — it wires provider/catalog/router, tools, LSP, Rails index, memory, learning, and checkpointing together:
 
 ```typescript
-import { Agent } from "@nemesis-oss/nexum/agent";
+import { Agent } from "@nemesis-oss/nexum";
 
 const agent = new Agent({ config: { workspaceRoot: "/path/to/project" } });
 const reply = await agent.runUserMessage("Add a null check to the parser");
