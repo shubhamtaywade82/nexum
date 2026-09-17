@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, "rename/**"]
+    branches: [main, develop, "rename/**", "release/**"]
   pull_request:
     branches: [main, develop]
 
@@ -44,6 +44,12 @@ jobs:
 
       - name: Run Test Suite
         run: npm test
+        env:
+          CI: true
+          SKIP_NETWORK_TESTS: true
+
+      - name: Validate packed npm artifact
+        run: npm run package:check
         env:
           CI: true
           SKIP_NETWORK_TESTS: true
