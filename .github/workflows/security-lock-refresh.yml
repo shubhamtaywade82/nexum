@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm install --legacy-peer-deps --package-lock-only
+      - run: npm install --legacy-peer-deps --package-lock-only --ignore-scripts
       - name: Commit lockfile
         run: |
           # Temporary release-branch helper; removed after the lockfile is refreshed.
