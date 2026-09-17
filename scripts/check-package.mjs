@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const root = process.cwd();
+const packageJson = JSON.parse(run('node', ['-e', "process.stdout.write(require('fs').readFileSync('package.json','utf8'))"]));
+const expectedVersion = packageJson.version;
+const packageName = packageJson.name;
 const tempDir = mkdtempSync(join(tmpdir(), 'nexum-package-check-'));
 
 function run(command, args, cwd = root) {
@@ -23,15 +26,23 @@ try {
   run('npm', ['init', '-y'], tempDir);
   run('npm', ['install', '--ignore-scripts', tarball], tempDir);
 
-  const version = run('node', ['node_modules/@nemesis-oss/nexum/bin/cli.js', '--version'], tempDir).trim();
-  if (!version.includes('2.0.0-alpha.2')) {
+  const installedPackage = JSON.parse(
+    run('node', ['-e', `process.stdout.write(require('./node_modules/${packageName}/package.json').version)`], tempDir),
+  );
+  if (installedPackage !== expectedVersion) {
+    throw new Error(`Installed package version ${installedPackage} does not match ${expectedVersion}`);
+  }
+
+  const cli = join(tempDir, 'node_modules', packageName, 'bin', 'cli.js');
+  const version = run('node', [cli, '--version'], tempDir).trim();
+  if (!version.includes(expectedVersion)) {
     throw new Error(`Unexpected CLI version: ${version}`);
   }
 
-  run('node', ['node_modules/@nemesis-oss/nexum/bin/cli.js', '--help'], tempDir);
+  run('node', [cli, '--help'], tempDir);
 
   const smoke = [
-    "import * as pkg from '@nemesis-oss/nexum';",
+    `import * as pkg from '${packageName}';`,
     "const required = ['DefaultAgentRuntime','ReActStrategy','PlanExecuteStrategy','GraphStrategy','DefaultToolGateway','DefaultModelGateway','RulePolicyEngine','Agent','DevAgent','CryptoAgent'];",
     "for (const name of required) if (!(name in pkg)) throw new Error(`Missing public export: ${name}`);",
     "console.log('Public API smoke test passed');",
