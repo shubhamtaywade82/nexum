@@ -1,7 +1,7 @@
 {
   "name": "@nemesis-oss/nexum",
-  "version": "2.0.0-alpha.1",
-  "description": "Nexum \u2014 open-source agent runtime and harness for autonomous software engineering: capability-routed local & cloud models, Docker sandbox, LSP code intelligence, and a terminal UI.",
+  "version": "2.0.0-alpha.2",
+  "description": "Nexum — open-source agent runtime and harness for autonomous software engineering: capability-routed local & cloud models, Docker sandbox, LSP code intelligence, and a terminal UI.",
   "keywords": [
     "nexum",
     "agent-runtime",
@@ -55,8 +55,10 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "lint": "eslint src tests",
-    "format:check": "prettier --check src tests",
+    "lint": "eslint src tests scripts",
+    "format:check": "prettier --check src tests scripts",
+    "package:check": "node scripts/check-package.mjs",
+    "release:check": "npm run lint && npm run format:check && npm run build && npm test && npm run package:check",
     "prepack": "npm run build",
     "prepare": "npm run build"
   },
@@ -76,7 +78,6 @@
     "ink-testing-library": "^4.0.0",
     "jest": "^30.4.2",
     "prettier": "^3.9.5",
-    "ts-jest": "^29.2.0",
     "tsx": "^4.23.1",
     "typescript": "^6.0.3",
     "vitepress": "^1.6.4"
