@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import matter from "gray-matter";
+import matter from "@11ty/gray-matter";
 import { SkillContent, SkillMeta, SkillScope } from "./types.js";
 import { legacyWorkspaceStateDir, workspaceStateDir } from "../platform/paths.js";
 
