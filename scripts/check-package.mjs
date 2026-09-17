@@ -1,15 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const root = process.cwd();
-const packageJson = JSON.parse(run('node', ['-e', "process.stdout.write(require('fs').readFileSync('package.json','utf8'))"]));
-const expectedVersion = packageJson.version;
-const packageName = packageJson.name;
-const tempDir = mkdtempSync(join(tmpdir(), 'nexum-package-check-'));
-
-function run(command, args, cwd = root) {
+function run(command, args, cwd = process.cwd()) {
   console.log(`$ ${command} ${args.join(' ')}`);
   return execFileSync(command, args, {
     cwd,
@@ -18,19 +12,28 @@ function run(command, args, cwd = root) {
   });
 }
 
+const root = process.cwd();
+const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const expectedVersion = packageJson.version;
+const packageName = packageJson.name;
+const tempDir = mkdtempSync(join(tmpdir(), 'nexum-package-check-'));
+let tarball;
+
 try {
   const packed = JSON.parse(run('npm', ['pack', '--json']))[0];
   if (!packed?.filename) throw new Error('npm pack did not return an artifact filename');
 
-  const tarball = join(root, packed.filename);
+  tarball = join(root, packed.filename);
   run('npm', ['init', '-y'], tempDir);
   run('npm', ['install', '--ignore-scripts', tarball], tempDir);
 
-  const installedPackage = JSON.parse(
-    run('node', ['-e', `process.stdout.write(require('./node_modules/${packageName}/package.json').version)`], tempDir),
-  );
-  if (installedPackage !== expectedVersion) {
-    throw new Error(`Installed package version ${installedPackage} does not match ${expectedVersion}`);
+  const installedVersion = run(
+    'node',
+    ['-e', `process.stdout.write(require('./node_modules/${packageName}/package.json').version)`],
+    tempDir,
+  ).trim();
+  if (installedVersion !== expectedVersion) {
+    throw new Error(`Installed package version ${installedVersion} does not match ${expectedVersion}`);
   }
 
   const cli = join(tempDir, 'node_modules', packageName, 'bin', 'cli.js');
@@ -54,4 +57,5 @@ try {
   console.log(`Package validation passed: ${packed.filename}`);
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
+  if (tarball) unlinkSync(tarball, { force: true });
 }
