@@ -20,6 +20,7 @@ jobs:
       - run: npm install --legacy-peer-deps --package-lock-only
       - name: Commit lockfile
         run: |
+          # Temporary release-branch helper; removed after the lockfile is refreshed.
           if git diff --quiet -- package-lock.json; then
             echo "Lockfile already current"
             exit 0
