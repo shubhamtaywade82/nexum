@@ -42,7 +42,9 @@ export interface ServeCliOptions {
   redisUrl?: string;
 }
 
-export async function startNexumServer(opts: ServeCliOptions = {}): Promise<{ agent: Agent; stop: () => Promise<void> }> {
+export async function startNexumServer(
+  opts: ServeCliOptions = {},
+): Promise<{ agent: Agent; stop: () => Promise<void> }> {
   const databaseUrl = opts.databaseUrl ?? process.env.DATABASE_URL;
   const redisUrl = opts.redisUrl ?? process.env.REDIS_URL;
   if (!databaseUrl) {

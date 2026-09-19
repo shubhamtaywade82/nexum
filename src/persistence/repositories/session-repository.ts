@@ -6,7 +6,10 @@ export class SessionRepository {
   constructor(private readonly db: Database) {}
 
   async create(id: string, workspaceRoot: string, title?: string): Promise<SessionRow> {
-    const [row] = await this.db.insert(sessions).values({ id, workspaceRoot, title: title ?? null }).returning();
+    const [row] = await this.db
+      .insert(sessions)
+      .values({ id, workspaceRoot, title: title ?? null })
+      .returning();
     return row;
   }
 

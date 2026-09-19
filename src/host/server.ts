@@ -252,7 +252,9 @@ async function handleCreateRun(
       .then(() => repos.events.append(event))
       .then(() => eventBus.publish(channel, event))
       .catch((err) => {
-        process.stderr.write(`[nexum host] failed to persist/publish ${event.type} for ${runId}: ${describeError(err)}\n`);
+        process.stderr.write(
+          `[nexum host] failed to persist/publish ${event.type} for ${runId}: ${describeError(err)}\n`,
+        );
       });
   };
 
