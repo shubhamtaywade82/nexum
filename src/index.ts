@@ -455,3 +455,29 @@ export {
 } from "./protocol/types.js";
 export { createNexumHost, type NexumHost, type NexumHostOptions } from "./host/index.js";
 export { startNexumServer, type ServeCliOptions } from "./cli/serve.js";
+
+// PostgreSQL persistence (durable source of truth — docs/plan §1)
+export {
+  openDatabase,
+  type Database,
+  type NexumDatabase,
+  SessionRepository,
+  RunRepository,
+  EventRepository,
+  sessions,
+  runs,
+  executionEvents,
+  type SessionRow,
+  type RunRow,
+  type ExecutionEventRow,
+} from "./persistence/index.js";
+
+// Redis live coordination layer (docs/plan §1)
+export {
+  createRedisClient,
+  RedisEventBus,
+  runChannel,
+  sessionChannel,
+  type RedisEventHandler,
+  type Unsubscribe,
+} from "./infrastructure/redis/index.js";

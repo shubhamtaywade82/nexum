@@ -9,6 +9,13 @@
  * in its dependency graph yet. Revisit if/when the route surface grows
  * past what raw http comfortably handles.
  *
+ * PostgreSQL is the durable source of truth for sessions/runs/events;
+ * Redis is the live fan-out layer (docs/plan §1: "Redis should never
+ * become the authoritative state store"). A run's SSE response subscribes
+ * to Redis rather than reading the event bridge directly, so a future
+ * second subscriber (CLI attach to a Web-started run) can join the same
+ * channel without touching this handler.
+ *
  * Concurrency model: one Agent instance backs the whole host process (see
  * AGENTS.md — the TUI/CLI already assume a single active conversation).
  * "Sessions" are Agent's own persisted transcripts (SessionStore); starting
@@ -22,9 +29,17 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import type { Agent } from "../cli/agent.js";
 import { RunEventBridge } from "./event-bridge.js";
 import { CreateRunRequestSchema, PROTOCOL_VERSION, type NexumRunEvent } from "../protocol/types.js";
+import type { Database } from "../persistence/database.js";
+import { SessionRepository } from "../persistence/repositories/session-repository.js";
+import { RunRepository } from "../persistence/repositories/run-repository.js";
+import { EventRepository } from "../persistence/repositories/event-repository.js";
+import type { RedisEventBus } from "../infrastructure/redis/pubsub.js";
+import { runChannel } from "../infrastructure/redis/channels.js";
 
 export interface NexumHostOptions {
   agent: Agent;
+  db: Database;
+  eventBus: RedisEventBus;
   host?: string;
   port?: number;
 }
@@ -38,13 +53,18 @@ export interface NexumHost {
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB — chat goals/history, not file uploads
 
 export function createNexumHost(opts: NexumHostOptions): NexumHost {
-  const { agent } = opts;
+  const { agent, db, eventBus } = opts;
   const host = opts.host ?? "127.0.0.1";
   const port = opts.port ?? 3777;
   const bridge = new RunEventBridge(agent);
+  const repos = {
+    sessions: new SessionRepository(db),
+    runs: new RunRepository(db),
+    events: new EventRepository(db),
+  };
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, agent, bridge).catch((err) => {
+    handleRequest(req, res, agent, bridge, repos, eventBus).catch((err) => {
       if (!res.headersSent) {
         writeJson(res, 500, { error: "internal_error", message: describeError(err) });
       } else {
@@ -72,11 +92,19 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
   };
 }
 
+interface Repos {
+  sessions: SessionRepository;
+  runs: RunRepository;
+  events: EventRepository;
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   agent: Agent,
   bridge: RunEventBridge,
+  repos: Repos,
+  eventBus: RedisEventBus,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   const segments = url.pathname.split("/").filter(Boolean);
@@ -102,35 +130,39 @@ async function handleRequest(
   }
 
   if (segments[0] === "sessions") {
-    // POST /sessions — start a fresh session
+    // POST /sessions — start a fresh session, durably recorded in Postgres
     if (method === "POST" && segments.length === 1) {
       agent.resetContext();
-      writeJson(res, 201, { id: agent.sessions.sessionId });
+      const id = agent.sessions.sessionId;
+      const row = await repos.sessions.create(id, agent.workspaceRoot);
+      writeJson(res, 201, { id: row.id, createdAt: row.createdAt });
       return;
     }
 
-    // GET /sessions — list known sessions
+    // GET /sessions — list from Postgres (the durable listing)
     if (method === "GET" && segments.length === 1) {
-      writeJson(res, 200, { sessions: agent.listSessions() });
+      const rows = await repos.sessions.list();
+      writeJson(res, 200, { sessions: rows });
       return;
     }
 
     const sessionId = segments[1];
 
-    // GET /sessions/:id — load a session's transcript
+    // GET /sessions/:id — Postgres record + Agent's transcript
     if (method === "GET" && segments.length === 2 && sessionId) {
-      const messages = agent.resumeSessionById(sessionId);
-      if (!messages) {
+      const row = await repos.sessions.get(sessionId);
+      if (!row) {
         writeJson(res, 404, { error: "not_found", message: `no session "${sessionId}"` });
         return;
       }
-      writeJson(res, 200, { id: sessionId, messages });
+      const messages = agent.resumeSessionById(sessionId) ?? [];
+      writeJson(res, 200, { session: row, messages });
       return;
     }
 
     // POST /sessions/:id/runs — start a run and stream its events
     if (method === "POST" && segments.length === 3 && segments[2] === "runs" && sessionId) {
-      await handleCreateRun(req, res, agent, bridge, sessionId);
+      await handleCreateRun(req, res, agent, bridge, repos, eventBus, sessionId);
       return;
     }
   }
@@ -150,6 +182,8 @@ async function handleCreateRun(
   res: ServerResponse,
   agent: Agent,
   bridge: RunEventBridge,
+  repos: Repos,
+  eventBus: RedisEventBus,
   sessionId: string,
 ): Promise<void> {
   if (bridge.isBusy) {
@@ -171,14 +205,26 @@ async function handleCreateRun(
     return;
   }
 
-  // Switch the active session if the caller asked for one that isn't already loaded.
-  // Callers must POST /sessions first — there is no implicit "current session" sentinel.
-  if (sessionId !== agent.sessions.sessionId && !agent.resumeSessionById(sessionId)) {
+  // The session must already exist in Postgres — callers POST /sessions first.
+  const sessionRow = await repos.sessions.get(sessionId);
+  if (!sessionRow) {
     writeJson(res, 404, { error: "not_found", message: `no session "${sessionId}"` });
     return;
   }
 
+  // Switch the active session if the caller asked for one that isn't already loaded.
+  if (sessionId !== agent.sessions.sessionId && !agent.resumeSessionById(sessionId)) {
+    // A session can exist in Postgres before Agent's own SessionStore has
+    // ever saved a transcript for it (freshly created, zero turns so far).
+    // That's fine only when it's still the currently-loaded session.
+    if (sessionId !== agent.sessions.sessionId) {
+      writeJson(res, 404, { error: "not_found", message: `session "${sessionId}" has no transcript yet on this host` });
+      return;
+    }
+  }
+
   const runId = agent.startExecutionRun();
+  await repos.runs.create(runId, sessionId, parsed.data.goal);
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -187,12 +233,31 @@ async function handleCreateRun(
     "X-Accel-Buffering": "no",
   });
 
-  const write = (event: NexumRunEvent): void => {
+  const channel = runChannel(runId);
+
+  // Subscribe BEFORE publishing anything so the very first event (run.started)
+  // is never dropped — ioredis's SUBSCRIBE ack guarantees delivery ordering
+  // for messages published on this same connection after the await resolves.
+  const unsubscribe = await eventBus.subscribe<NexumRunEvent>(channel, (event) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
+  });
+
+  // Durability (Postgres) + live fan-out (Redis) both happen off the
+  // response-write path, and are sequenced so out-of-order persistence
+  // can never reorder what a subscriber sees, even though each publish is
+  // itself async (two round trips: insert, then PUBLISH).
+  let publishChain: Promise<void> = Promise.resolve();
+  const publish = (event: NexumRunEvent): void => {
+    publishChain = publishChain
+      .then(() => repos.events.append(event))
+      .then(() => eventBus.publish(channel, event))
+      .catch((err) => {
+        process.stderr.write(`[nexum host] failed to persist/publish ${event.type} for ${runId}: ${describeError(err)}\n`);
+      });
   };
 
-  bridge.begin({ runId, write });
-  write({ type: "run.started", runId, sessionId: agent.sessions.sessionId, goal: parsed.data.goal, ts: Date.now() });
+  bridge.begin({ runId, write: publish });
+  publish({ type: "run.started", runId, sessionId, goal: parsed.data.goal, ts: Date.now() });
 
   const onClientDisconnect = (): void => {
     agent.cancelExecutionRun();
@@ -202,14 +267,27 @@ async function handleCreateRun(
   try {
     const output = await agent.runUserMessage(parsed.data.goal);
     bridge.flushThinking();
-    write({ type: "run.completed", runId, output, ts: Date.now() });
+    publish({ type: "run.completed", runId, output, ts: Date.now() });
+    await publishChain;
+    await repos.runs.complete(runId, "completed", { output });
   } catch (err) {
     bridge.flushThinking();
-    write({ type: "run.failed", runId, error: describeError(err), ts: Date.now() });
+    const cancelled = agent.execution.signal?.aborted ?? false;
+    const message = describeError(err);
+    publish(
+      cancelled
+        ? { type: "run.cancelled", runId, ts: Date.now() }
+        : { type: "run.failed", runId, error: message, ts: Date.now() },
+    );
+    await publishChain;
+    await repos.runs.complete(runId, cancelled ? "cancelled" : "failed", { error: message });
   } finally {
     req.removeListener("close", onClientDisconnect);
     bridge.end();
     agent.endExecutionRun();
+    await unsubscribe();
+    const meta = agent.listSessions().find((s) => s.id === sessionId);
+    if (meta) await repos.sessions.touch(sessionId, meta.messageCount);
     res.end();
   }
 }
