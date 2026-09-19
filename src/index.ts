@@ -440,3 +440,18 @@ export {
   type ControlRequest,
   type ControlResponse,
 } from "./control-plane/index.js";
+
+// ── Nexum Local Host: the HTTP+SSE transport (docs/plan Phase 0 + 1) ───────
+export {
+  type NexumSessionMeta,
+  type NexumRun,
+  type NexumRunStatus,
+  type NexumRunEvent,
+  type NexumPlanStepView,
+  type NexumCapabilities,
+  type CreateRunRequest,
+  CreateRunRequestSchema,
+  PROTOCOL_VERSION,
+} from "./protocol/types.js";
+export { createNexumHost, type NexumHost, type NexumHostOptions } from "./host/index.js";
+export { startNexumServer, type ServeCliOptions } from "./cli/serve.js";

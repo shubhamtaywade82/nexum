@@ -19,6 +19,7 @@
     "start": "node dist/ui/index.js",
     "dev": "tsx src/ui/index.ts",
     "dev:legacy": "tsx src/cli/tui.ts",
+    "serve": "tsx src/cli/serve.ts",
     "benchmark": "tsx src/benchmark/cli.ts",
     "docs:ingest": "tsx src/docs/cli.ts",
     "doctor": "tsx src/cli/doctor.ts",

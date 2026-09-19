@@ -23,6 +23,7 @@ Usage:
   nexum fix "<issue>"           Investigate, plan, implement, and verify fix
   nexum issue <number>          Resolve GitHub issue end-to-end and prepare PR
   nexum rpc                     Start JSON-RPC agent server over stdio
+  nexum serve                   Start the Nexum Local Host (HTTP + SSE)
   nexum doctor                  Run system, workspace, and model diagnostics
   nexum migrate                 Migrate legacy .devagent state to .nexum
   nexum asl [validate|graph]    Architecture definition commands
@@ -54,6 +55,12 @@ if (command === 'rpc') {
   await main(process.argv.slice(3));
   // The RPC server blocks on stdin; exit happens via the stdin 'end' handler.
   process.exit(0);
+}
+
+if (command === 'serve') {
+  const { main } = await import('../dist/cli/serve.js');
+  await main(process.argv.slice(3));
+  // Blocks until SIGINT/SIGTERM; the cleanup handler calls process.exit(0).
 }
 
 if (command === 'migrate') {
