@@ -17,4 +17,8 @@ if (!existsSync(src)) {
 
 mkdirSync(dirname(dest), { recursive: true });
 cpSync(src, dest, { recursive: true });
-console.log(`[copy-migrations] ${src} -> ${dest}`);
+// stderr, not stdout: this script runs as part of `npm run build`, which
+// `npm pack`'s prepack hook triggers — a stdout line here lands ahead of
+// `npm pack --json`'s own JSON output and breaks JSON.parse on it (see
+// scripts/check-package.mjs, which does exactly that).
+console.error(`[copy-migrations] ${src} -> ${dest}`);
