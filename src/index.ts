@@ -454,6 +454,7 @@ export {
   PROTOCOL_VERSION,
 } from "./protocol/types.js";
 export { createNexumHost, type NexumHost, type NexumHostOptions } from "./host/index.js";
+export { HostAgentRegistry, type AgentEntry, type HostAgentRegistryOptions } from "./host/agent-registry.js";
 export { startNexumServer, type ServeCliOptions } from "./cli/serve.js";
 
 // PostgreSQL persistence (durable source of truth — docs/plan §1)
@@ -462,12 +463,16 @@ export {
   type Database,
   type NexumDatabase,
   SessionRepository,
+  MessageRepository,
   RunRepository,
   EventRepository,
   sessions,
+  messages,
   runs,
   executionEvents,
   type SessionRow,
+  type MessageRow,
+  type NewMessage,
   type RunRow,
   type ExecutionEventRow,
 } from "./persistence/index.js";

@@ -8,6 +8,13 @@
       "when": 1789836351705,
       "tag": "0000_tired_starjammers",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789880434220,
+      "tag": "0001_fearless_wild_pack",
+      "breakpoints": true
     }
   ]
 }

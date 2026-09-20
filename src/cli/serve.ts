@@ -42,9 +42,7 @@ export interface ServeCliOptions {
   redisUrl?: string;
 }
 
-export async function startNexumServer(
-  opts: ServeCliOptions = {},
-): Promise<{ agent: Agent; stop: () => Promise<void> }> {
+export async function startNexumServer(opts: ServeCliOptions = {}): Promise<{ stop: () => Promise<void> }> {
   const databaseUrl = opts.databaseUrl ?? process.env.DATABASE_URL;
   const redisUrl = opts.redisUrl ?? process.env.REDIS_URL;
   if (!databaseUrl) {
@@ -65,21 +63,14 @@ export async function startNexumServer(
     ...(opts.config ?? {}),
     ...(opts.workspaceRoot ? { workspaceRoot: opts.workspaceRoot } : {}),
   };
-  const agent = new Agent({ config: cfg });
-
-  try {
-    await agent.startHost();
-  } catch (err) {
-    process.stderr.write(
-      `[nexum serve] plugin host start failed: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-  }
+  // One Agent per active session (src/host/agent-registry.ts), all built
+  // from this same host-wide config — only the loaded conversation differs.
+  const createAgent = (): Agent => new Agent({ config: cfg });
 
   let database: NexumDatabase;
   try {
     database = await openDatabase(databaseUrl);
   } catch (err) {
-    await agent.stopHost();
     throw new Error(`failed to connect/migrate PostgreSQL at ${redactUrl(databaseUrl)}: ${describeError(err)}`, {
       cause: err,
     });
@@ -93,7 +84,6 @@ export async function startNexumServer(
   } catch (err) {
     await eventBus.close();
     await database.close();
-    await agent.stopHost();
     throw new Error(`failed to connect to Redis at ${redactUrl(redisUrl)}: ${describeError(err)}`, { cause: err });
   }
 
@@ -101,20 +91,26 @@ export async function startNexumServer(
   const portRaw = opts.port ?? Number(readEnv("HOST_PORT") ?? "3777");
   const port = Number.isFinite(portRaw) && portRaw > 0 ? portRaw : 3777;
 
-  const nexumHost = createNexumHost({ agent, db: database.db, eventBus, host, port });
+  const nexumHost = createNexumHost({
+    createAgent,
+    workspaceRoot: cfg.workspaceRoot,
+    db: database.db,
+    eventBus,
+    host,
+    port,
+  });
   const bound = await nexumHost.start();
   process.stderr.write(`Nexum host listening on http://${bound.host}:${bound.port}\n`);
   process.stderr.write(`  postgres: ${redactUrl(databaseUrl)}\n`);
   process.stderr.write(`  redis:    ${redactUrl(redisUrl)}\n`);
 
   const stop = async (): Promise<void> => {
-    await nexumHost.stop();
+    await nexumHost.stop(); // also tears down every session's Agent (AgentRegistry.stopAll)
     await eventBus.close();
     await database.close();
-    await agent.stopHost();
   };
 
-  return { agent, stop };
+  return { stop };
 }
 
 function redactUrl(url: string): string {
