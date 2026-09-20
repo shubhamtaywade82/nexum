@@ -66,6 +66,18 @@ export class SessionManager {
     return saved;
   }
 
+  /**
+   * Forces this Agent instance to use an externally-minted id instead of
+   * the one `startNew()` generated at construction time — for a host that
+   * assigns session ids itself (src/host/agent-registry.ts) and only
+   * constructs the Agent lazily, on first use. Only meaningful before the
+   * first `save()`; once a transcript exists under the constructor's own
+   * id, `resumeSessionById` is the right call instead.
+   */
+  adopt(id: string): void {
+    this.currentSessionId = id;
+  }
+
   /** Background summarization (quick tier, single-flight). */
   triggerSummarization(): void {
     if (this.isSummarizing) return;

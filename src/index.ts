@@ -440,3 +440,49 @@ export {
   type ControlRequest,
   type ControlResponse,
 } from "./control-plane/index.js";
+
+// ── Nexum Local Host: the HTTP+SSE transport (docs/plan Phase 0 + 1) ───────
+export {
+  type NexumSessionMeta,
+  type NexumRun,
+  type NexumRunStatus,
+  type NexumRunEvent,
+  type NexumPlanStepView,
+  type NexumCapabilities,
+  type CreateRunRequest,
+  CreateRunRequestSchema,
+  PROTOCOL_VERSION,
+} from "./protocol/types.js";
+export { createNexumHost, type NexumHost, type NexumHostOptions } from "./host/index.js";
+export { HostAgentRegistry, type AgentEntry, type HostAgentRegistryOptions } from "./host/agent-registry.js";
+export { startNexumServer, type ServeCliOptions } from "./cli/serve.js";
+
+// PostgreSQL persistence (durable source of truth — docs/plan §1)
+export {
+  openDatabase,
+  type Database,
+  type NexumDatabase,
+  SessionRepository,
+  MessageRepository,
+  RunRepository,
+  EventRepository,
+  sessions,
+  messages,
+  runs,
+  executionEvents,
+  type SessionRow,
+  type MessageRow,
+  type NewMessage,
+  type RunRow,
+  type ExecutionEventRow,
+} from "./persistence/index.js";
+
+// Redis live coordination layer (docs/plan §1)
+export {
+  createRedisClient,
+  RedisEventBus,
+  runChannel,
+  sessionChannel,
+  type RedisEventHandler,
+  type Unsubscribe,
+} from "./infrastructure/redis/index.js";

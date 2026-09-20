@@ -1,0 +1,101 @@
+# Nexum local platform: PostgreSQL + Redis + Nexum Host + Agentic Chat.
+#
+# PostgreSQL and Redis are first-class infrastructure here, not a later
+# migration — Postgres is the durable source of truth (sessions, runs,
+# execution_events); Redis is the live event fan-out layer. See
+# src/persistence and src/infrastructure/redis, and ../../README.md (or
+# this directory's README.md) for the full picture.
+#
+# Usage:
+#   cp .env.example .env   # then fill in POSTGRES_PASSWORD / OLLAMA_API_KEY
+#   docker compose --env-file .env up
+#
+# This assumes agentic-chat is checked out as a sibling directory next to
+# nexum (../../../agentic-chat relative to this file). Adjust the
+# agentic-chat service's `build.context` below if your checkout layout
+# differs.
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: nexum-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nexum
+      POSTGRES_USER: nexum
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - nexum-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexum -d nexum"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - nexum
+
+  redis:
+    image: redis:8-alpine
+    container_name: nexum-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - nexum-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - nexum
+
+  nexum:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: nexum
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://nexum:${POSTGRES_PASSWORD}@postgres:5432/nexum
+      REDIS_URL: redis://redis:6379
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
+    command: ["serve", "--host", "0.0.0.0", "--port", "3777", "--workspace", "/workspace"]
+    ports:
+      - "127.0.0.1:3777:3777"
+    volumes:
+      - ${NEXUM_WORKSPACE_ROOT}:/workspace
+    networks:
+      - nexum
+
+  agentic-chat:
+    build:
+      context: ../../../agentic-chat
+    container_name: nexum-agentic-chat
+    restart: unless-stopped
+    depends_on:
+      - nexum
+    environment:
+      NEXUM_HOST_URL: http://nexum:3777
+    ports:
+      - "127.0.0.1:3400:3400"
+    networks:
+      - nexum
+
+networks:
+  nexum:
+    driver: bridge
+
+volumes:
+  nexum-postgres:
+  nexum-redis:
