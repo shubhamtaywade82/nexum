@@ -1,4 +1,4 @@
-import { CliConfig, loadConfig } from "./config.js";
+import { CliConfig, loadConfig, type McpCliServerConfig } from "./config.js";
 import { WorkspaceManager } from "../platform/workspace.js";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
@@ -26,10 +26,12 @@ import { IntentResolver } from "../intent/intent-resolver.js";
 import { MemoryStore } from "../memory/store.js";
 import { DocsStore } from "../docs/store.js";
 import { AgentConversation } from "./agent-conversation.js";
-import { AgentToolManager } from "./agent-tools.js";
+import { AgentToolManager, type McpRegistrationOptions } from "./agent-tools.js";
+import { McpApprovalStore, McpTrustPolicy, mcpTrustPolicyFromConfig } from "../mcp/trust.js";
 import { AgentIntelligence } from "./agent-intelligence.js";
 import { AgentLearning } from "./agent-learning.js";
 import { DynamicToolSelector } from "../tools/discovery.js";
+import { join } from "node:path";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
 
@@ -164,7 +166,9 @@ export class Agent {
   private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>();
 
   readonly workspaceRoot: string;
-  private readonly mcpServerConfigs: Array<{ name: string; command: string; args?: string[] }>;
+  private readonly mcpServerConfigs: McpCliServerConfig[];
+  /** P2 trust tier: built from config when any server sets trust/tools/maxRisk. */
+  private readonly mcpTrust?: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
   readonly intentResolver = new IntentResolver();
   projectInfo?: ProjectInfo;
@@ -247,6 +251,16 @@ export class Agent {
     // resolved (and migrated from legacy .devagent when present) by the
     // WorkspaceManager, the single owner of that decision (docs/REBRANDING.md §4).
     const statePaths = new WorkspaceManager(cfg.workspaceRoot).ensure();
+
+    // P2 trust tier: entries with trust/tools/maxRisk gates get a policy;
+    // entries without keep the connect-freely behavior (listing = consent).
+    this.mcpTrust = this.mcpServerConfigs.some(
+      (s) => s.trust !== undefined || s.tools !== undefined || s.maxRisk !== undefined,
+    )
+      ? mcpTrustPolicyFromConfig(this.mcpServerConfigs, {
+          approvals: new McpApprovalStore(join(statePaths.dir, "mcp-trust.json")),
+        })
+      : undefined;
 
     this.memory = new MemoryStore(statePaths.memoryDb);
     this.planCheckpoint = new CheckpointStore(statePaths.checkpoint);
@@ -1077,20 +1091,23 @@ export class Agent {
     this.execution.endExecutionRun();
   }
 
-  async registerMcpServer(command: string, args: string[] = []): Promise<void> {
-    await this.tools.registerMcpServer(command, args);
+  async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<void> {
+    await this.tools.registerMcpServer(command, args, opts);
   }
 
   /** Connects every MCP server listed in config.mcpServers, one at a time
    * (each spawns a subprocess). Never throws — a server that fails to start
-   * shows up as `connected: false` rather than aborting the others or the
-   * TUI's own startup. */
+   * (or is denied by the trust policy) shows up as `connected: false` rather
+   * than aborting the others or the TUI's own startup. */
   async connectConfiguredMcpServers(): Promise<McpServerState[]> {
     const results: McpServerState[] = [];
     for (const server of this.mcpServerConfigs) {
       const start = Date.now();
       try {
-        const tools = await this.tools.registerMcpServer(server.command, server.args ?? []);
+        const tools = await this.tools.registerMcpServer(server.command, server.args ?? [], {
+          serverName: server.name,
+          ...(this.mcpTrust ? { trust: this.mcpTrust } : {}),
+        });
         results.push({
           name: server.name,
           connected: true,
