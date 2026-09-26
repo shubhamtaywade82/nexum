@@ -591,3 +591,19 @@ export {
   type VerificationReport,
 } from "./runtime/critic/index.js";
 export type { CriticPolicy } from "./runtime/strategies/execution-strategy.js";
+
+// Artifacts (versioned, provenance-carrying outputs)
+export {
+  InMemoryArtifactStore,
+  SqliteArtifactStore,
+  deriveArtifact,
+  contentHash,
+  newArtifactId,
+  type Artifact,
+  type ArtifactKind,
+  type ArtifactReference,
+  type ArtifactProvenance,
+  type ArtifactSaveInput,
+  type ArtifactQuery,
+  type ArtifactStore,
+} from "./artifacts/index.js";
