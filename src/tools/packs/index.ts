@@ -39,3 +39,4 @@ export { railsPack } from "./rails-pack.js";
 export { databasePack } from "./database-pack.js";
 export { agentCorePack } from "./agent-core-pack.js";
 export { memoryPack } from "./memory-pack.js";
+export { ragPack } from "./rag-pack.js";

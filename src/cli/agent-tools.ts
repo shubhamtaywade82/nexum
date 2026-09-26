@@ -25,6 +25,7 @@ import {
   memoryPack,
   projectPack,
   railsPack,
+  ragPack,
   rubyPack,
   searchPack,
   shellPack,
@@ -32,7 +33,10 @@ import {
 } from "../tools/packs/index.js";
 import { createWorkspaceSemanticMemory } from "../memory/semantic/semantic-memory.js";
 import type { SemanticMemory } from "../memory/semantic/semantic-memory.js";
+import { createWorkspaceRagService } from "../rag/workspace.js";
+import type { RagService } from "../rag/rag-service.js";
 import { readEnv } from "../platform/environment.js";
+import { join } from "node:path";
 
 export type ToolOnOutput = (stream: "stdout" | "stderr", chunk: string) => void;
 
@@ -65,6 +69,8 @@ export class AgentToolManager {
   readonly mountedPacks = new Map<string, ToolPack>();
   /** Lazily-created workspace semantic memory (see registerIntelligenceTools). */
   semanticMemory?: SemanticMemory;
+  /** Lazily-created workspace RAG service (see registerIntelligenceTools). */
+  ragService?: RagService;
 
   constructor() {
     this.gateway = new DefaultToolGateway({
@@ -115,13 +121,21 @@ export class AgentToolManager {
    */
   registerIntelligenceTools(root: string): void {
     if (readEnv("SEMANTIC_MEMORY") === "0") return;
-    if (this.mountedPacks.has("memory")) return;
     try {
       const memory = (this.semanticMemory ??= createWorkspaceSemanticMemory(root));
-      this.registerToolPack(memoryPack(memory));
+      if (!this.mountedPacks.has("memory")) this.registerToolPack(memoryPack(memory));
     } catch {
       // Unwritable workspace — run without semantic memory tools rather
       // than breaking tool registration entirely.
+      return;
+    }
+    try {
+      const rag = (this.ragService ??= createWorkspaceRagService({
+        dbPath: join(root, ".nexum", "memory.db"),
+      }));
+      if (!this.mountedPacks.has("rag")) this.registerToolPack(ragPack(rag));
+    } catch {
+      // RAG is additive — semantic memory still works without it.
     }
   }
 

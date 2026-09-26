@@ -479,3 +479,33 @@ export {
   type VectorFilter,
   type VectorQueryOptions,
 } from "./memory/semantic/vector-store.js";
+
+// Agentic RAG (hybrid retrieval + grounding)
+export {
+  RetrieverRegistry,
+  VectorRetriever,
+  KeywordRetriever,
+  GraphRetriever,
+  MetadataRetriever,
+  InMemoryKeywordIndex,
+  SqliteKeywordIndex,
+  InMemoryGraphIndex,
+  HybridRetriever,
+  fuseByRrf,
+  HeuristicReranker,
+  LlmReranker,
+  GroundingService,
+  extractClaims,
+  RagService,
+  createWorkspaceRagService,
+  buildContextBlock,
+  type Retriever,
+  type RetrievalQuery,
+  type RetrievedChunk,
+  type RetrievalOutcome,
+  type KeywordIndex,
+  type GraphIndex,
+  type Reranker,
+  type GroundingReport,
+  type RagAnswer,
+} from "./rag/index.js";
