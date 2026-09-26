@@ -192,6 +192,17 @@ export class McpApprovalStore {
   approvedServers(): string[] {
     return Object.keys(this.load()).sort();
   }
+
+  /** All approvals with their pinned fingerprints, sorted by server name. */
+  list(): Array<{ server: string; fingerprint: string; approvedAt: string }> {
+    return Object.entries(this.load())
+      .map(([server, entry]) => ({
+        server,
+        fingerprint: entry.fingerprint,
+        approvedAt: entry.approvedAt,
+      }))
+      .sort((a, b) => a.server.localeCompare(b.server));
+  }
 }
 
 // ── The policy ──────────────────────────────────────────────────────────────

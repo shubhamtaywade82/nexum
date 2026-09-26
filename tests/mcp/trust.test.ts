@@ -93,6 +93,21 @@ describe("McpApprovalStore (TOFU)", () => {
     expect(reopened.revoke("sqlite")).toBe(false);
   });
 
+  it("list() returns entries with pinned fingerprints, sorted by server", () => {
+    const file = join(dir, "mcp-trust.json");
+    const store = new McpApprovalStore(file);
+    expect(store.list()).toEqual([]);
+    const fpA = mcpServerFingerprint(STDIO);
+    const fpB = mcpServerFingerprint({ kind: "stdio", command: "npx", args: ["other"] });
+    store.approve("zeta", fpB);
+    store.approve("alpha", fpA);
+    const entries = store.list();
+    expect(entries.map((e) => e.server)).toEqual(["alpha", "zeta"]);
+    expect(entries[0]).toMatchObject({ server: "alpha", fingerprint: fpA });
+    expect(entries[0].approvedAt).toEqual(expect.any(String));
+    expect(entries[1]).toMatchObject({ server: "zeta", fingerprint: fpB });
+  });
+
   it("tolerates corrupt files without throwing", () => {
     const file = join(dir, "mcp-trust.json");
     writeFileSync(file, "{not json");

@@ -91,3 +91,12 @@ market.verifyInstalled("cool-tools");
 ```
 
 `verifyInstalled` re-hashes the on-disk artifact against the recorded value, catching modifications that happen after installation.
+
+## CLI
+
+```bash
+nexum plugins verify cool-tools   # re-verify an installed plugin
+nexum marketplace keys list       # publisher trust store
+```
+
+See the [Trust & Security CLI reference](/guide/security-cli).

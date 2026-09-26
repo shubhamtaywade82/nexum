@@ -100,3 +100,13 @@ ledger.bySubject("tool-registry"); // every attestation for one plugin
 ## Threat model
 
 Attestations prove a grant **existed** and what it contained, and they make the authorization state of a running system tamper-evident and inspectable after the fact. They do not _constrain_ the grantee at runtime — that is the [plugin sandbox](/guide/plugin-sandbox)'s job, and the [MCP trust policy](/guide/mcp)'s for MCP servers. Use the three together: policy decides what is granted, the sandbox enforces it, attestation records it.
+
+## CLI
+
+```bash
+nexum capabilities attest --subject plugin:my-plugin --grant "capability:tools" --expires-in 30d
+nexum capabilities verify --id grant_k3x9q2z1
+nexum capabilities revoke --grant-id grant_k3x9q2z1
+```
+
+See the [Trust & Security CLI reference](/guide/security-cli).

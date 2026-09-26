@@ -27,6 +27,12 @@ Usage:
   nexum migrate                 Migrate legacy .devagent state to .nexum
   nexum asl [validate|graph]    Architecture definition commands
   nexum evolve [options]        Harness evolution and self-development commands
+  nexum plugins sandbox <file>  Trial-run a plugin in the worker sandbox
+  nexum plugins verify [id…]    Re-verify installed marketplace plugins
+  nexum marketplace keys …      Publisher trust store management
+  nexum mcp trust …             MCP server trust approvals & policy preview
+  nexum credentials …           Credential resolution preview (redacted)
+  nexum capabilities …          Capability attestation authority & ledger
 
 Options:
   -h, --help                    Show this help message
@@ -49,6 +55,14 @@ if (command === 'evolve') {
   process.exit(0);
 }
 
+// Trust & security command areas (plugins / marketplace / mcp / credentials /
+// capabilities). Everything else falls through to the interactive UI.
+if (['plugins', 'marketplace', 'mcp', 'credentials', 'capabilities'].includes(command)) {
+  const { runSecurityCli } = await import('../dist/cli/security.js');
+  const code = await runSecurityCli(command, process.argv.slice(3));
+  process.exit(code);
+}
+
 if (command === 'rpc') {
   const { main } = await import('../dist/cli/rpc.js');
   await main(process.argv.slice(3));
@@ -62,4 +76,3 @@ if (command === 'migrate') {
 } else {
   await import('../dist/ui/index.js');
 }
-

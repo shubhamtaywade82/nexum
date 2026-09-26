@@ -80,3 +80,12 @@ const policy = new McpTrustPolicy({
 ```
 
 `AgentToolManager.registerMcpServer(command, args, { serverName, trust, security })` applies the policy end-to-end: denied servers throw with the reason, denied tools are filtered before registration, and rule security overrides merge into each registered tool. The behavior is pinned by `tests/mcp/trust.test.ts` and `tests/cli/agent-tools-mcp-trust.test.ts`.
+
+## CLI
+
+```bash
+nexum mcp trust policy    # what the agent will do per configured server
+nexum mcp trust approve github-mcp   # pin the current fingerprint (TOFU)
+```
+
+See the [Trust & Security CLI reference](/guide/security-cli).
