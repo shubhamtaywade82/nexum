@@ -233,6 +233,14 @@ nexum doctor
 
 # Explicitly migrate a legacy DevAgent workspace (also happens automatically)
 nexum migrate
+
+# Trust & security surface (plugins, marketplace, MCP, credentials, attestations)
+nexum plugins sandbox ./plugin.mjs --allow-lookup "cache:*"
+nexum plugins verify
+nexum marketplace keys list
+nexum mcp trust policy
+nexum credentials get OPENAI_API_KEY
+nexum capabilities attest --subject plugin:my-plugin --grant "capability:tools"
 ```
 
 The old command names keep working during the transition:

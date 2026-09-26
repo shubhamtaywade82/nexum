@@ -116,3 +116,13 @@ A worker isolate still runs Node: it can use `fs` and the network unless the hos
 | Fully hostile code                                    | Tier 2 + container/seccomp |
 
 Both tiers are non-breaking: plugins registered without `sandboxPlugin` / `IsolatedPluginSandbox` behave exactly as before.
+
+## CLI
+
+Trial-run a plugin through the full Tier-2 lifecycle without a live host:
+
+```bash
+nexum plugins sandbox ./plugin.mjs --allow-lookup "cache:*" --json
+```
+
+See the [Trust & Security CLI reference](/guide/security-cli) for all flags and exit codes.

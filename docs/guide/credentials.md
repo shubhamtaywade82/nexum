@@ -73,3 +73,12 @@ Enumeration is deliberately not implemented (`security dump-keychain` is slow an
 The `prefix` option namespaces every lookup (e.g. `nexum/`), and any other backend (AWS Secrets Manager, GCP Secret Manager, Doppler, …) plugs in by implementing the two-method `VaultClient` port. Failures — unreachable host, 404, malformed body — resolve `undefined`; the token is only ever sent in the header, never logged.
 
 The full behavior matrix (degradation, TTL expiry, invalidation, KV v2 request shape) is pinned by `tests/credentials/vault-keychain.test.ts` and `tests/credentials/credential-service.test.ts`.
+
+## CLI
+
+```bash
+nexum credentials get OPENAI_API_KEY --keychain   # redacted preview
+nexum credentials list                            # enumerable names
+```
+
+Raw values are never printed — see the [Trust & Security CLI reference](/guide/security-cli).

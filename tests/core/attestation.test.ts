@@ -130,6 +130,26 @@ describe("AttestationAuthority", () => {
     expect(authority.isRevoked({ subject: "other" })).toBe(true);
   });
 
+  it("seeds revocations at construction (ledger replay) without re-appending", () => {
+    // Share one key between the issuing and the replayed authority.
+    const pair = generateAttestationKeyPair();
+    const original = new AttestationAuthority({ privateKeyPem: pair.privateKeyPem });
+    const sealed = original.attest(grantFixture());
+    original.revoke({ grantId: sealed.grant.id });
+
+    // A fresh process replays the persisted revocation list — no ledger attached,
+    // so nothing is appended; the grant must still verify as revoked.
+    const replayed = new AttestationAuthority({
+      privateKeyPem: pair.privateKeyPem,
+      revocations: { grantIds: [sealed.grant.id], subjects: ["unrelated-subject"] },
+    });
+    const verdict = replayed.verify(sealed);
+    expect(verdict.valid).toBe(false);
+    expect(verdict.reason).toContain("revoked");
+    expect(replayed.isRevoked({ grantId: sealed.grant.id })).toBe(true);
+    expect(replayed.isRevoked({ subject: "unrelated-subject" })).toBe(true);
+  });
+
   it("different keypairs produce different keyIds", () => {
     const a = new AttestationAuthority();
     const b = new AttestationAuthority();

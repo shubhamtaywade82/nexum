@@ -84,6 +84,7 @@ export default defineConfig({
           { text: "Plugin Sandbox & Isolation", link: "/guide/plugin-sandbox" },
           { text: "Plugin Marketplace & Signing", link: "/guide/marketplace" },
           { text: "Capability Attestation", link: "/guide/attestations" },
+          { text: "Trust & Security CLI", link: "/guide/security-cli" },
           { text: "Custom Skills & Prompts", link: "/guide/skills" },
           { text: "Model Benchmark Harness", link: "/guide/benchmarks" },
         ],

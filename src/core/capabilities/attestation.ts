@@ -94,6 +94,12 @@ export interface AttestationAuthorityOptions {
   now?: () => Date;
   /** Ledger that records attestations + revocations when attached. */
   ledger?: AttestationLedger;
+  /**
+   * Revocations replayed from a persisted ledger at construction time.
+   * Seeding does NOT append to the ledger again — it restores prior state
+   * (a fresh process must still honor revocations recorded earlier).
+   */
+  revocations?: { grantIds?: string[]; subjects?: string[] };
 }
 
 export interface AuthorityKeyPair {
@@ -157,8 +163,8 @@ export class AttestationAuthority {
   private readonly privateKey: KeyObject;
   private readonly publicKey: KeyObject;
   readonly keyId: string;
-  private readonly revokedGrantIds = new Set<string>();
-  private readonly revokedSubjects = new Set<string>();
+  private readonly revokedGrantIds: Set<string>;
+  private readonly revokedSubjects: Set<string>;
   private readonly now: () => Date;
   private readonly ledger?: AttestationLedger;
 
@@ -169,6 +175,8 @@ export class AttestationAuthority {
     this.keyId = pair.keyId;
     this.now = opts.now ?? (() => new Date());
     this.ledger = opts.ledger;
+    this.revokedGrantIds = new Set(opts.revocations?.grantIds ?? []);
+    this.revokedSubjects = new Set(opts.revocations?.subjects ?? []);
   }
 
   /** Sign a grant, producing a verifiable attestation. */
@@ -269,7 +277,10 @@ function authorityFromPrivatePem(privateKeyPem: string): AuthorityKeyPair {
  * Load (or create) a persistent authority key. The private key is written
  * with 0600 permissions next to the caller's chosen path.
  */
-export function loadOrCreateAuthority(keyFile: string, opts: { now?: () => Date } = {}): AttestationAuthority {
+export function loadOrCreateAuthority(
+  keyFile: string,
+  opts: Omit<AttestationAuthorityOptions, "privateKeyPem"> = {},
+): AttestationAuthority {
   if (existsSync(keyFile)) {
     const privateKeyPem = readFileSync(keyFile, "utf8");
     return new AttestationAuthority({ ...opts, privateKeyPem });
