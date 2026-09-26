@@ -18,6 +18,8 @@
  * Installation:
  *   - Plugin is downloaded to `.nexum/plugins/cache/<id>@<version>/`
  *   - Integrity is verified (sha256 from manifest)
+ *   - Publisher signatures are verified when a `MarketplaceInstallPolicy`
+ *     is configured (see ./trust.ts); tampered signatures always reject
  *   - Plugin is registered in `.nexum/plugins/installed.json`
  *   - On next host startup, the PluginLoader picks it up
  *
@@ -40,6 +42,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import {
+  computeTrustScore,
+  verifyEntrySignature,
+  type MarketplaceInstallPolicy,
+  type SignatureVerification,
+} from "./trust.js";
+
+export type { MarketplaceInstallPolicy } from "./trust.js";
 
 // ── Contracts ───────────────────────────────────────────────────────────────
 
@@ -74,6 +84,10 @@ export interface MarketplaceEntry {
   gitUrl?: string;
   /** Source registry id. */
   source: string;
+  /** Publisher signature bundle (see ./trust.ts). */
+  signature?: import("./trust.js").EntrySignature;
+  /** Publisher identity claimed by the entry (verified via signature). */
+  publisher?: string;
 }
 
 export interface InstalledPlugin {
@@ -87,6 +101,12 @@ export interface InstalledPlugin {
   installedAt: string;
   /** Source marketplace id. */
   source: string;
+  /** Publisher signature verification result at install time. */
+  verification?: SignatureVerification;
+  /** Computed trust score at install time (0–100). */
+  trustScore?: number;
+  /** Verified publisher name (when the signature resolved to one). */
+  publisher?: string;
 }
 
 export interface MarketplaceSource {
@@ -108,6 +128,8 @@ export interface MarketplaceServiceOptions {
   inMemory?: boolean;
   /** Marketplace sources. */
   sources?: MarketplaceSource[];
+  /** Signature / trust enforcement applied on every install (default "warn"). */
+  installPolicy?: MarketplaceInstallPolicy;
 }
 
 export class MarketplaceService {
@@ -116,9 +138,11 @@ export class MarketplaceService {
   private readonly cacheDir?: string;
   private readonly indexFile?: string;
   private readonly inMemory: boolean;
+  private readonly installPolicy: MarketplaceInstallPolicy;
 
   constructor(opts: MarketplaceServiceOptions = {}) {
     this.inMemory = opts.inMemory ?? false;
+    this.installPolicy = opts.installPolicy ?? {};
     if (opts.rootDir && !this.inMemory) {
       this.cacheDir = join(opts.rootDir, "plugins", "cache");
       this.indexFile = join(opts.rootDir, "plugins", "installed.json");
@@ -192,6 +216,10 @@ export class MarketplaceService {
       if (existing) return existing;
     }
 
+    // ── Trust gate (publisher signatures) ─────────────────────────────
+    // Runs BEFORE any download: an untrusted entry must not touch the disk.
+    const verification = this.checkInstallPolicy(entry);
+
     mkdirSync(installDir, { recursive: true });
     const artifactPath = join(installDir, "plugin.tar.gz");
     await source.download(entry, artifactPath);
@@ -212,6 +240,9 @@ export class MarketplaceService {
       sha256: entry.sha256,
       installedAt: new Date().toISOString(),
       source: entry.source,
+      verification,
+      trustScore: verification ? computeTrustScore(entry, verification) : undefined,
+      publisher: verification?.publisher ?? entry.publisher,
     };
     this.cache.set(`${entry.id}@${entry.version}`, record);
     this.persistIndex();
@@ -254,7 +285,65 @@ export class MarketplaceService {
     return key ? this.cache.get(key) : undefined;
   }
 
-  // ── internals ───────────────────────────────────────────────────────────
+  /**
+   * Re-verify an installed plugin against its on-disk bits: the artifact
+   * must still exist and hash to the recorded sha256. Returns the stored
+   * install-time signature verification for reference.
+   */
+  verifyInstalled(id: string, version?: string): { ok: boolean; reason?: string } {
+    const record = this.getInstalled(id, version);
+    if (!record) return { ok: false, reason: "not installed" };
+    const artifact = join(record.path, "plugin.tar.gz");
+    if (!existsSync(artifact)) {
+      return { ok: false, reason: `artifact missing: ${artifact}` };
+    }
+    if (record.sha256) {
+      const actual = sha256File(artifact);
+      if (actual !== record.sha256) {
+        return { ok: false, reason: `artifact hash drift: expected ${record.sha256}, got ${actual}` };
+      }
+    }
+    return { ok: true };
+  }
+
+  // ── internals ───────────────────────────────────────────────────────
+
+  /**
+   * Apply the install policy to an entry. Returns the verification result to
+   * record, or throws when the policy rejects the entry. "warn" mode only
+   * rejects invalid signatures (tamper evidence); "require"-family modes
+   * additionally demand presence / publisher trust.
+   */
+  private checkInstallPolicy(entry: MarketplaceEntry): SignatureVerification | undefined {
+    const mode = this.installPolicy.signatures ?? "warn";
+    if (mode === "off") return undefined;
+
+    if (this.installPolicy.requireSha256 && !entry.sha256) {
+      throw new Error(`install policy rejected "${entry.id}": entry carries no sha256 artifact hash`);
+    }
+
+    const verification = verifyEntrySignature(entry, this.installPolicy.trustStore);
+    if (verification.status === "invalid") {
+      throw new Error(`install policy rejected "${entry.id}": ${verification.reason}`);
+    }
+    if (mode === "require" && verification.status === "unsigned") {
+      throw new Error(`install policy rejected "${entry.id}": entry is unsigned and policy requires signatures`);
+    }
+    if (mode === "require-verified") {
+      if (verification.status === "unsigned") {
+        throw new Error(
+          `install policy rejected "${entry.id}": entry is unsigned and policy requires verified publishers`,
+        );
+      }
+      if (verification.trust !== "verified") {
+        throw new Error(
+          `install policy rejected "${entry.id}": publisher "${verification.publisher ?? verification.keyId}" is ` +
+            `"${verification.trust ?? "unknown"}", policy requires "verified"`,
+        );
+      }
+    }
+    return verification;
+  }
 
   private findLatestKey(id: string): string | undefined {
     const keys = [...this.cache.keys()].filter((k) => k.startsWith(`${id}@`));
