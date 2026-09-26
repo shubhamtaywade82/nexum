@@ -218,11 +218,13 @@ describe("JudgeHistory stores", () => {
     expect(history.list({ judgeModel: v1.judgeModel })).toHaveLength(2);
     expect(history.stats("builtin:answer-quality").count).toBe(1);
 
-    // Round-trips across connections.
+    // Round-trips across connections (order between same-ts verdicts is
+    // ambiguous — assert on filtered content instead).
     history.close();
     const reopened = new SqliteJudgeHistory(join(dir, "judge.db"));
     expect(reopened.list()).toHaveLength(2);
-    expect(reopened.list()[0].criteriaScores[0].criterionId).toBe("correctness");
+    const answerQuality = reopened.list({ rubricId: "builtin:answer-quality" })[0];
+    expect(answerQuality.criteriaScores[0].criterionId).toBe("correctness");
     reopened.close();
   });
 
