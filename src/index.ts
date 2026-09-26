@@ -288,14 +288,23 @@ export {
   FileCredentialProvider,
   KeychainCredentialProvider,
   VaultCredentialProvider,
+  HttpVaultClient,
   ScopedCredentialService,
   redact,
   defaultCredentialProviders,
+  defaultVaultNameMapping,
   type CredentialSpec,
   type CredentialRecord,
   type CredentialScope,
   type CredentialProvider,
   type CredentialServiceOptions,
+  type ExecResult,
+  type ExecFn,
+  type Platform,
+  type KeychainCredentialProviderOptions,
+  type VaultClient,
+  type HttpVaultClientOptions,
+  type VaultCredentialProviderOptions,
 } from "./credentials/index.js";
 
 // Attachment store
