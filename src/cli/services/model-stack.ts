@@ -49,12 +49,30 @@ export class ModelStack {
     this.cfg = cfg;
     this.emitStatus = emitStatus;
 
+    // Hybrid local-cloud components first — the KeyManager feeds the cloud
+    // Provider's per-request key selection below. Only worth attaching with a
+    // real pool (2+ keys): with a single key there is nothing to bind or
+    // queue and the selector only adds availability-probe latency. The
+    // acquire timeout is tightened from the KeyManager's 30s default so a
+    // fully-saturated pool degrades to the plain endpoint pool (and SDK
+    // failover) instead of stalling an interactive turn for half a minute.
+    this.availabilityChecker =
+      cfg.enableAvailabilityCheck && cfg.apiKeys?.length
+        ? new ModelAvailabilityChecker(cfg.apiKeys, { ttlMs: cfg.availabilityCheckTtlMs })
+        : undefined;
+    this.keyManager =
+      this.availabilityChecker && cfg.apiKeys?.length
+        ? new KeyManager(cfg.apiKeys, this.availabilityChecker, { acquireTimeoutMs: 5_000 })
+        : undefined;
+    const keySelector = cfg.apiKeys && cfg.apiKeys.length > 1 ? this.keyManager : undefined;
+
     this.provider = new Provider({
       tier: cfg.tier,
       model: cfg.model,
       host: cfg.host,
       apiKey: cfg.apiKey,
       apiKeys: cfg.apiKeys,
+      keySelector,
       ...(cfg.timeoutMs ? { timeoutMs: cfg.timeoutMs } : {}),
     });
 
@@ -75,6 +93,7 @@ export class ModelStack {
           host: cfg.tier === "cloud" ? cfg.host : undefined,
           apiKey: cfg.apiKey,
           apiKeys: cfg.apiKeys,
+          keySelector,
           ...(cfg.timeoutMs ? { timeoutMs: cfg.timeoutMs } : {}),
         })
       : undefined;
@@ -87,16 +106,7 @@ export class ModelStack {
       logger: { warn: (msg: string) => this.emitStatus(msg) },
     });
 
-    // hybrid local-cloud components (each optional per config)
     this.heuristicRouter = cfg.enableHeuristicGate ? new HeuristicRouter() : undefined;
-    this.availabilityChecker =
-      cfg.enableAvailabilityCheck && cfg.apiKeys?.length
-        ? new ModelAvailabilityChecker(cfg.apiKeys, { ttlMs: cfg.availabilityCheckTtlMs })
-        : undefined;
-    this.keyManager =
-      this.availabilityChecker && cfg.apiKeys?.length
-        ? new KeyManager(cfg.apiKeys, this.availabilityChecker)
-        : undefined;
 
     const quickLocalProvider = cfg.quickModel
       ? new Provider({
