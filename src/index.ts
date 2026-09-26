@@ -440,3 +440,42 @@ export {
   type ControlRequest,
   type ControlResponse,
 } from "./control-plane/index.js";
+
+// Semantic memory (embedding-backed long-term memory)
+export {
+  SemanticMemory,
+  MemoryRanker,
+  createSemanticMemory,
+  createWorkspaceSemanticMemory,
+  defaultEmbedder,
+  DEFAULT_RANKER_WEIGHTS,
+  type MemoryKind,
+  type MemoryEntryInput,
+  type MemoryHit,
+  type MemoryScore,
+  type MemoryRecallOptions,
+  type RankerWeights,
+  type SemanticMemoryOptions,
+  type CreateSemanticMemoryOptions,
+} from "./memory/semantic/semantic-memory.js";
+export {
+  HashEmbedder,
+  OllamaEmbedder,
+  FallbackEmbedder,
+  cosineSimilarity,
+  l2Normalize,
+  type EmbeddingProvider,
+  type HashEmbedderOptions,
+  type OllamaEmbedderOptions,
+  type FallbackEmbedderOptions,
+} from "./memory/semantic/embedding.js";
+export {
+  InMemoryVectorStore,
+  SqliteVectorStore,
+  matchesFilter,
+  type VectorStore,
+  type VectorRecord,
+  type VectorHit,
+  type VectorFilter,
+  type VectorQueryOptions,
+} from "./memory/semantic/vector-store.js";

@@ -22,6 +22,7 @@ import {
   filesystemPack,
   gitPack,
   lspPack,
+  memoryPack,
   projectPack,
   railsPack,
   rubyPack,
@@ -29,6 +30,9 @@ import {
   shellPack,
   tradingPack,
 } from "../tools/packs/index.js";
+import { createWorkspaceSemanticMemory } from "../memory/semantic/semantic-memory.js";
+import type { SemanticMemory } from "../memory/semantic/semantic-memory.js";
+import { readEnv } from "../platform/environment.js";
 
 export type ToolOnOutput = (stream: "stdout" | "stderr", chunk: string) => void;
 
@@ -59,6 +63,8 @@ export class AgentToolManager {
   readonly gateway: DefaultToolGateway;
   /** Packs mounted this session, by id (observability / capability scoping). */
   readonly mountedPacks = new Map<string, ToolPack>();
+  /** Lazily-created workspace semantic memory (see registerIntelligenceTools). */
+  semanticMemory?: SemanticMemory;
 
   constructor() {
     this.gateway = new DefaultToolGateway({
@@ -95,6 +101,28 @@ export class AgentToolManager {
     this.registerToolPack(rubyPack(root));
     this.registerToolPack(dockerPack(root));
     this.registerToolPack(databasePack(root));
+    // Default-on intelligence layer (semantic memory; RAG joins in the same
+    // seam): every product agent gets durable semantic memory unless the
+    // operator opts out via NEXUM_SEMANTIC_MEMORY=0.
+    this.registerIntelligenceTools(root);
+  }
+
+  /**
+   * Mount the intelligence plane (semantic memory + hybrid RAG) onto this
+   * agent. Default-on via registerBaseTools; safe to call directly for
+   * agents that mount custom tool sets. Degrades silently (no tools) when
+   * the workspace database cannot be opened.
+   */
+  registerIntelligenceTools(root: string): void {
+    if (readEnv("SEMANTIC_MEMORY") === "0") return;
+    if (this.mountedPacks.has("memory")) return;
+    try {
+      const memory = (this.semanticMemory ??= createWorkspaceSemanticMemory(root));
+      this.registerToolPack(memoryPack(memory));
+    } catch {
+      // Unwritable workspace — run without semantic memory tools rather
+      // than breaking tool registration entirely.
+    }
   }
 
   registerHybridTools(localWorker: LocalWorker | undefined): void {

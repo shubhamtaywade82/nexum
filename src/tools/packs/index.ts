@@ -14,6 +14,7 @@
  *   RailsPack        semantic Rails queries (rails domain)
  *   DatabasePack     sqlite queries
  *   AgentCorePack    escalate / delegate / ask-user
+ *   MemoryPack       semantic long-term memory (save / recall)
  *
  * Legacy compat factories (shellPack, dockerPack, projectPack, cryptoPack,
  * gitGithubPack) remain exported.
@@ -37,3 +38,4 @@ export { rubyPack } from "./ruby-pack.js";
 export { railsPack } from "./rails-pack.js";
 export { databasePack } from "./database-pack.js";
 export { agentCorePack } from "./agent-core-pack.js";
+export { memoryPack } from "./memory-pack.js";
