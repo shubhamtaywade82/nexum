@@ -171,6 +171,22 @@ export {
   type ResolveResult,
 } from "./platform/plugins/index.js";
 
+// Plugin sandbox (P2 trust tier)
+export {
+  sandboxPlugin,
+  IsolatedPluginSandbox,
+  PluginSandboxViolation,
+  PluginSandboxTimeout,
+  type SandboxedPlugin,
+  type IsolatedPlugin,
+  type PluginSandboxPolicy,
+  type PluginSandboxHandle,
+  type SandboxViolation,
+  type SandboxAuditEntry,
+  type SandboxResourceLimits,
+  type IsolatedPluginSandboxOptions,
+} from "./platform/plugins/index.js";
+
 // Capability DI
 export {
   defineCapabilityToken,
