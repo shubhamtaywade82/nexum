@@ -572,3 +572,22 @@ export {
   type RegressionPolicy,
   type AgentHarness,
 } from "./evaluation/index.js";
+
+// In-loop critic & self-correction
+export {
+  CriticService,
+  SelfCorrectionLoop,
+  VerifierService,
+  expectOutputContains,
+  expectNoPlaceholders,
+  expectMinLength,
+  severityAtLeast,
+  type Critique,
+  type CritiqueWeakness,
+  type CriticOptions,
+  type CriticSeverity,
+  type SelfCorrectionResult,
+  type VerificationCheck,
+  type VerificationReport,
+} from "./runtime/critic/index.js";
+export type { CriticPolicy } from "./runtime/strategies/execution-strategy.js";

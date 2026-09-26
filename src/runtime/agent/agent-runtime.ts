@@ -27,7 +27,7 @@ import type {
   StrategyName,
 } from "../../core/types.js";
 import { ExecutionStrategy } from "../strategies/execution-strategy.js";
-import { ReActStrategy } from "../strategies/execution-strategy.js";
+import { ReActStrategy, type CriticPolicy } from "../strategies/execution-strategy.js";
 import { PlanExecuteStrategy } from "../strategies/plan-execute-strategy.js";
 import { GraphStrategy } from "../strategies/graph-strategy.js";
 import { GateRegistry } from "../../core/concurrency/gate-registry.js";
@@ -176,6 +176,13 @@ export interface DefaultAgentRuntimeOptions {
   recorder?: (context: ExecutionContext) => RunRecorder;
   /** Shared cancellation registry (review item 16); one is created when omitted. */
   cancellation?: CancellationRegistry;
+  /**
+   * In-loop critic for final answers (runtime/critic): critique → revise
+   * weak answers inside the same execution. Opt-in at the kernel level so
+   * embedders keep exact model-call accounting; product compositions
+   * (DevAgent) enable it by default.
+   */
+  critic?: CriticPolicy;
 }
 
 export class DefaultAgentRuntime implements AgentRuntime {
@@ -187,6 +194,7 @@ export class DefaultAgentRuntime implements AgentRuntime {
   private readonly defaultMaxToolTurns: number;
   private readonly activeRuns = new Map<string, AbortController>();
   private readonly recorderFactory?: (context: ExecutionContext) => RunRecorder;
+  private readonly criticPolicy?: CriticPolicy;
 
   constructor(opts: DefaultAgentRuntimeOptions = {}) {
     this.strategies = opts.strategies ?? defaultStrategyRegistry();
@@ -194,6 +202,7 @@ export class DefaultAgentRuntime implements AgentRuntime {
     this.defaultMaxToolTurns = opts.defaultMaxToolTurns ?? 64;
     this.recorderFactory = opts.recorder;
     this.cancellation = opts.cancellation ?? new CancellationRegistry();
+    this.criticPolicy = opts.critic;
   }
 
   /**
@@ -240,6 +249,7 @@ export class DefaultAgentRuntime implements AgentRuntime {
         maxToolTurns: options?.maxToolTurns ?? this.defaultMaxToolTurns,
         toolCapabilities: request.capabilities ?? agent.capabilities,
         hooks: options?.hooks,
+        ...(this.criticPolicy ? { critic: this.criticPolicy } : {}),
       });
       recorder?.finish({
         status: result.status,
