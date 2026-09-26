@@ -53,6 +53,25 @@ export default defineConfig({
           { text: "Offline DevDocs Search", link: "/guide/devdocs" },
           { text: "Rails Semantic AST Index", link: "/guide/rails" },
           { text: "Persistent Memory & Learning", link: "/guide/memory" },
+          { text: "Semantic Memory", link: "/guide/semantic-memory" },
+          { text: "Agentic RAG (Hybrid Retrieval)", link: "/guide/rag" },
+        ],
+      },
+      {
+        text: "Evaluation & Quality",
+        items: [
+          { text: "Agent Evaluation Framework", link: "/guide/evaluation" },
+          { text: "LLM-as-a-Judge", link: "/guide/llm-judge" },
+          { text: "In-Loop Critic & Self-Correction", link: "/guide/critic" },
+        ],
+      },
+      {
+        text: "Multi-Agent & Production",
+        items: [
+          { text: "Multi-Agent Coordination", link: "/guide/multiagent" },
+          { text: "Artifacts", link: "/guide/artifacts" },
+          { text: "Telemetry (OpenTelemetry)", link: "/guide/telemetry" },
+          { text: "Durable Job Queue", link: "/guide/durable-jobs" },
         ],
       },
       {

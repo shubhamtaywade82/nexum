@@ -25,6 +25,7 @@
 
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { workspaceStateDir } from "../../platform/paths.js";
 import { HashEmbedder, type EmbeddingProvider } from "./embedding.js";
 import { InMemoryVectorStore, newMemoryId, SqliteVectorStore, VectorHit, VectorStore } from "./vector-store.js";
 
@@ -363,7 +364,7 @@ export function createWorkspaceSemanticMemory(
   workspaceRoot: string,
   opts: { embedder?: EmbeddingProvider; namespace?: string } = {},
 ): SemanticMemory {
-  const dbPath = join(workspaceRoot, ".nexum", "memory.db");
+  const dbPath = join(workspaceStateDir(workspaceRoot), "memory.db");
   mkdirSync(dirname(dbPath), { recursive: true });
   return createSemanticMemory({ dbPath, embedder: opts.embedder, namespace: opts.namespace });
 }

@@ -36,6 +36,7 @@ import type { SemanticMemory } from "../memory/semantic/semantic-memory.js";
 import { createWorkspaceRagService } from "../rag/workspace.js";
 import type { RagService } from "../rag/rag-service.js";
 import { readEnv } from "../platform/environment.js";
+import { workspaceStateDir } from "../platform/paths.js";
 import { join } from "node:path";
 
 export type ToolOnOutput = (stream: "stdout" | "stderr", chunk: string) => void;
@@ -131,7 +132,7 @@ export class AgentToolManager {
     }
     try {
       const rag = (this.ragService ??= createWorkspaceRagService({
-        dbPath: join(root, ".nexum", "memory.db"),
+        dbPath: join(workspaceStateDir(root), "memory.db"),
       }));
       if (!this.mountedPacks.has("rag")) this.registerToolPack(ragPack(rag));
     } catch {
