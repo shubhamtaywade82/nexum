@@ -657,3 +657,14 @@ export {
   type MetricsSnapshot,
 } from "./observability/index.js";
 export { DEFAULT_BUCKETS } from "./observability/index.js";
+
+// Durable job queue (leases, heartbeats, dead-lettering)
+export {
+  DurableJobQueue,
+  QueueWorker,
+  type DurableJob,
+  type DurableJobSpec,
+  type DurableJobState,
+  type QueueStats,
+  type QueueWorkerOptions,
+} from "./jobs/durable-queue.js";
