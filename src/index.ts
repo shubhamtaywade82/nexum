@@ -195,6 +195,26 @@ export {
   type CapabilityToken,
 } from "./core/capabilities/index.js";
 
+// Capability attestation (P2 trust tier)
+export {
+  AttestationAuthority,
+  AttestationLedger,
+  attestHostGrants,
+  generateAttestationKeyPair,
+  loadOrCreateAuthority,
+  canonicalGrantPayload,
+  type AttestationSubject,
+  type AttestationSubjectType,
+  type CapabilityGrant,
+  type SealedGrant,
+  type CapabilityAttestation,
+  type AttestationVerification,
+  type AttestationAuthorityOptions,
+  type AuthorityKeyPair,
+  type LedgerEntry,
+  type CapabilityGrantsSnapshot,
+} from "./core/capabilities/index.js";
+
 // Service registry
 export {
   ServiceRegistry,
