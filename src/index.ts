@@ -635,3 +635,25 @@ export {
   type SupervisionResult,
   type WorkerAgent,
 } from "./multiagent/index.js";
+
+// OTel-compatible telemetry (spans + OTLP export + Prometheus metrics)
+export {
+  TelemetryService,
+  telemetryFromEnv,
+  Tracer,
+  SpanEventMapper,
+  simpleHash,
+  OtlpHttpExporter,
+  StdoutExporter,
+  InMemorySpanExporter,
+  spanToOtlp,
+  MetricsRegistry,
+  renderPrometheus,
+  type TelemetryOptions,
+  type Span,
+  type SpanKind,
+  type SpanStatus,
+  type SpanExporter,
+  type MetricsSnapshot,
+} from "./observability/index.js";
+export { DEFAULT_BUCKETS } from "./observability/index.js";
