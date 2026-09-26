@@ -42,6 +42,7 @@ export default defineConfig({
           { text: "System Architecture", link: "/guide/architecture" },
           { text: "Agent Execution Kernel", link: "/guide/kernel" },
           { text: "Capability Router & Escalation", link: "/guide/capability-routing" },
+          { text: "Multi-Key Cloud Pools & Rotation", link: "/guide/model-keys" },
           { text: "DAG Planner & Parallel Execution", link: "/guide/planner" },
           { text: "Docker Sandboxing", link: "/guide/sandboxing" },
         ],
