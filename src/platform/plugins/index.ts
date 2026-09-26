@@ -33,6 +33,23 @@ export { PluginRegistry, validateManifest } from "./registry.js";
 export { DefaultPluginHost, type PluginHostOptions } from "./host.js";
 export { resolvePluginOrder, type ResolveResult } from "./dependency-resolver.js";
 
+// Plugin sandbox (P2 trust tier).
+export {
+  sandboxPlugin,
+  IsolatedPluginSandbox,
+  PluginSandboxViolation,
+  PluginSandboxTimeout,
+  type SandboxedPlugin,
+  type IsolatedPlugin,
+  type PluginSandboxPolicy,
+  type PluginSandboxHandle,
+  type SandboxOperation,
+  type SandboxViolation,
+  type SandboxAuditEntry,
+  type SandboxResourceLimits,
+  type IsolatedPluginSandboxOptions,
+} from "./sandbox.js";
+
 // Built-in plugins (mountable as-is or via profiles).
 export { coreServicesPlugin } from "./builtin/core-services-plugin.js";
 export { toolRegistryPlugin } from "./builtin/tool-registry-plugin.js";
