@@ -23,12 +23,14 @@ describe("AgentToolManager intelligence wiring", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("registerBaseTools auto-mounts the memory pack (default-on)", () => {
+  it("registerBaseTools auto-mounts the memory and rag packs (default-on)", () => {
     const manager = new AgentToolManager();
     manager.registerBaseTools(dir);
     expect(manager.mountedPacks.has("memory")).toBe(true);
+    expect(manager.mountedPacks.has("rag")).toBe(true);
     expect(manager.kernelCatalog.get("memory_save")).toBeDefined();
     expect(manager.kernelCatalog.get("memory_recall")).toBeDefined();
+    expect(manager.kernelCatalog.get("rag_search")).toBeDefined();
     expect(existsSync(join(dir, ".nexum", "memory.db"))).toBe(true);
   });
 
