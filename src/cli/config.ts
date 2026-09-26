@@ -9,6 +9,7 @@ import {
   legacyWorkspaceStateDir,
   workspaceStateDir,
 } from "../platform/paths.js";
+import type { McpServerTrustConfig, McpToolRule } from "../mcp/trust.js";
 
 export interface LanguageOverride {
   enabled?: boolean;
@@ -81,8 +82,21 @@ export interface CliConfig {
   theme?: ThemeName;
   /** External MCP (Model Context Protocol) servers to connect at startup —
    * each spawns `command args...` over stdio and registers its tools.
-   * Configure in .nexum/config.json; there is no in-session "/mcp add". */
-  mcpServers?: Array<{ name: string; command: string; args?: string[] }>;
+   * Configure in .nexum/config.json; there is no in-session "/mcp add".
+   * The P2 trust fields (trust/tools/maxRisk) are optional gates — see
+   * docs/guide/mcp.md § Trust policy. */
+  mcpServers?: McpCliServerConfig[];
+}
+
+/** One config-listed MCP server. Listing a server is consent to connect it:
+ * entries without trust fields keep the connect-freely behavior. */
+export interface McpCliServerConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  trust?: McpServerTrustConfig["trust"];
+  tools?: McpToolRule;
+  maxRisk?: McpServerTrustConfig["maxRisk"];
 }
 
 interface ConfigFile {
@@ -113,7 +127,7 @@ interface ConfigFile {
    * billing) — this only computes a cost estimate if you supply your own
    * real rate. Omit to leave cost tracking off (the honest default). */
   pricing?: { inputPerMillion: number; outputPerMillion: number };
-  mcpServers?: Array<{ name: string; command: string; args?: string[] }>;
+  mcpServers?: McpCliServerConfig[];
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are a focused coding assistant operating in a local workspace. \

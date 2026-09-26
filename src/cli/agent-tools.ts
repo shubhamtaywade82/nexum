@@ -1,6 +1,11 @@
 import { Registry } from "../tools/registry.js";
 import { Tool } from "../tools/tool.js";
 import { connectMcpServer } from "../mcp/client.js";
+import { connectMcpServerV2 } from "../mcp/adapter/mcp-client-factory.js";
+import { McpToolAdapter } from "../mcp/adapter/mcp-tool-adapter.js";
+import { mcpSecurityMetadata } from "../mcp/adapter/security-metadata.js";
+import type { McpSecurityOverride } from "../mcp/adapter/security-metadata.js";
+import { mcpServerFingerprint, type McpTrustPolicy } from "../mcp/trust.js";
 import type { LocalWorker } from "../models/local-worker.js";
 import type { ClarificationRequester } from "../tools/ask-user-tool.js";
 import type { LspManager } from "../lsp/manager.js";
@@ -40,6 +45,16 @@ import { workspaceStateDir } from "../platform/paths.js";
 import { join } from "node:path";
 
 export type ToolOnOutput = (stream: "stdout" | "stderr", chunk: string) => void;
+
+/** Trust-gated MCP registration options (P2 trust tier). */
+export interface McpRegistrationOptions {
+  /** Server name used for rule matching + approvals (default: `stdio:<command>`). */
+  serverName?: string;
+  /** Trust policy; when set, servers/tools must pass it to register. */
+  trust?: McpTrustPolicy;
+  /** Per-server security overrides applied to every registered tool. */
+  security?: McpSecurityOverride;
+}
 
 /**
  * Tool ownership and registration.
@@ -178,8 +193,60 @@ export class AgentToolManager {
     this.kernelCatalog.registerLegacy(tool, category);
   }
 
-  async registerMcpServer(command: string, args: string[] = []): Promise<Tool[]> {
-    const tools = await connectMcpServer(command, args);
+  /** Options for MCP registration with trust gating (P2 trust tier).
+   * Without opts the connect-freely legacy path is used unchanged. */
+  async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<Tool[]> {
+    if (!opts.trust && !opts.security) {
+      // Legacy path — no policy, no overrides; behavior identical to before.
+      const tools = await connectMcpServer(command, args);
+      for (const tool of tools) this.registerTool(tool, "MCP");
+      return tools;
+    }
+
+    const serverName = opts.serverName ?? `stdio:${command}`;
+    const connection = await connectMcpServerV2({ kind: "stdio", command, args });
+
+    let security: McpSecurityOverride = { ...opts.security };
+    if (opts.trust) {
+      const fingerprint = mcpServerFingerprint(connection.descriptor);
+      const decision = await opts.trust.decideServer(serverName, fingerprint);
+      if (!decision.allowed) {
+        await connection.close();
+        throw new Error(`[mcp-trust] ${decision.reason}`);
+      }
+      security = { ...security, ...decision.rule?.security };
+    }
+
+    const tools: Tool[] = [];
+    for (const discovered of connection.tools) {
+      // Effective risk first (inference + overrides) so the ceiling sees what
+      // the gateway will actually enforce.
+      const metadata = mcpSecurityMetadata(discovered, security);
+      if (opts.trust) {
+        const decision = opts.trust.decideTool(serverName, discovered.name, metadata.risk);
+        if (!decision.allowed) continue;
+      }
+      tools.push(
+        new McpToolAdapter(
+          {
+            callTool: async (request) => {
+              const result = await connection.client.callTool({
+                name: request.name,
+                arguments: request.arguments,
+              });
+              return result as unknown as Record<string, unknown>;
+            },
+          },
+          {
+            name: discovered.name,
+            description: discovered.description,
+            inputSchema: discovered.inputSchema,
+            annotations: discovered.annotations,
+          },
+          security,
+        ),
+      );
+    }
     for (const tool of tools) this.registerTool(tool, "MCP");
     return tools;
   }
