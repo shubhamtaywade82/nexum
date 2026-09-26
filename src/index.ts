@@ -449,6 +449,27 @@ export {
   type NpmMarketplaceSourceOptions,
 } from "./marketplace/index.js";
 
+// Marketplace signing & publisher trust (P2 trust tier)
+export {
+  generatePublisherKeyPair,
+  signEntry,
+  verifyEntrySignature,
+  canonicalSignedPayload,
+  keyIdFromSpki,
+  computeTrustScore,
+  trustRiskBand,
+  PublisherTrustStore,
+  SIGNED_FIELDS,
+  type EntrySignature,
+  type PublisherKeyPair,
+  type PublisherKeyRecord,
+  type PublisherTrustLevel,
+  type SignatureStatus,
+  type SignatureVerification,
+  type PublisherTrustStoreOptions,
+  type TrustRiskBand,
+} from "./marketplace/trust.js";
+
 // Control plane (observability + control)
 export {
   ControlPlaneService,
