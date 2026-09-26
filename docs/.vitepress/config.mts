@@ -80,6 +80,7 @@ export default defineConfig({
         items: [
           { text: "35+ Built-in Tools Reference", link: "/guide/tools" },
           { text: "Model Context Protocol (MCP)", link: "/guide/mcp" },
+          { text: "Credentials & Secret Providers", link: "/guide/credentials" },
           { text: "Custom Skills & Prompts", link: "/guide/skills" },
           { text: "Model Benchmark Harness", link: "/guide/benchmarks" },
         ],
