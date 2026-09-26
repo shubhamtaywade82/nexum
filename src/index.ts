@@ -607,3 +607,31 @@ export {
   type ArtifactQuery,
   type ArtifactStore,
 } from "./artifacts/index.js";
+
+// Multi-agent coordination (bus · shared state · consensus · supervisor)
+export {
+  AgentMessageBus,
+  AgentInbox,
+  ConversationTracker,
+  SharedStateStore,
+  VersionConflictError,
+  ConsensusEngine,
+  MajorityVoting,
+  UnanimousVoting,
+  WeightedVoting,
+  QuorumVoting,
+  PriorityResolver,
+  ConflictResolver,
+  SupervisorAgent,
+  busTaskPort,
+  singleTaskPlanner,
+  newSupervisorTask,
+  type AgentMessage,
+  type DeliveryReceipt,
+  type SharedAgentState,
+  type ConflictPolicy,
+  type VotingStrategy,
+  type DecisionOutcome,
+  type SupervisionResult,
+  type WorkerAgent,
+} from "./multiagent/index.js";
