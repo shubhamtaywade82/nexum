@@ -509,3 +509,28 @@ export {
   type GroundingReport,
   type RagAnswer,
 } from "./rag/index.js";
+
+// LLM-as-a-Judge
+export {
+  LlmJudge,
+  JudgeParseError,
+  weightedOverall,
+  defineRubric,
+  builtinRubrics,
+  ANSWER_QUALITY_RUBRIC,
+  TASK_COMPLETION_RUBRIC,
+  GROUNDEDNESS_RUBRIC,
+  InMemoryJudgeHistory,
+  SqliteJudgeHistory,
+  subjectDigest,
+  calibrateJudge,
+  pearson,
+  type Rubric,
+  type RubricCriterion,
+  type JudgeSubject,
+  type JudgeVerdict,
+  type CriterionScore,
+  type JudgeHistory,
+  type CalibrationSample,
+  type CalibrationReport,
+} from "./evaluation/judge/index.js";
