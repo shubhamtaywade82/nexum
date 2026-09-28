@@ -575,9 +575,19 @@ export class NpmMarketplaceSource implements MarketplaceSource {
     if (!packument) {
       throw new Error(`npm package "${entry.npmPackage}" not found`);
     }
-    const version = packument["dist-tags"]?.latest ?? entry.version;
+    // Install exactly the version the catalog entry resolved — never whatever
+    // `latest` points at now, or a pinned install silently drifts.
+    const version = entry.version;
     const versionMeta = packument.versions?.[version];
-    const tarballUrl = versionMeta?.dist?.tarball;
+    if (!versionMeta) {
+      throw new Error(`npm package "${entry.npmPackage}" has no published version ${version}`);
+    }
+    if (versionMeta.version !== version) {
+      throw new Error(
+        `npm packument mismatch for ${entry.npmPackage}: requested ${version}, registry returned ${versionMeta.version}`,
+      );
+    }
+    const tarballUrl = versionMeta.dist?.tarball;
     if (!tarballUrl) {
       throw new Error(`no tarball URL for ${entry.npmPackage}@${version}`);
     }
