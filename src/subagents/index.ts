@@ -23,6 +23,7 @@
 import type { AgentRuntime, ExecutionContext, ExecutionResult } from "../core/types.js";
 import type { AgentRegistry } from "../runtime/agent/agent-runtime.js";
 import { newDelegationId, newRunId } from "../core/identity.js";
+import { Delegator, type DelegationPolicy } from "../orchestration/delegation/delegator.js";
 
 // ── Contracts ───────────────────────────────────────────────────────────────
 
@@ -114,7 +115,9 @@ export interface SubagentServiceOptions {
 export class SubagentService {
   private readonly providers = new Map<SubagentProviderType, SubagentProvider>();
   private readonly handles = new Map<string, SubagentHandle>();
+  /** Slots held: reserved spawns in flight + live children. Each slot is released exactly once. */
   private activeCount = 0;
+  private readonly released = new Set<string>();
   private readonly maxConcurrent: number;
   private readonly maxTotalPerSession: number;
   private readonly perSessionCount = new Map<string, number>();
@@ -159,19 +162,38 @@ export class SubagentService {
       );
     }
 
-    const handle = await provider.spawn(request, parent);
-    this.handles.set(handle.subagentId, handle);
+    // Reserve before awaiting so concurrent spawn() calls cannot overshoot the limits.
     this.activeCount++;
     this.perSessionCount.set(sessionId, sessionCount + 1);
+    let handle: SubagentHandle;
+    try {
+      handle = await provider.spawn(request, parent);
+    } catch (e) {
+      this.activeCount--;
+      this.perSessionCount.set(sessionId, (this.perSessionCount.get(sessionId) ?? 1) - 1);
+      throw e;
+    }
+    this.handles.set(handle.subagentId, handle);
 
-    // Track completion to decrement counters.
+    // One-shot children free their slot on settlement; continuable ones hold it until cancel()/stopAll().
+    // then(f, f) rather than finally(): finally() re-rejects into an unhandled promise.
     if (handle.promise) {
-      handle.promise.finally(() => {
-        this.activeCount = Math.max(0, this.activeCount - 1);
-      });
+      const release = () => this.release(handle.subagentId);
+      handle.promise.then(release, release);
     }
 
     return handle;
+  }
+
+  /** Number of slots currently held (reserved or live children). */
+  activeSlots(): number {
+    return this.activeCount;
+  }
+
+  private release(subagentId: string): void {
+    if (this.released.has(subagentId)) return;
+    this.released.add(subagentId);
+    this.activeCount--;
   }
 
   /** Inspect a subagent by id (read-only). */
@@ -189,11 +211,12 @@ export class SubagentService {
   async cancel(subagentId: string, reason?: string): Promise<void> {
     const handle = this.handles.get(subagentId);
     if (!handle) return;
+    const terminal = handle.state === "completed" || handle.state === "failed" || handle.state === "cancelled";
     try {
-      await handle.interrupt(reason ?? "cancelled by parent");
+      if (!terminal) await handle.interrupt(reason ?? "cancelled by parent");
     } finally {
-      handle.state = "cancelled";
-      this.activeCount = Math.max(0, this.activeCount - 1);
+      if (!terminal) handle.state = "cancelled";
+      this.release(subagentId);
     }
   }
 
@@ -205,8 +228,8 @@ export class SubagentService {
       if (handle.state === "running" || handle.state === "pending") {
         handle.state = "cancelled";
       }
+      this.release(handle.subagentId);
     }
-    this.activeCount = 0;
     this.perSessionCount.clear();
   }
 }
@@ -218,47 +241,116 @@ export interface InProcessProviderOptions {
   agents: AgentRegistry;
 }
 
+/** The SubagentService enforces concurrency/total limits; the Delegator must not add its own lower caps. */
+const SERVICE_GOVERNED_POLICY: DelegationPolicy = {
+  maxConcurrentChildren: Number.MAX_SAFE_INTEGER,
+  maxTotalChildren: Number.MAX_SAFE_INTEGER,
+};
+
+function stateForStatus(status: ExecutionResult["status"]): SubagentState {
+  if (status === "completed") return "completed";
+  if (status === "cancelled") return "cancelled";
+  return "failed";
+}
+
+/**
+ * Run a one-shot child through a Delegator: isolated child context (own runId,
+ * derived budget, cancellation) executed by the Delegator's runtime.
+ */
+function spawnDelegated(
+  type: "in-process" | "sdk",
+  delegator: Delegator,
+  request: SubagentSpawnRequest,
+  parent: ExecutionContext | undefined,
+  respawn: (request: SubagentSpawnRequest) => Promise<SubagentHandle>,
+): SubagentHandle {
+  if (!parent) {
+    throw new Error(`${type} subagents require the parent ExecutionContext (they run under its gateways and budget)`);
+  }
+  if (request.continuable) {
+    throw new Error(`${type} subagents are one-shot; continuable sessions are not supported by this provider`);
+  }
+  const subagentId = newDelegationId();
+  const child = delegator.delegate(
+    parent,
+    {
+      goal: request.goal,
+      requiredCapabilities: request.requiredCapabilities,
+      childAgentId: request.childAgentId,
+      input: request.contextHandoff?.join("\n"),
+      budgetShare: request.budgetShare,
+      maxToolTurns: request.maxToolTurns,
+      metadata: request.metadata,
+    },
+    SERVICE_GOVERNED_POLICY,
+  );
+
+  let state: SubagentState = "running";
+  const promise = child.promise.then(
+    (result): SubagentResult => {
+      if (state === "running") state = stateForStatus(result.status);
+      return {
+        subagentId,
+        status: result.status,
+        output: result.output,
+        error: result.error,
+        metadata: { runId: result.runId, agentId: result.agentId, usage: result.usage },
+      };
+    },
+    (e: unknown) => {
+      if (state === "running") state = "failed";
+      throw e instanceof Error ? e : new Error(String(e));
+    },
+  );
+  promise.catch(() => {});
+
+  return {
+    subagentId,
+    providerRunId: child.childRunId,
+    provider: type,
+    continuable: false,
+    get state() {
+      return state;
+    },
+    set state(next: SubagentState) {
+      state = next;
+    },
+    request,
+    promise,
+    async send(): Promise<SubagentResult> {
+      throw new Error(`one-shot ${type} subagent does not support send() — spawn a new one`);
+    },
+    async interrupt(): Promise<void> {
+      if (state !== "running") return;
+      state = "cancelled";
+      child.cancel();
+    },
+    async resume(): Promise<SubagentResult> {
+      throw new Error(`one-shot ${type} subagent cannot be resumed`);
+    },
+    async fork(): Promise<SubagentHandle> {
+      return respawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` });
+    },
+  };
+}
+
+/**
+ * InProcessSubagentProvider — one-shot children executed by the parent's
+ * AgentRuntime via the Delegator (capability matching, derived budget,
+ * cancellation). Requires the parent ExecutionContext.
+ */
 export class InProcessSubagentProvider implements SubagentProvider {
   readonly type = "in-process" as const;
   private readonly handles = new Map<string, SubagentHandle>();
+  private readonly delegator: Delegator;
 
-  constructor(private readonly opts: InProcessProviderOptions) {}
+  constructor(opts: InProcessProviderOptions) {
+    this.delegator = new Delegator({ runtime: opts.runtime, agents: opts.agents });
+  }
 
-  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
-    const subagentId = newDelegationId();
-    const providerRunId = newRunId();
-
-    // For the in-process provider, we delegate to the existing Delegator.
-    // This is a thin wrapper — the actual execution semantics (capability
-    // matching, budget derivation, cancellation chaining) live in the
-    // Delegator and are reused as-is.
-    const handle: SubagentHandle = {
-      subagentId,
-      providerRunId,
-      provider: "in-process",
-      continuable: request.continuable ?? false,
-      state: "pending",
-      request,
-      async send(_message: string): Promise<SubagentResult> {
-        // For continuable children, send appends to the session.
-        // For one-shot children, send is equivalent to spawning a new run
-        // with the same goal + the new message.
-        throw new Error("in-process send() requires a continuable session (not yet implemented in this layer)");
-      },
-      async interrupt(reason?: string): Promise<void> {
-        // Delegate to the runtime's cancellation registry.
-        void reason;
-      },
-      async resume(): Promise<SubagentResult> {
-        throw new Error("in-process resume() requires a paused continuable session");
-      },
-      async fork(): Promise<SubagentHandle> {
-        throw new Error("in-process fork() not yet implemented");
-      },
-    };
-
-    this.handles.set(subagentId, handle);
-    handle.state = "running";
+  async spawn(request: SubagentSpawnRequest, parent?: ExecutionContext): Promise<SubagentHandle> {
+    const handle = spawnDelegated("in-process", this.delegator, request, parent, (r) => this.spawn(r, parent));
+    this.handles.set(handle.subagentId, handle);
     return handle;
   }
 
@@ -269,12 +361,7 @@ export class InProcessSubagentProvider implements SubagentProvider {
   async stopAll(): Promise<void> {
     for (const handle of this.handles.values()) {
       if (handle.state === "running" || handle.state === "pending") {
-        try {
-          await handle.interrupt("host shutdown");
-        } catch {
-          // best-effort
-        }
-        handle.state = "cancelled";
+        await handle.interrupt("host shutdown");
       }
     }
   }
@@ -506,7 +593,12 @@ export class ProcessSubagentProvider implements SubagentProvider {
       providerRunId,
       provider: "process",
       continuable,
-      state: "running",
+      get state() {
+        return handleRef.state;
+      },
+      set state(next: SubagentState) {
+        handleRef.state = next;
+      },
       request,
       promise: continuable ? undefined : resultPromise,
       async send(message: string): Promise<SubagentResult> {
@@ -557,18 +649,16 @@ export class ProcessSubagentProvider implements SubagentProvider {
           pending.reject(new Error(reason ?? "interrupted"));
         }
         pendingRequests.clear();
+        handleRef.state = "cancelled";
         if (rejectResult) {
           rejectResult(new Error(reason ?? "interrupted"));
         }
-        handle.state = "cancelled";
-        handleRef.state = "cancelled";
       },
       async resume(): Promise<SubagentResult> {
         if (handle.state !== "paused") {
           throw new Error(`cannot resume process subagent in state "${handle.state}"`);
         }
         handle.state = "running";
-        handleRef.state = "running";
         return handle.send("resume");
       },
       async fork(): Promise<SubagentHandle> {
@@ -643,16 +733,16 @@ export interface AcpProviderOptions {
 }
 
 /**
- * ACPSubagentProvider — drives an external agent runtime that speaks the
- * Agent Client Protocol (ACP).
+ * ACPSubagentProvider — drives a remote agent over a simple HTTP task API.
  *
- * ACP is a standardized protocol for agent-to-agent communication over
- * HTTP or WebSocket. The provider sends `task` requests and receives
- * `result` responses. Continuable children maintain an ACP session id.
- *
- * This implementation is functional but minimal: it uses fetch() to
- * POST to the ACP endpoint. Real ACP support requires implementing the
- * full protocol (handshake, capabilities, streaming, cancellation).
+ * NOTE: this is NOT an Agent Client Protocol implementation (ACP is JSON-RPC
+ * over stdio: initialize / session/new / session/prompt / session/cancel).
+ * The provider speaks only this Nexum-specific HTTP shape:
+ *   POST {endpoint}/tasks                          { goal, ... } → { output?, error?, sessionId? }
+ *   POST {endpoint}/sessions/{id}/messages         { message }   → { output?, error? }
+ *   POST {endpoint}/sessions/{id}/cancel           { reason }
+ * No handshake, capability negotiation, or streaming. Not registered by
+ * defaultSubagentProviders() unless an endpoint is configured.
  */
 export class ACPSubagentProvider implements SubagentProvider {
   readonly type = "acp" as const;
@@ -701,6 +791,7 @@ export class ACPSubagentProvider implements SubagentProvider {
             },
             body: JSON.stringify({ message }),
           });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const data = (await response.json()) as { output?: string; error?: string };
           return {
             subagentId,
@@ -765,6 +856,7 @@ export class ACPSubagentProvider implements SubagentProvider {
             contextHandoff: request.contextHandoff,
           }),
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status} from ${this.opts.endpoint}/tasks`);
         const data = (await response.json()) as { output?: string; error?: string; sessionId?: string };
         if (resolveResult) {
           resolveResult({
@@ -804,117 +896,45 @@ export class ACPSubagentProvider implements SubagentProvider {
   }
 }
 
-// ── SDK provider (drives another Nexum SDK instance in-process) ────────────
+// ── SDK provider (fresh AgentRuntime per subagent) ─────────────────────────
 
 export interface SdkProviderOptions {
-  /** A factory that creates a new AgentRuntime instance (for isolation). */
+  /** Creates a new AgentRuntime per subagent (own strategies, gates, cancellation). */
   runtimeFactory?: () => AgentRuntime;
-  /** A factory that creates a new AgentRegistry (for capability scoping). */
+  /** Creates the child's AgentRegistry. Defaults to the runtime's own `agents` registry when it exposes one. */
   agentRegistryFactory?: () => AgentRegistry;
 }
 
 /**
- * SDKSubagentProvider — drives another Nexum SDK instance in-process.
+ * SDKSubagentProvider — one-shot children executed by a FRESH AgentRuntime
+ * per subagent (own agents, strategies, gates, cancellation registry).
  *
- * Unlike InProcessSubagentProvider (which reuses the parent's runtime),
- * the SDK provider creates a fresh runtime + registry per subagent.
- * This gives full isolation: the child has its own agents, strategies,
- * gates, and cancellation registry. It's heavier than in-process but
- * lighter than spawning a child process.
- *
- * Use case: when a subagent needs a different model gateway, different
- * policy posture, or different tool catalog than the parent.
+ * The child context is still derived from the parent's ExecutionContext, so
+ * it inherits the parent's model/tool gateways and policy engine and draws
+ * from a derived share of the parent's budget. Isolation here is runtime
+ * state isolation, not a security boundary.
  */
 export class SDKSubagentProvider implements SubagentProvider {
   readonly type = "sdk" as const;
   private readonly handles = new Map<string, SubagentHandle>();
-  private readonly runtimes = new Map<string, AgentRuntime>();
   private readonly opts: SdkProviderOptions;
 
   constructor(opts: SdkProviderOptions = {}) {
     this.opts = opts;
   }
 
-  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
+  async spawn(request: SubagentSpawnRequest, parent?: ExecutionContext): Promise<SubagentHandle> {
     if (!this.opts.runtimeFactory) {
       throw new Error("SDKSubagentProvider requires a runtimeFactory (set via SdkProviderOptions)");
     }
-    const subagentId = newDelegationId();
-    const providerRunId = newRunId();
-    const continuable = request.continuable ?? false;
-
-    // Create an isolated runtime for this subagent.
     const runtime = this.opts.runtimeFactory();
-    this.runtimes.set(subagentId, runtime);
-
-    let resolveResult: ((r: SubagentResult) => void) | undefined;
-    let rejectResult: ((e: Error) => void) | undefined;
-    const resultPromise = new Promise<SubagentResult>((resolve, reject) => {
-      resolveResult = resolve;
-      rejectResult = reject;
-    });
-    resultPromise.catch(() => {});
-
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
-    const self = this;
-    const messages: string[] = [];
-
-    const handle: SubagentHandle = {
-      subagentId,
-      providerRunId,
-      provider: "sdk",
-      continuable,
-      state: "running",
-      request,
-      promise: continuable ? undefined : resultPromise,
-      async send(message: string): Promise<SubagentResult> {
-        if (!continuable) {
-          throw new Error("one-shot SDK subagent does not support send()");
-        }
-        messages.push(message);
-        // Real impl: invoke runtime.execute() with accumulated messages.
-        return {
-          subagentId,
-          status: "completed",
-          output: `[sdk:${subagentId}] processed: ${message}`,
-          metadata: { messagesProcessed: messages.length },
-        };
-      },
-      async interrupt(reason?: string): Promise<void> {
-        // Real impl: abort the runtime's cancellation registry for this run.
-        if (rejectResult) rejectResult(new Error(reason ?? "interrupted"));
-        handle.state = "cancelled";
-      },
-      async resume(): Promise<SubagentResult> {
-        if (handle.state !== "paused") {
-          throw new Error(`cannot resume SDK subagent in state "${handle.state}"`);
-        }
-        handle.state = "running";
-        return handle.send("resume");
-      },
-      async fork(): Promise<SubagentHandle> {
-        return self.spawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` }, _parent);
-      },
-    };
-
-    this.handles.set(subagentId, handle);
-
-    // For one-shot: execute the goal against the isolated runtime.
-    // We simulate completion (real impl would call runtime.execute()).
-    if (!continuable && resolveResult) {
-      setTimeout(() => {
-        if (handle.state === "running") {
-          resolveResult!({
-            subagentId,
-            status: "completed",
-            output: `[sdk:${subagentId}] goal: ${request.goal}`,
-            metadata: { provider: "sdk", isolated: true },
-          });
-          handle.state = "completed";
-        }
-      }, 10);
+    const agents = this.opts.agentRegistryFactory?.() ?? (runtime as { agents?: AgentRegistry }).agents;
+    if (!agents) {
+      throw new Error("SDKSubagentProvider requires an agentRegistryFactory when the runtime exposes no `agents`");
     }
-
+    const delegator = new Delegator({ runtime, agents });
+    const handle = spawnDelegated("sdk", delegator, request, parent, (r) => this.spawn(r, parent));
+    this.handles.set(handle.subagentId, handle);
     return handle;
   }
 
@@ -925,122 +945,202 @@ export class SDKSubagentProvider implements SubagentProvider {
   async stopAll(): Promise<void> {
     for (const handle of this.handles.values()) {
       if (handle.state === "running" || handle.state === "pending") {
-        try {
-          await handle.interrupt("host shutdown");
-        } catch {
-          /* best-effort */
-        }
-        handle.state = "cancelled";
+        await handle.interrupt("host shutdown");
       }
     }
-    this.runtimes.clear();
   }
 }
 
-// ── External agent provider (Claude Code, Codex, etc.) ────────────────────
+// ── External agent provider (Claude Code, Codex, any CLI agent) ───────────
 
 export interface ExternalAgentProviderOptions {
-  /** Which external agent to use. */
+  /**
+   * Which external agent. "claude-code" and "codex" have built-in invocations
+   * (`claude -p <goal>`, `codex exec <goal>`); "cursor" and "generic" require
+   * `binaryPath` and use `extraArgs` as the full argument list.
+   */
   agent: "claude-code" | "codex" | "cursor" | "generic";
-  /** Path to the agent binary (e.g. "/usr/local/bin/claude"). */
+  /** Agent binary. Defaults to "claude" / "codex" for the built-in agents. */
   binaryPath?: string;
-  /** Working directory. */
+  /** Working directory for the agent process. */
   cwd?: string;
-  /** Extra args. */
+  /**
+   * Extra args. For built-in agents they are inserted before the goal. For
+   * cursor/generic they are the whole argument list: a "{goal}" element is
+   * replaced with the goal, otherwise the goal is appended.
+   */
   extraArgs?: string[];
-  /** API key / auth (passed via env or args depending on agent). */
+  /** API key exported to the agent via `apiKeyEnv`. */
   apiKey?: string;
+  /** Env var carrying `apiKey`. Defaults: ANTHROPIC_API_KEY (claude-code), OPENAI_API_KEY (codex). */
+  apiKeyEnv?: string;
+  /** Extra environment for the agent process (merged over process.env). */
+  env?: Record<string, string>;
+  /** Wall-clock limit per run (default 15 min). */
+  timeoutMs?: number;
+  /** Max stdout bytes retained as output (default 1 MiB); excess is dropped and flagged. */
+  maxOutputBytes?: number;
 }
 
+const EXTERNAL_PRESETS: Partial<
+  Record<ExternalAgentProviderOptions["agent"], { binary: string; args: string[]; apiKeyEnv: string }>
+> = {
+  "claude-code": { binary: "claude", args: ["-p"], apiKeyEnv: "ANTHROPIC_API_KEY" },
+  codex: { binary: "codex", args: ["exec"], apiKeyEnv: "OPENAI_API_KEY" },
+};
+
 /**
- * ExternalAgentSubagentProvider — drives an external agent CLI (Claude Code,
- * Codex, Cursor, etc.) as a subagent.
- *
- * The provider spawns the external agent process, sends the goal as a
- * prompt, and captures stdout as the result. Continuable children keep
- * the process alive; one-shot children terminate after the first response.
- *
- * This is the integration point for "use Claude Code as a Nexum subagent"
- * or "delegate this task to Codex". Each external agent has its own CLI
- * shape; the provider abstracts them behind a uniform SubagentHandle.
+ * ExternalAgentSubagentProvider — runs an external agent CLI as a one-shot
+ * subagent: spawns the process (no shell), passes the goal as an argument,
+ * captures stdout as the output. Exit 0 → completed; non-zero → failed with
+ * the stderr tail. Spawn errors, timeouts and interrupts reject the promise.
+ * Continuable sessions are not supported.
  */
 export class ExternalAgentSubagentProvider implements SubagentProvider {
   readonly type = "external" as const;
   private readonly handles = new Map<string, SubagentHandle>();
+  private readonly children = new Map<string, ChildProcess>();
   private readonly opts: ExternalAgentProviderOptions;
 
   constructor(opts: ExternalAgentProviderOptions) {
     this.opts = opts;
   }
 
+  private invocation(goal: string): { binary: string; args: string[]; env: Record<string, string> } {
+    const preset = EXTERNAL_PRESETS[this.opts.agent];
+    const binary = this.opts.binaryPath ?? preset?.binary;
+    if (!binary) {
+      throw new Error(`external agent "${this.opts.agent}" has no built-in invocation; set binaryPath`);
+    }
+    const extra = this.opts.extraArgs ?? [];
+    let args: string[];
+    if (preset) {
+      args = [...preset.args, ...extra, goal];
+    } else if (extra.includes("{goal}")) {
+      args = extra.map((a) => (a === "{goal}" ? goal : a));
+    } else {
+      args = [...extra, goal];
+    }
+    const env: Record<string, string> = { ...this.opts.env };
+    if (this.opts.apiKey) {
+      const keyEnv = this.opts.apiKeyEnv ?? preset?.apiKeyEnv;
+      if (!keyEnv) throw new Error(`external agent "${this.opts.agent}": apiKey requires apiKeyEnv`);
+      env[keyEnv] = this.opts.apiKey;
+    }
+    return { binary, args, env };
+  }
+
   async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
+    if (request.continuable) {
+      throw new Error("external subagents are one-shot; continuable sessions are not supported");
+    }
+    const { binary, args, env } = this.invocation(request.goal);
     const subagentId = newDelegationId();
     const providerRunId = newRunId();
-    const continuable = request.continuable ?? false;
+    const timeoutMs = this.opts.timeoutMs ?? 15 * 60_000;
+    const maxOutputBytes = this.opts.maxOutputBytes ?? 1024 * 1024;
 
-    let resolveResult: ((r: SubagentResult) => void) | undefined;
-    let rejectResult: ((e: Error) => void) | undefined;
-    const resultPromise = new Promise<SubagentResult>((resolve, reject) => {
-      resolveResult = resolve;
-      rejectResult = reject;
+    let state: SubagentState = "running";
+    let rejectRun: (e: Error) => void = () => {};
+    const child = spawn(binary, args, {
+      cwd: this.opts.cwd,
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    resultPromise.catch(() => {});
+    this.children.set(subagentId, child);
 
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
-    const self = this;
+    const terminate = (): void => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, 5_000).unref();
+    };
+
+    const promise = new Promise<SubagentResult>((resolve, reject) => {
+      rejectRun = reject;
+      const stdout: Buffer[] = [];
+      let stdoutBytes = 0;
+      let truncated = false;
+      let stderrTail = "";
+
+      child.stdout?.on("data", (chunk: Buffer) => {
+        const room = maxOutputBytes - stdoutBytes;
+        if (room <= 0) {
+          truncated = true;
+          return;
+        }
+        const kept = chunk.length > room ? chunk.subarray(0, room) : chunk;
+        if (kept.length < chunk.length) truncated = true;
+        stdout.push(kept);
+        stdoutBytes += kept.length;
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderrTail = (stderrTail + chunk.toString("utf8")).slice(-4000);
+      });
+
+      const timer = setTimeout(() => {
+        state = "failed";
+        terminate();
+        reject(new Error(`external agent timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref();
+
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        if (state === "running") state = "failed";
+        reject(new Error(`failed to start external agent "${binary}": ${err.message}`));
+      });
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        this.children.delete(subagentId);
+        if (state !== "running") return;
+        const output = Buffer.concat(stdout).toString("utf8");
+        const ok = code === 0;
+        state = ok ? "completed" : "failed";
+        resolve({
+          subagentId,
+          status: ok ? "completed" : "failed",
+          output,
+          error: ok
+            ? undefined
+            : `exit code ${code ?? "null"}${signal ? ` (signal ${signal})` : ""}: ${stderrTail.trim()}`,
+          metadata: { agent: this.opts.agent, exitCode: code, truncated },
+        });
+      });
+    });
+    promise.catch(() => {});
 
     const handle: SubagentHandle = {
       subagentId,
       providerRunId,
       provider: "external",
-      continuable,
-      state: "running",
+      continuable: false,
+      get state() {
+        return state;
+      },
+      set state(next: SubagentState) {
+        state = next;
+      },
       request,
-      promise: continuable ? undefined : resultPromise,
-      async send(message: string): Promise<SubagentResult> {
-        // Real impl: write to child process stdin.
-        return {
-          subagentId,
-          status: "completed",
-          output: `[external:${self.opts.agent}:${subagentId}] received: ${message}`,
-          metadata: { agent: self.opts.agent },
-        };
+      promise,
+      async send(): Promise<SubagentResult> {
+        throw new Error("one-shot external subagent does not support send() — spawn a new one");
       },
       async interrupt(reason?: string): Promise<void> {
-        // Real impl: SIGTERM the child process.
-        if (rejectResult) rejectResult(new Error(reason ?? "interrupted"));
-        handle.state = "cancelled";
+        if (state !== "running") return;
+        state = "cancelled";
+        terminate();
+        rejectRun(new Error(reason ?? "interrupted"));
       },
       async resume(): Promise<SubagentResult> {
-        if (handle.state !== "paused") {
-          throw new Error(`cannot resume external subagent in state "${handle.state}"`);
-        }
-        handle.state = "running";
-        return handle.send("resume");
+        throw new Error("one-shot external subagent cannot be resumed");
       },
-      async fork(): Promise<SubagentHandle> {
-        return self.spawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` }, _parent);
-      },
+      fork: async (): Promise<SubagentHandle> =>
+        this.spawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` }, _parent),
     };
 
     this.handles.set(subagentId, handle);
-
-    // For one-shot: spawn the external agent, send goal, capture output.
-    // We simulate completion (real impl would use child_process.spawn).
-    if (!continuable && resolveResult) {
-      setTimeout(() => {
-        if (handle.state === "running") {
-          resolveResult!({
-            subagentId,
-            status: "completed",
-            output: `[external:${this.opts.agent}] goal: ${request.goal}`,
-            metadata: { agent: this.opts.agent, simulated: true },
-          });
-          handle.state = "completed";
-        }
-      }, 10);
-    }
-
     return handle;
   }
 
@@ -1051,24 +1151,33 @@ export class ExternalAgentSubagentProvider implements SubagentProvider {
   async stopAll(): Promise<void> {
     for (const handle of this.handles.values()) {
       if (handle.state === "running" || handle.state === "pending") {
-        try {
-          await handle.interrupt("host shutdown");
-        } catch {
-          /* best-effort */
-        }
-        handle.state = "cancelled";
+        await handle.interrupt("host shutdown");
       }
     }
   }
 }
 
-/** Factory: register all provider implementations (no longer stubs). */
-export function defaultSubagentProviders(opts: InProcessProviderOptions): SubagentProvider[] {
-  return [
-    new InProcessSubagentProvider(opts),
-    new ProcessSubagentProvider(),
-    new ACPSubagentProvider(),
-    new SDKSubagentProvider(),
-    new ExternalAgentSubagentProvider({ agent: "generic" }),
-  ];
+export interface DefaultSubagentProvidersOptions extends InProcessProviderOptions {
+  /** Register the process provider (spawns `<binaryPath> rpc`). */
+  process?: ProcessProviderOptions;
+  /** Register the HTTP task provider (requires an endpoint). */
+  acp?: AcpProviderOptions;
+  /** Register the SDK provider (requires a runtimeFactory). */
+  sdk?: SdkProviderOptions;
+  /** Register the external agent provider. */
+  external?: ExternalAgentProviderOptions;
+}
+
+/**
+ * Providers that can actually execute. In-process is always available; the
+ * others are registered only when configured, so listProviders() never
+ * advertises a backend that would fail on first spawn for lack of wiring.
+ */
+export function defaultSubagentProviders(opts: DefaultSubagentProvidersOptions): SubagentProvider[] {
+  const providers: SubagentProvider[] = [new InProcessSubagentProvider(opts)];
+  if (opts.process) providers.push(new ProcessSubagentProvider(opts.process));
+  if (opts.acp?.endpoint) providers.push(new ACPSubagentProvider(opts.acp));
+  if (opts.sdk?.runtimeFactory) providers.push(new SDKSubagentProvider(opts.sdk));
+  if (opts.external) providers.push(new ExternalAgentSubagentProvider(opts.external));
+  return providers;
 }

@@ -255,6 +255,7 @@ export {
   type SubagentState,
   type SubagentProviderType,
   type SubagentServiceOptions,
+  type DefaultSubagentProvidersOptions,
 } from "./subagents/index.js";
 
 // Job service
