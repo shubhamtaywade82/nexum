@@ -690,13 +690,13 @@ export class Agent {
         const routedTier = (response.routedTier as string | undefined) ?? this.stack.provider.currentTier;
         const routedModel = (response.routedModel as string | undefined) ?? this.stack.provider.currentModel;
         const usage = this.readUsage(response);
-        this.emit(
-          "onModelUsed",
-          routedTier,
-          routedModel,
-          usage && { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, latencyMs: elapsedMs },
-        );
-        if (usage) this.emit("onUsage", { ...usage, latencyMs: elapsedMs });
+        if (usage) {
+          const { promptTokens, completionTokens } = usage;
+          this.emit("onModelUsed", routedTier, routedModel, { promptTokens, completionTokens, latencyMs: elapsedMs });
+          this.emit("onUsage", { ...usage, latencyMs: elapsedMs });
+        } else {
+          this.emit("onModelUsed", routedTier, routedModel);
+        }
       },
 
       prepareToolCall: (call) => {
