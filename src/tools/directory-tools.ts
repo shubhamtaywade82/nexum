@@ -1,11 +1,15 @@
 import { readdir, stat, rm, mkdir, copyFile, rename } from "node:fs/promises";
 import { resolve, relative } from "node:path";
 import { Tool } from "./tool.js";
-import { resolveWorkspacePath } from "./path-utils.js";
+import { guardPath, toGuard, type WorkspaceBoundary } from "./path-utils.js";
+import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
 
 export class ListDirectoryTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
   get name(): string {
     return "list_directory";
@@ -23,12 +27,12 @@ export class ListDirectoryTool extends Tool {
   }
   async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const path = (args.path as string) || ".";
-    const target = resolveWorkspacePath(this.root, path);
+    const target = guardPath(this.guard, "list", path);
     const entries: { name: string; path: string; type: "file" | "directory" }[] = [];
     try {
       for (const name of await readdir(target)) {
         const item = resolve(target, name);
-        const rel = relative(this.root, item);
+        const rel = relative(this.guard.root, item);
         let type: "file" | "directory" = "file";
         try {
           const s = await stat(item);
@@ -46,8 +50,11 @@ export class ListDirectoryTool extends Tool {
 }
 
 export class DeleteFileTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
   get name(): string {
     return "delete_file";
@@ -61,7 +68,7 @@ export class DeleteFileTool extends Tool {
   async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const path = args.path as string;
     if (!path) return { error: "ArgumentError", message: "missing path" };
-    const target = resolveWorkspacePath(this.root, path);
+    const target = guardPath(this.guard, "delete", path);
     try {
       await rm(target, { recursive: true, force: true });
     } catch (e) {
@@ -72,8 +79,11 @@ export class DeleteFileTool extends Tool {
 }
 
 export class MakeDirectoryTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
   get name(): string {
     return "make_directory";
@@ -87,7 +97,7 @@ export class MakeDirectoryTool extends Tool {
   async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const path = args.path as string;
     if (!path) return { error: "ArgumentError", message: "missing path" };
-    const target = resolveWorkspacePath(this.root, path);
+    const target = guardPath(this.guard, "mkdir", path);
     try {
       await mkdir(target, { recursive: true });
     } catch (e) {
@@ -98,8 +108,11 @@ export class MakeDirectoryTool extends Tool {
 }
 
 export class CopyFileTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
   get name(): string {
     return "copy_file";
@@ -118,8 +131,8 @@ export class CopyFileTool extends Tool {
     const source = args.source as string;
     const destination = args.destination as string;
     if (!source || !destination) return { error: "ArgumentError", message: "source and destination are required" };
-    const src = resolveWorkspacePath(this.root, source);
-    const dest = resolveWorkspacePath(this.root, destination);
+    const src = guardPath(this.guard, "copy", source);
+    const dest = guardPath(this.guard, "write", destination);
     try {
       await copyFile(src, dest);
     } catch (e) {
@@ -130,8 +143,11 @@ export class CopyFileTool extends Tool {
 }
 
 export class MoveFileTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
   get name(): string {
     return "move_file";
@@ -150,8 +166,8 @@ export class MoveFileTool extends Tool {
     const source = args.source as string;
     const destination = args.destination as string;
     if (!source || !destination) return { error: "ArgumentError", message: "source and destination are required" };
-    const src = resolveWorkspacePath(this.root, source);
-    const dest = resolveWorkspacePath(this.root, destination);
+    const src = guardPath(this.guard, "move", source);
+    const dest = guardPath(this.guard, "write", destination);
     try {
       await rename(src, dest);
     } catch (e) {

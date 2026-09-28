@@ -16,7 +16,10 @@
  *      exception; write/create create parent directories inside the scope
  *      only;
  *   4. sensitive-path protection (.env, credentials, keys) on every
- *      mutating op.
+ *      mutating op — and, with `protectSensitiveReads`, on every
+ *      content-revealing op (read, copy source, search). Sensitivity is
+ *      judged on both the requested and the resolved path, so a symlink
+ *      alias of a secret is still the secret.
  *
  * The guard returns VERDICTS (data), never throws for expected cases, so
  * tools map verdicts to structured ToolResults and policies can inspect
@@ -25,12 +28,28 @@
 
 import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { isSensitivePath } from "../../safety/path-policy.js";
 
-export type FsOperation = "read" | "write" | "delete" | "move" | "copy" | "patch" | "watch" | "mkdir";
+export type FsOperation =
+  | "read"
+  | "write"
+  | "delete"
+  | "move"
+  | "copy"
+  | "patch"
+  | "watch"
+  | "mkdir"
+  /** Enumerate an existing directory (names only). */
+  | "list"
+  /** Search the contents of an existing file or directory tree. */
+  | "search";
 
 export interface FsVerdict {
   allowed: boolean;
-  /** Absolute real path (symlinks resolved) when allowed. */
+  /**
+   * Absolute real path (symlinks resolved). Set when allowed, and on
+   * not_found / not_a_file / not_a_directory (all security rules passed).
+   */
   resolvedPath?: string;
   code:
     | "ok"
@@ -45,24 +64,10 @@ export interface FsVerdict {
   message: string;
 }
 
-/** Basenames/patterns that mutate ops never touch. */
-const SENSITIVE_BASENAMES = new Set([
-  ".env",
-  ".env.local",
-  ".env.production",
-  ".env.development",
-  "credentials.json",
-  "id_rsa",
-  "id_ed25519",
-  "id_ecdsa",
-]);
-const SENSITIVE_PATTERNS = [
-  /(^|\/)\.ssh\//,
-  /(^|\/)\.aws\//,
-  /(^|\/)\.gnupg\//,
-  /\.(pem|key|p12|pfx)$/i,
-  /(^|\/)secrets?\//i,
-];
+const MUTATING: readonly FsOperation[] = ["write", "delete", "move", "patch", "mkdir"];
+/** Ops that expose file contents to the caller (gated by protectSensitiveReads). */
+const CONTENT_REVEALING: readonly FsOperation[] = ["read", "copy", "search"];
+const EXPECTS_EXISTING: readonly FsOperation[] = ["read", "delete", "move", "copy", "patch", "watch", "list", "search"];
 
 export interface WorkspaceGuardOptions {
   /** Workspace root (absolute). */
@@ -71,6 +76,12 @@ export interface WorkspaceGuardOptions {
   writeScope?: string;
   /** Extra deny patterns for mutation (regex over the relative path). */
   denyPatterns?: RegExp[];
+  /**
+   * Also refuse content-revealing ops (read, copy source, search) on
+   * sensitive paths. Off by default (generic infrastructure may need to read
+   * them); agent-facing tool packs turn it on so secrets never reach model context.
+   */
+  protectSensitiveReads?: boolean;
 }
 
 export class WorkspaceGuard {
@@ -142,25 +153,13 @@ export class WorkspaceGuard {
       };
     }
 
-    // existence semantics per operation
-    const existsTarget = existsSync(resolvedPath);
-    const expectsExisting: FsOperation[] = ["read", "delete", "move", "copy", "patch", "watch"];
-    if (expectsExisting.includes(op) && !existsTarget) {
-      return {
-        allowed: false,
-        code: "not_found",
-        message: `${relativePath} does not exist (checked ${resolvedPath})`,
-      };
-    }
-    if (op === "read" || op === "copy" || op === "patch") {
-      if (existsTarget && !statSync(resolvedPath).isFile()) {
-        return { allowed: false, code: "not_a_file", message: `${relativePath} is not a regular file` };
-      }
+    if ((op === "delete" || op === "move") && relFinal === "") {
+      return { allowed: false, code: "invalid_path", message: "the workspace root itself cannot be deleted or moved" };
     }
 
     // write scope (mutations must land in the narrower scope when set)
-    const mutating: FsOperation[] = ["write", "delete", "move", "patch", "mkdir"];
-    if (mutating.includes(op) && this.writeScopeReal) {
+    const mutating = MUTATING.includes(op);
+    if (mutating && this.writeScopeReal) {
       const relScope = relative(this.writeScopeReal, resolvedPath);
       if (relScope === ".." || relScope.startsWith(`..${sep}`) || relScope.startsWith(sep)) {
         return {
@@ -171,8 +170,10 @@ export class WorkspaceGuard {
       }
     }
 
-    // sensitive paths block mutation always
-    if (mutating.includes(op) && isSensitive(relFinal)) {
+    // sensitive paths: mutation always blocked; content-revealing ops when protected.
+    // Both the requested and the resolved path count (a symlink alias of a secret is the secret).
+    const sensitiveGated = mutating || (this.opts.protectSensitiveReads === true && CONTENT_REVEALING.includes(op));
+    if (sensitiveGated && (sensitive(relFinal) || sensitive(relNominal))) {
       return {
         allowed: false,
         code: "sensitive_path",
@@ -181,7 +182,7 @@ export class WorkspaceGuard {
     }
 
     // extra deny patterns
-    if (mutating.includes(op)) {
+    if (mutating) {
       for (const pattern of this.opts.denyPatterns ?? []) {
         if (pattern.test(relFinal)) {
           return {
@@ -191,6 +192,25 @@ export class WorkspaceGuard {
           };
         }
       }
+    }
+
+    // existence semantics per operation — checked LAST, after every security
+    // rule, so these verdicts may carry resolvedPath (the path is permitted;
+    // it just is not the expected kind of thing).
+    const existsTarget = existsSync(resolvedPath);
+    if (EXPECTS_EXISTING.includes(op) && !existsTarget) {
+      return {
+        allowed: false,
+        resolvedPath,
+        code: "not_found",
+        message: `${relativePath} does not exist (checked ${resolvedPath})`,
+      };
+    }
+    if ((op === "read" || op === "copy" || op === "patch") && existsTarget && !statSync(resolvedPath).isFile()) {
+      return { allowed: false, resolvedPath, code: "not_a_file", message: `${relativePath} is not a regular file` };
+    }
+    if (op === "list" && existsTarget && !statSync(resolvedPath).isDirectory()) {
+      return { allowed: false, resolvedPath, code: "not_a_directory", message: `${relativePath} is not a directory` };
     }
 
     return { allowed: true, resolvedPath, code: "ok", message: "ok" };
@@ -245,11 +265,9 @@ function nearestExistingAncestor(p: string): { nearest: string; remainder: strin
   return { nearest: probe, remainder: parts.join(sep) };
 }
 
-function isSensitive(relPath: string): boolean {
-  const base = relPath.split(sep).pop() ?? "";
-  if (SENSITIVE_BASENAMES.has(base)) return true;
-  const posix = relPath.split(sep).join("/");
-  return SENSITIVE_PATTERNS.some((p) => p.test(posix));
+/** Sensitive as a file, or as a directory (so `secrets` / `.ssh` themselves are covered). */
+function sensitive(relPath: string): boolean {
+  return relPath !== "" && (isSensitivePath(relPath) || isSensitivePath(`${relPath}${sep}`));
 }
 
 /** Is the path a dangling symlink? (watch/patch tools want to know) */

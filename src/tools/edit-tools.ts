@@ -1,11 +1,15 @@
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Tool, ToolError } from "./tool.js";
-import { resolveWorkspacePath } from "./path-utils.js";
+import { guardPath, toGuard, type WorkspaceBoundary } from "./path-utils.js";
+import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
 
 export class PatchTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
   get name() {
     return "patch_file";
@@ -24,7 +28,7 @@ export class PatchTool extends Tool {
     const path = args.path as string;
     const find = args.find as string;
     const replace = args.replace as string;
-    const target = resolveWorkspacePath(this.root, path);
+    const target = guardPath(this.guard, "patch", path);
     const content = await readFile(target, "utf-8");
     if (!content.includes(find)) throw new ToolError(`search block not found in ${path}`);
     const next = content.replace(find, replace);
@@ -34,8 +38,11 @@ export class PatchTool extends Tool {
 }
 
 export class AppendTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
   get name() {
     return "append_file";
@@ -53,7 +60,7 @@ export class AppendTool extends Tool {
   async call(args: Record<string, unknown>) {
     const path = args.path as string;
     const content = args.content as string;
-    const target = resolveWorkspacePath(this.root, path);
+    const target = guardPath(this.guard, "write", path);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, content, { encoding: "utf-8", flag: "a+" });
     try {

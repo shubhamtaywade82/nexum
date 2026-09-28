@@ -25,6 +25,15 @@ describe("loadConfig apiKeys pool", () => {
     expect(loadConfig().apiKeys).toBeUndefined();
   });
 
+  it("resolves NEXUM_WRITE_SCOPE against the workspace root and leaves it unset by default", () => {
+    delete process.env.NEXUM_WRITE_SCOPE;
+    expect(loadConfig().writeScope).toBeUndefined();
+    process.env.NEXUM_WRITE_SCOPE = "src";
+    expect(loadConfig().writeScope).toBe(join(workspaceRoot, "src"));
+    process.env.NEXUM_WRITE_SCOPE = "/abs/scope";
+    expect(loadConfig().writeScope).toBe("/abs/scope");
+  });
+
   it("puts OLLAMA_API_KEY first in the pool", () => {
     process.env.OLLAMA_API_KEY = "primary_key";
     expect(loadConfig().apiKeys).toEqual(["primary_key"]);

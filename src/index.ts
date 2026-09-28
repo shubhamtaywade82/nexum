@@ -126,6 +126,21 @@ export {
   agentCorePack,
 } from "./tools/packs/index.js";
 
+// ── Filesystem boundary (one guard shared by every file-touching pack) ──────
+export {
+  WorkspaceGuard,
+  WorkspacePathError,
+  type WorkspaceGuardOptions,
+  type FsOperation,
+  type FsVerdict,
+} from "./core/fs/workspace-guard.js";
+export {
+  agentWorkspaceGuard,
+  PathEscapeError,
+  SensitivePathError,
+  type WorkspaceBoundary,
+} from "./tools/path-utils.js";
+
 // ── Product agents (review item 40) ─────────────────────────────────────────
 export { DevAgent, DEVAGENT_DESCRIPTOR, CryptoAgent, cryptoAgentDescriptor } from "./agents/index.js";
 

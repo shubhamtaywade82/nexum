@@ -90,6 +90,42 @@ describe("WorkspaceGuard contract (filesystem isolation, item 9)", () => {
     expect(guard.check("read", "root.txt").allowed).toBe(true);
   });
 
+  it("protectSensitiveReads gates content-revealing ops only (read, copy, search)", () => {
+    writeFileSync(join(root, ".env"), "SECRET=1");
+    mkdirSync(join(root, "secrets"));
+    const guard = new WorkspaceGuard({ root, protectSensitiveReads: true });
+    for (const op of ["read", "copy", "search"] as const) {
+      expect(guard.check(op, ".env").code).toBe("sensitive_path");
+    }
+    expect(guard.check("watch", ".env").allowed).toBe(true);
+    expect(guard.check("list", "secrets").allowed).toBe(true);
+  });
+
+  it("judges sensitivity on the resolved path, so a symlink alias of a secret is the secret", () => {
+    writeFileSync(join(root, ".env"), "SECRET=1");
+    symlinkSync(join(root, ".env"), join(root, "alias.txt"));
+    const guard = new WorkspaceGuard({ root, protectSensitiveReads: true });
+    expect(guard.check("read", "alias.txt").code).toBe("sensitive_path");
+    expect(guard.check("write", "alias.txt").code).toBe("sensitive_path");
+  });
+
+  it("refuses to delete or move the workspace root, and secret directories", () => {
+    mkdirSync(join(root, "secrets"));
+    const guard = new WorkspaceGuard({ root });
+    expect(guard.check("delete", ".").code).toBe("invalid_path");
+    expect(guard.check("move", ".").code).toBe("invalid_path");
+    expect(guard.check("delete", "secrets").code).toBe("sensitive_path");
+  });
+
+  it("applies security rules before existence checks; existence verdicts carry the resolved path", () => {
+    const guard = new WorkspaceGuard({ root, protectSensitiveReads: true });
+    expect(guard.check("read", ".env").code).toBe("sensitive_path"); // missing, but still a secret
+    const missing = guard.check("read", "missing.txt");
+    expect(missing.code).toBe("not_found");
+    expect(missing.resolvedPath).toBe(join(guard.root, "missing.txt"));
+    expect(guard.check("list", "missing-dir").code).toBe("not_found");
+  });
+
   it("requireAllowed throws WorkspacePathError with the verdict", () => {
     const guard = new WorkspaceGuard({ root });
     try {

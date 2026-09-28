@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, isAbsolute, resolve } from "node:path";
 import { envIs, readEnv, readEnvFlag } from "../platform/environment.js";
 import { THEME_ORDER, ThemeName } from "../runtime/types.js";
 import {
@@ -34,6 +34,8 @@ export interface CliConfig {
   shellImage?: string;
   shellTimeoutSec?: number;
   sandbox?: boolean;
+  /** Absolute directory file-mutating tools are confined to (inside workspaceRoot). Unset = the whole workspace. */
+  writeScope?: string;
   languages?: Record<string, LanguageOverride>;
   lsp?: LspCliConfig;
   toolSelectionMode?: "heuristic" | "llm" | "hybrid";
@@ -110,6 +112,8 @@ interface ConfigFile {
   shellImage?: string;
   shellTimeoutSec?: number;
   sandbox?: boolean;
+  /** Write scope, relative to the workspace root (or absolute). */
+  writeScope?: string;
   toolSelectionMode?: string;
   maxActiveTools?: number;
   apiKeys?: string[];
@@ -341,6 +345,7 @@ export function loadConfig(): CliConfig {
     shellImage: readEnv("SHELL_IMAGE") || file.shellImage,
     shellTimeoutSec,
     sandbox: readEnvFlag("SANDBOX", file.sandbox ?? true),
+    writeScope: resolveWriteScope(readEnv("WRITE_SCOPE") || file.writeScope, workspaceRoot),
     toolSelectionMode,
     maxActiveTools,
     apiKeys: apiKeys.length ? apiKeys : undefined,
@@ -362,4 +367,9 @@ export function loadConfig(): CliConfig {
     pricing,
     mcpServers: file.mcpServers,
   };
+}
+
+function resolveWriteScope(raw: string | undefined, workspaceRoot: string): string | undefined {
+  if (!raw) return undefined;
+  return isAbsolute(raw) ? raw : resolve(workspaceRoot, raw);
 }
