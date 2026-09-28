@@ -84,12 +84,19 @@ export interface CredentialServiceOptions {
   defaultScope?: CredentialScope;
 }
 
+/** True when `name` (carrying `tags`) is visible under `scope`. Untagged credentials never match a tag scope. */
+export function isInScope(scope: CredentialScope, name: string, tags: readonly string[]): boolean {
+  if (scope.names.length > 0 && !scope.names.includes(name)) return false;
+  return scope.tags.every((t) => tags.includes(t));
+}
+
 export class CredentialService {
   private readonly providers: CredentialProvider[] = [];
   private readonly cache = new Map<string, CredentialRecord>();
   private readonly rootDir?: string;
   private readonly defaultScope?: CredentialScope;
   private readonly rotators = new Map<string, () => Promise<string>>();
+  private readonly declaredTags = new Map<string, string[]>();
 
   constructor(opts: CredentialServiceOptions = {}) {
     this.rootDir = opts.rootDir;
@@ -109,8 +116,24 @@ export class CredentialService {
     return this;
   }
 
-  /** Get a credential value by name (raw). Returns undefined if not found. */
+  /** Declare a credential's tags so tag-based scopes can admit it. */
+  declare(spec: CredentialSpec): this {
+    this.declaredTags.set(spec.name, [...(spec.tags ?? [])]);
+    return this;
+  }
+
+  /** Tags declared for a credential (empty when undeclared). */
+  tagsOf(name: string): string[] {
+    return [...(this.declaredTags.get(name) ?? [])];
+  }
+
+  /** Get a credential value by name (raw), honoring `defaultScope`. Returns undefined if not found or out of scope. */
   async get(name: string): Promise<string | undefined> {
+    if (this.defaultScope && !isInScope(this.defaultScope, name, this.tagsOf(name))) return undefined;
+    return this.lookup(name);
+  }
+
+  private async lookup(name: string): Promise<string | undefined> {
     const cached = this.cache.get(name);
     if (cached) return cached.value;
 
@@ -135,7 +158,10 @@ export class CredentialService {
 
   /** Require a credential (throws if not found). */
   async require(name: string): Promise<string> {
-    const value = await this.get(name);
+    if (this.defaultScope && !isInScope(this.defaultScope, name, this.tagsOf(name))) {
+      throw new Error(`credential "${name}" is not in the default scope`);
+    }
+    const value = await this.lookup(name);
     if (value === undefined) {
       throw new Error(
         `required credential "${name}" not found. ` +
@@ -170,7 +196,9 @@ export class CredentialService {
         }
       }
     }
-    return [...names].sort();
+    const scope = this.defaultScope;
+    const visible = scope ? [...names].filter((n) => isInScope(scope, n, this.tagsOf(n))) : [...names];
+    return visible.sort();
   }
 
   /** List credential records with redacted values (safe for display). */
@@ -211,9 +239,12 @@ export class CredentialService {
     });
   }
 
-  /** Create a scoped view (only credentials matching the scope are visible). */
+  /** Create a scoped view (only credentials matching the scope are visible). Replaces `defaultScope`. */
   scope(scope: CredentialScope): ScopedCredentialService {
-    return new ScopedCredentialService(this, scope);
+    return new ScopedCredentialService(scope, {
+      lookup: (name) => this.lookup(name),
+      tagsOf: (name) => this.tagsOf(name),
+    });
   }
 
   /** Invalidate the cache (force re-resolution on next get). */
@@ -222,25 +253,36 @@ export class CredentialService {
   }
 }
 
-/** A scoped view of the CredentialService (filters by tags/names). */
+interface ScopeSource {
+  lookup(name: string): Promise<string | undefined>;
+  tagsOf(name: string): string[];
+}
+
+/** A scoped view of the CredentialService (filters by tags and names). Obtain via `CredentialService.scope()`. */
 export class ScopedCredentialService {
   constructor(
-    private readonly parent: CredentialService,
     private readonly scope: CredentialScope,
+    private readonly source: ScopeSource,
   ) {}
 
+  private visible(name: string): boolean {
+    return isInScope(this.scope, name, this.source.tagsOf(name));
+  }
+
   async get(name: string): Promise<string | undefined> {
-    if (this.scope.names.length > 0 && !this.scope.names.includes(name)) {
-      return undefined;
-    }
-    return this.parent.get(name);
+    if (!this.visible(name)) return undefined;
+    return this.source.lookup(name);
   }
 
   async require(name: string): Promise<string> {
-    if (this.scope.names.length > 0 && !this.scope.names.includes(name)) {
-      throw new Error(`credential "${name}" is not in scope (tags: ${this.scope.tags.join(",")})`);
+    if (!this.visible(name)) {
+      throw new Error(
+        `credential "${name}" is not in scope (tags: ${this.scope.tags.join(",") || "-"}; names: ${this.scope.names.join(",") || "*"})`,
+      );
     }
-    return this.parent.require(name);
+    const value = await this.source.lookup(name);
+    if (value === undefined) throw new Error(`required credential "${name}" not found`);
+    return value;
   }
 }
 
@@ -340,17 +382,17 @@ export interface ExecResult {
   notFound: boolean;
 }
 
-/** Injectable process runner (tests pass a fake; prod spawns real CLIs). */
-export type ExecFn = (command: string, args: string[]) => Promise<ExecResult>;
+/** Injectable process runner (tests pass a fake; prod spawns real CLIs). `input` is written to stdin, which is then closed. */
+export type ExecFn = (command: string, args: string[], input?: string) => Promise<ExecResult>;
 
 /** Platform identifier (process.platform by default; injectable for tests). */
 export type Platform = "darwin" | "linux" | "win32" | "other";
 
 /** Real executor: node child_process.execFile, never throwing. */
-async function defaultExec(command: string, args: string[]): Promise<ExecResult> {
+async function defaultExec(command: string, args: string[], input?: string): Promise<ExecResult> {
   const { execFile } = await import("node:child_process");
   return new Promise((resolve) => {
-    execFile(command, args, { timeout: 10_000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+    const child = execFile(command, args, { timeout: 10_000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
       const e = err as (NodeJS.ErrnoException & { code?: number | string }) | null;
       resolve({
         code: typeof e?.code === "number" ? e.code : e ? 1 : 0,
@@ -358,6 +400,9 @@ async function defaultExec(command: string, args: string[]): Promise<ExecResult>
         notFound: e !== null && typeof e.code === "string" && e.code === "ENOENT",
       });
     });
+    // Always close stdin: a CLI that reads it (secret-tool store) would otherwise block until the timeout.
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(input ?? "");
   });
 }
 
@@ -411,7 +456,12 @@ export class KeychainCredentialProvider implements CredentialProvider {
       return;
     }
     if (this.platform === "linux") {
-      const r = await this.exec("secret-tool", ["store", "--label=nexum", "service", this.service, "account", name]);
+      // secret-tool reads the secret from stdin (never argv, which is visible in the process table).
+      const r = await this.exec(
+        "secret-tool",
+        ["store", "--label=nexum", "service", this.service, "account", name],
+        value,
+      );
       if (r.code === 0 && !r.notFound) return;
       if (r.notFound) throw new Error("secret-tool not available (install libsecret-tools)");
       throw new Error(`keychain write failed (secret-tool exit ${r.code})`);
