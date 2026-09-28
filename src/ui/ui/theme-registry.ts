@@ -2,7 +2,7 @@
  * Nexum theme registry — the single ThemeName -> Theme token mapping.
  *
  * Themes are semantic, never raw colors: components consume tokens via
- * `useTheme()` (src/tui/ui/hooks/use-theme.ts) or the compat shim
+ * `useTheme()` (src/ui/ui/hooks/use-theme.ts) or the compat shim
  * `semanticColor()` (src/layout/theme-map.ts), so switching a theme never
  * requires touching a component.
  *

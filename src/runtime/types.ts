@@ -31,8 +31,8 @@ export type ActorHealth = "healthy" | "active" | "waiting" | "error" | "thinking
 /**
  * Built-in color themes. The first three are Nexum-native palettes kept
  * byte-compatible with the pre-theme-registry era; the rest are vendored
- * from the termcn (ink-ui) registry under src/tui/ui/lib/terminal-themes/.
- * The mapping ThemeName -> Theme tokens lives in src/tui/ui/theme-registry.ts.
+ * from the termcn (ink-ui) registry under src/ui/ui/lib/terminal-themes/.
+ * The mapping ThemeName -> Theme tokens lives in src/ui/ui/theme-registry.ts.
  */
 export type ThemeName =
   | "default"
