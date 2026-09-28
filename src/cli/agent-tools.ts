@@ -44,6 +44,7 @@ import { readEnv } from "../platform/environment.js";
 import { workspaceStateDir } from "../platform/paths.js";
 import { join } from "node:path";
 import { WorkspaceGuard, type WorkspaceGuardOptions } from "../core/fs/workspace-guard.js";
+import { ShellTool } from "../tools/shell.js";
 
 export type ToolOnOutput = (stream: "stdout" | "stderr", chunk: string) => void;
 
@@ -119,12 +120,15 @@ export class AgentToolManager {
   ): void {
     // One filesystem boundary for every file-touching pack.
     const guard = new WorkspaceGuard({ root, protectSensitiveReads: true, ...fsOpts });
+    const writeScope = fsOpts?.writeScope;
     this.registerToolPack(filesystemPack(guard));
-    this.registerToolPack(shellPack(root, onOutput, shellOpts));
+    this.registerToolPack(shellPack(root, onOutput, { ...shellOpts, writeScope }));
     this.registerToolPack(searchPack(guard));
     this.registerToolPack(gitPack(root));
-    this.registerToolPack(projectPack(root));
-    this.registerToolPack(rubyPack(root));
+    // Project scripts and bundle are code the agent can edit: run them in the same sandbox as run_shell.
+    const runner = new ShellTool({ workspaceRoot: root, ...shellOpts, writeScope });
+    this.registerToolPack(projectPack(root, runner));
+    this.registerToolPack(rubyPack(root, runner));
     this.registerToolPack(dockerPack(root));
     this.registerToolPack(databasePack(guard));
     // Default-on intelligence layer (semantic memory; RAG joins in the same

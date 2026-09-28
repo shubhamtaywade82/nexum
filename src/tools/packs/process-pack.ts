@@ -12,6 +12,7 @@ import { RunTestsTool, RunLintTool, RunFormatTool, RunBuildTool } from "../proje
 import { ToolPack, ToolPackEntry, packOf } from "../gateway/tool-pack.js";
 import type { ToolRisk } from "../../core/tools/tool-contract.js";
 import { ShellExecutionAccountant } from "../shell-accounting.js";
+import type { CommandRunner } from "../command-runner.js";
 
 export type PackShellOutput = (stream: "stdout" | "stderr", chunk: string) => void;
 
@@ -23,6 +24,8 @@ export interface ProcessPackOptions {
   sandbox?: boolean;
   image?: string;
   timeoutSec?: number;
+  /** Directory the sandbox may write to (rest of the workspace read-only). */
+  writeScope?: string;
 }
 
 /**
@@ -38,6 +41,7 @@ export function processPack(opts: ProcessPackOptions): ToolPack {
     sandbox: opts.sandbox,
     image: opts.image,
     timeoutSec: opts.timeoutSec,
+    writeScope: opts.writeScope,
   });
   const entries: ToolPackEntry[] = [
     {
@@ -51,10 +55,10 @@ export function processPack(opts: ProcessPackOptions): ToolPack {
       metadata: { risk: "high" as ToolRisk, sideEffects: { process: true, network: true } },
     },
     ...[
-      new RunTestsTool(opts.root),
-      new RunLintTool(opts.root),
-      new RunFormatTool(opts.root),
-      new RunBuildTool(opts.root),
+      new RunTestsTool(opts.root, shell),
+      new RunLintTool(opts.root, shell),
+      new RunFormatTool(opts.root, shell),
+      new RunBuildTool(opts.root, shell),
     ].map((tool) => ({
       tool,
       category: "Project",
@@ -76,7 +80,7 @@ export function processPack(opts: ProcessPackOptions): ToolPack {
 export function shellPack(
   root: string,
   onOutput?: PackShellOutput,
-  shellOpts?: { sandbox?: boolean; image?: string; timeoutSec?: number },
+  shellOpts?: { sandbox?: boolean; image?: string; timeoutSec?: number; writeScope?: string },
 ): ToolPack {
   const opts: ConstructorParameters<typeof ShellTool>[0] = { workspaceRoot: root, ...shellOpts };
   if (onOutput) opts.onOutput = onOutput;
@@ -102,12 +106,18 @@ export function dockerPack(root: string): ToolPack {
 }
 
 /** @deprecated mount processPack instead (review item 21). */
-export function projectPack(root: string): ToolPack {
+/** `runner` (e.g. the sandboxed ShellTool) executes the scripts; without it they run on the host. */
+export function projectPack(root: string, runner?: CommandRunner): ToolPack {
   return packOf(
     "project",
     "Project lifecycle: tests, lint, format, build.",
     "build",
-    [new RunTestsTool(root), new RunLintTool(root), new RunFormatTool(root), new RunBuildTool(root)].map((tool) => ({
+    [
+      new RunTestsTool(root, runner),
+      new RunLintTool(root, runner),
+      new RunFormatTool(root, runner),
+      new RunBuildTool(root, runner),
+    ].map((tool) => ({
       tool,
       category: "Project",
       metadata: { risk: "medium" as ToolRisk },

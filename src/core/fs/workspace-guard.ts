@@ -181,6 +181,16 @@ export class WorkspaceGuard {
       };
     }
 
+    // git internals: a planted hook or core.fsmonitor/hooksPath in .git/config
+    // would execute on the HOST at the next git command — file tools never write there.
+    if (mutating && (isGitInternal(relFinal) || isGitInternal(relNominal))) {
+      return {
+        allowed: false,
+        code: "sensitive_path",
+        message: `${relativePath} is inside .git/ — git internals are changed through git, not file tools`,
+      };
+    }
+
     // extra deny patterns
     if (mutating) {
       for (const pattern of this.opts.denyPatterns ?? []) {
@@ -263,6 +273,10 @@ function nearestExistingAncestor(p: string): { nearest: string; remainder: strin
   }
   if (parts.length === 0) return { nearest: p, remainder: "" };
   return { nearest: probe, remainder: parts.join(sep) };
+}
+
+function isGitInternal(relPath: string): boolean {
+  return relPath === ".git" || relPath.startsWith(`.git${sep}`);
 }
 
 /** Sensitive as a file, or as a directory (so `secrets` / `.ssh` themselves are covered). */

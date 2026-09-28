@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { join, posix, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
+import { isSensitivePath } from "../safety/path-policy.js";
 import { Tool } from "./tool.js";
 import { BRAND } from "../platform/brand.js";
 import type { ToolCallContext } from "../core/tools/tool-contract.js";
@@ -22,6 +24,29 @@ export interface ShellToolOptions {
   accountant?: ShellExecutionAccountant;
   /** Whether to execute inside a Docker sandbox (default: true). Set false for direct host execution. */
   sandbox?: boolean;
+  /**
+   * Directory (inside the workspace) the sandbox may write to. When set, the
+   * rest of the workspace is mounted read-only. Unset = whole workspace writable.
+   */
+  writeScope?: string;
+}
+
+/** Directories never scanned for secrets (dependency/build trees, VCS). */
+const SCAN_SKIP_DIRS = new Set([".git", "node_modules", "vendor", ".venv", "venv", "dist", "build", "target", ".next"]);
+/** Workspace entries scanned for secrets per run before failing closed. */
+const MAX_SCAN_ENTRIES = 100_000;
+
+export class SandboxScanError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SandboxScanError";
+  }
+}
+
+/** One `--mount` field, CSV-quoted as docker's --mount parser expects when it contains , or ". */
+function mountField(key: string, value: string): string {
+  const field = `${key}=${value}`;
+  return /[",\n]/.test(field) ? `"${field.replace(/"/g, '""')}"` : field;
 }
 
 export class ShellTool extends Tool {
@@ -43,6 +68,7 @@ export class ShellTool extends Tool {
   private readonly logger: Pick<Console, "info" | "warn">;
   private readonly onOutput?: (stream: "stdout" | "stderr", chunk: string) => void;
   private readonly accountant?: ShellExecutionAccountant;
+  private readonly writeScope?: string;
   /** In-flight probe, so concurrent calls share one result instead of the
    * second racing past a half-finished check. */
   private dockerProbe: Promise<boolean> | null = null;
@@ -63,6 +89,7 @@ export class ShellTool extends Tool {
     this.logger = opts.logger ?? console;
     this.onOutput = opts.onOutput;
     this.accountant = opts.accountant;
+    this.writeScope = opts.writeScope;
   }
 
   get name(): string {
@@ -71,7 +98,7 @@ export class ShellTool extends Tool {
 
   get description(): string {
     return this.sandbox
-      ? "Run a shell command inside an isolated Docker sandbox rooted at the workspace."
+      ? "Run a shell command inside an isolated Docker sandbox (no network) rooted at the workspace. Secret files (.env, keys, secrets/) read as empty, and .git hooks/config are read-only."
       : "Run a shell command on the host rooted at the workspace.";
   }
 
@@ -173,10 +200,23 @@ export class ShellTool extends Tool {
     });
     const stopSampling = record && container ? this.accountant!.sampleContainer(record) : undefined;
 
+    let dockerArgs: string[] | undefined;
+    if (container) {
+      try {
+        dockerArgs = this.dockerArgs(container, command, timeoutSec);
+      } catch (e) {
+        return {
+          exitCode: -1,
+          stdout: "",
+          stderr: e instanceof Error ? e.message : String(e),
+          truncated: false,
+          error: e instanceof SandboxScanError ? "SandboxScanError" : "SandboxSetupError",
+        };
+      }
+    }
+
     return new Promise((resolvePromise) => {
-      const child = this.sandbox
-        ? spawn("docker", this.dockerArgs(container!, command, timeoutSec))
-        : spawn("sh", ["-c", command], { cwd: this.root });
+      const child = dockerArgs ? spawn("docker", dockerArgs) : spawn("sh", ["-c", command], { cwd: this.root });
       let stdout = Buffer.alloc(0);
       let stderr = Buffer.alloc(0);
       let settled = false;
@@ -319,11 +359,15 @@ export class ShellTool extends Tool {
     });
   }
 
+  /**
+   * `docker run` arguments. Hardening: host uid (no root), all capabilities
+   * dropped, no-new-privileges, read-only root filesystem, no network, and
+   * workspace mounts that keep secrets and git hook/config out of reach.
+   */
   private dockerArgs(container: string, command: string, timeoutSec?: number): string[] {
     const effective = timeoutSec ?? this.timeoutSec;
-    const uid = process.getuid?.() ?? 0;
-    const gid = process.getgid?.() ?? 0;
-    const wrappedCommand = `chown -R ${uid}:${gid} /workspace >/dev/null 2>&1 || true; ${command}`;
+    const uid = process.getuid?.();
+    const gid = process.getgid?.();
     return [
       "run",
       "--rm",
@@ -333,8 +377,15 @@ export class ShellTool extends Tool {
       `--memory=${this.memory}`,
       `--cpus=${this.cpus}`,
       "--pids-limit=128",
-      "-v",
-      `${resolve(this.root)}:/workspace:rw`,
+      "--cap-drop=ALL",
+      "--security-opt=no-new-privileges",
+      "--read-only",
+      "--tmpfs",
+      "/tmp:rw,exec,nosuid,size=512m",
+      "-e",
+      "HOME=/tmp",
+      ...(uid !== undefined && gid !== undefined ? ["--user", `${uid}:${gid}`] : []),
+      ...this.workspaceMounts(),
       "-w",
       "/workspace",
       this.image,
@@ -342,7 +393,102 @@ export class ShellTool extends Tool {
       String(effective),
       "sh",
       "-c",
-      wrappedCommand,
+      command,
     ];
   }
+
+  /**
+   * Mounts, in override order (later wins):
+   *   1. the workspace — read-write, or read-only when a write scope is set
+   *   2. the write scope — read-write
+   *   3. .git/hooks and .git/config — read-only (a planted hook or
+   *      core.fsmonitor would otherwise run on the HOST at the next git call)
+   *   4. every sensitive file (masked with /dev/null) and directory (masked
+   *      with an empty tmpfs), so `cat .env` in the sandbox reads nothing
+   */
+  private workspaceMounts(): string[] {
+    const root = realOrResolved(this.root);
+    const toContainer = (hostPath: string) => {
+      const rel = relative(root, hostPath).split(sep).join("/");
+      return rel ? posix.join("/workspace", rel) : "/workspace";
+    };
+    const bind = (source: string, target: string, readonly: boolean) => [
+      "--mount",
+      ["type=bind", mountField("source", source), mountField("target", target), ...(readonly ? ["readonly"] : [])].join(
+        ",",
+      ),
+    ];
+
+    const scope = this.writeScope ? realOrResolved(this.writeScope) : undefined;
+    const scopeInside = scope !== undefined && isWithin(root, scope);
+    const args = bind(root, "/workspace", scope !== undefined);
+    if (scope && scopeInside && existsSync(scope)) args.push(...bind(scope, toContainer(scope), false));
+
+    for (const internal of [join(root, ".git", "hooks"), join(root, ".git", "config")]) {
+      if (existsSync(internal) && !lstatSync(internal).isSymbolicLink()) {
+        args.push(...bind(internal, toContainer(internal), true));
+      }
+    }
+
+    for (const secret of findSensitivePaths(root)) {
+      const target = toContainer(secret.path);
+      if (secret.dir) {
+        args.push(
+          "--mount",
+          ["type=tmpfs", mountField("target", target), "tmpfs-size=4096", "tmpfs-mode=0500"].join(","),
+        );
+      } else {
+        args.push(...bind("/dev/null", target, true));
+      }
+    }
+    return args;
+  }
+}
+
+function realOrResolved(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+function isWithin(root: string, p: string): boolean {
+  const rel = relative(root, p);
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep));
+}
+
+/**
+ * Sensitive files/directories under the workspace (symlinks are not followed
+ * or masked: a link to a masked secret resolves to the mask inside the
+ * container, and a link out of the workspace has no target there).
+ */
+function findSensitivePaths(root: string): Array<{ path: string; dir: boolean }> {
+  const found: Array<{ path: string; dir: boolean }> = [];
+  let scanned = 0;
+  const walk = (dir: string) => {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (++scanned > MAX_SCAN_ENTRIES) {
+        throw new SandboxScanError(
+          `workspace has more than ${MAX_SCAN_ENTRIES} entries; refusing to start the sandbox without a complete secret scan`,
+        );
+      }
+      const full = join(dir, entry.name);
+      const rel = relative(root, full);
+      if (entry.isDirectory()) {
+        if (isSensitivePath(`${rel}${sep}`)) found.push({ path: full, dir: true });
+        else if (!SCAN_SKIP_DIRS.has(entry.name)) walk(full);
+      } else if (entry.isFile() && isSensitivePath(rel)) {
+        found.push({ path: full, dir: false });
+      }
+    }
+  };
+  walk(root);
+  return found;
 }

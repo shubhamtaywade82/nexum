@@ -1,7 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Tool } from "./tool.js";
+import { runCommand, type CommandRunner } from "./command-runner.js";
+
+/** package.json scripts are arbitrary code the agent can edit: cap them like any shell run. */
+const SCRIPT_TIMEOUT_SEC = 900;
 
 async function detectPackageManager(root: string): Promise<"npm" | "pnpm" | "yarn"> {
   const check = async (file: string) => {
@@ -27,19 +30,15 @@ async function hasScript(root: string, scriptName: string): Promise<boolean> {
   }
 }
 
-function runScript(root: string, pm: "npm" | "pnpm" | "yarn", scriptName: string): Promise<Record<string, unknown>> {
+async function runScript(
+  root: string,
+  pm: "npm" | "pnpm" | "yarn",
+  scriptName: string,
+  runner?: CommandRunner,
+): Promise<Record<string, unknown>> {
   const args = pm === "yarn" ? [scriptName] : ["run", scriptName];
-  const command = `${pm} ${args.join(" ")}`;
-
-  return new Promise((resolvePromise) => {
-    const child = spawn(pm, args, { cwd: root });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c: Buffer) => (stdout += c.toString()));
-    child.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
-    child.on("close", (exitCode) => resolvePromise({ command, exitCode: exitCode ?? -1, stdout, stderr }));
-    child.on("error", (err) => resolvePromise({ command, exitCode: -1, stdout: "", stderr: err.message }));
-  });
+  const outcome = await runCommand({ root, bin: pm, args, timeoutSec: SCRIPT_TIMEOUT_SEC, runner });
+  return { command: `${pm} ${args.join(" ")}`, ...outcome };
 }
 
 abstract class ScriptRunnerTool extends Tool {
@@ -47,7 +46,11 @@ abstract class ScriptRunnerTool extends Tool {
   protected abstract readonly toolName: string;
   protected abstract readonly toolDescription: string;
 
-  constructor(protected readonly root: string) {
+  /** `runner` executes the script (the Docker sandbox when enabled); without one it runs on the host. */
+  constructor(
+    protected readonly root: string,
+    private readonly runner?: CommandRunner,
+  ) {
     super();
   }
 
@@ -64,7 +67,7 @@ abstract class ScriptRunnerTool extends Tool {
       return { error: "ScriptNotFoundError", message: `no "${this.scriptName}" script in package.json` };
     }
     const pm = await detectPackageManager(this.root);
-    return runScript(this.root, pm, this.scriptName);
+    return runScript(this.root, pm, this.scriptName, this.runner);
   }
 }
 

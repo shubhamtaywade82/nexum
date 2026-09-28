@@ -1,8 +1,14 @@
-import { spawn } from "node:child_process";
 import { Tool } from "../../tools/tool.js";
+import { assertNotOption, runCommand, type CommandRunner } from "../../tools/command-runner.js";
+
+const RSPEC_FORMATS = new Set(["progress", "documentation", "json", "junit"]);
 
 export class RunRSpecTool extends Tool {
-  constructor(private readonly root: string) {
+  /** `runner` executes RSpec (the Docker sandbox when enabled); without one it runs on the host. */
+  constructor(
+    private readonly root: string,
+    private readonly runner?: CommandRunner,
+  ) {
     super();
   }
 
@@ -40,42 +46,38 @@ export class RunRSpecTool extends Tool {
     const line = args.line as number | undefined;
     const format = (args.format as string) || "documentation";
 
+    try {
+      assertNotOption(target, "path");
+    } catch (e) {
+      return { error: "ArgumentError", message: (e as Error).message };
+    }
+    if (!RSPEC_FORMATS.has(format)) {
+      return { error: "ArgumentError", message: `format must be one of ${[...RSPEC_FORMATS].join(", ")}` };
+    }
+
     const rspecArgs = ["exec", "rspec", "--format", format];
     if (target) {
       rspecArgs.push(line ? `${target}:${line}` : target);
     }
 
-    return new Promise((resolvePromise) => {
-      const child = spawn("bundle", rspecArgs, {
-        cwd: this.root,
-        timeout: 120_000,
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (c: Buffer) => (stdout += c.toString()));
-      child.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
-      child.on("close", (exitCode) => {
-        const summary = parseRSpecSummary(stdout, stderr);
-        resolvePromise({
-          command: `bundle exec rspec --format ${format}${target ? ` ${target}${line ? `:${line}` : ""}` : ""}`,
-          exitCode: exitCode ?? -1,
-          stdout,
-          stderr,
-          ...summary,
-        });
-      });
-      child.on("error", (err) =>
-        resolvePromise({
-          exitCode: -1,
-          stdout: "",
-          stderr: err.message,
-          examples: 0,
-          failures: 0,
-          pending: 0,
-          duration: 0,
-        }),
-      );
+    const outcome = await runCommand({
+      root: this.root,
+      bin: "bundle",
+      args: rspecArgs,
+      timeoutSec: 120,
+      hostTimeoutMs: 120_000,
+      runner: this.runner,
     });
+    if (outcome.exitCode === -1 && !outcome.stdout) {
+      return { exitCode: -1, stdout: "", stderr: outcome.stderr, examples: 0, failures: 0, pending: 0, duration: 0 };
+    }
+    return {
+      command: `bundle exec rspec --format ${format}${target ? ` ${target}${line ? `:${line}` : ""}` : ""}`,
+      exitCode: outcome.exitCode,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      ...parseRSpecSummary(outcome.stdout, outcome.stderr),
+    };
   }
 }
 
