@@ -89,7 +89,11 @@ export interface AgentEvents {
   onPlanUpdate?: (goal: string, steps: PlanStep[], status: "running" | "completed" | "failed") => void;
   onApprovalRequested?: (request: ApprovalRequest) => void;
   onClarificationRequested?: (request: ClarificationRequest) => void;
-  onModelUsed?: (tier: string, model: string) => void;
+  onModelUsed?: (
+    tier: string,
+    model: string,
+    usage?: { promptTokens: number; completionTokens: number; latencyMs: number },
+  ) => void;
   /** Whole-mission phase system (see runtime/mission-derive.ts): a new mission
    * begins, a phase's status changes, or a live plan step transitions. */
   onMissionStarted?: (goal: string) => void;
@@ -685,8 +689,14 @@ export class Agent {
         // provider's own current tier/model there.
         const routedTier = (response.routedTier as string | undefined) ?? this.stack.provider.currentTier;
         const routedModel = (response.routedModel as string | undefined) ?? this.stack.provider.currentModel;
-        this.emit("onModelUsed", routedTier, routedModel);
-        this.emitUsage(response, elapsedMs);
+        const usage = this.readUsage(response);
+        this.emit(
+          "onModelUsed",
+          routedTier,
+          routedModel,
+          usage && { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, latencyMs: elapsedMs },
+        );
+        if (usage) this.emit("onUsage", { ...usage, latencyMs: elapsedMs });
       },
 
       prepareToolCall: (call) => {
@@ -1037,21 +1047,18 @@ export class Agent {
   // Ollama's /api/chat response carries eval_count/prompt_eval_count/eval_duration
   // (nanoseconds) untyped through ChatResponse's index signature — read them here
   // rather than widening the shared type for fields only this call site needs.
-  private emitUsage(response: { [key: string]: unknown }, latencyMs: number): void {
+  private readUsage(response: {
+    [key: string]: unknown;
+  }): { promptTokens: number; completionTokens: number; tokensPerSecond: number } | undefined {
     const promptTokens = response.prompt_eval_count as number | undefined;
     const completionTokens = response.eval_count as number | undefined;
     const evalDurationNs = response.eval_duration as number | undefined;
-    if (typeof promptTokens !== "number" && typeof completionTokens !== "number") return;
+    if (typeof promptTokens !== "number" && typeof completionTokens !== "number") return undefined;
     const tokensPerSecond =
       typeof completionTokens === "number" && typeof evalDurationNs === "number" && evalDurationNs > 0
         ? completionTokens / (evalDurationNs / 1e9)
         : 0;
-    this.emit("onUsage", {
-      promptTokens: promptTokens ?? 0,
-      completionTokens: completionTokens ?? 0,
-      tokensPerSecond,
-      latencyMs,
-    });
+    return { promptTokens: promptTokens ?? 0, completionTokens: completionTokens ?? 0, tokensPerSecond };
   }
 
   getRegistry() {

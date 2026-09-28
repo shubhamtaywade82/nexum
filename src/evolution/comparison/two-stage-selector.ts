@@ -216,12 +216,12 @@ export class TwoStageSelector {
         {
           check: "held_out_improvement",
           passed: heldOutImprovement,
-          detail: `held-out gain ${fmtDelta(heldOutGain)}`,
+          detail: `held-out gain ${fmtDelta(heldOutGain)}${input.heldOutGain === undefined ? " (proxy: generalization delta)" : ""}`,
         },
         {
           check: "transfer_evidence",
           passed: transferEvidence,
-          detail: `transfer gain ${fmtDelta(transferGain)}`,
+          detail: `transfer gain ${fmtDelta(transferGain)}${input.transferGain === undefined ? " (proxy: generalization delta — transfer not measured)" : ""}`,
         },
         {
           check: "acceptable_cost",

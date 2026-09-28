@@ -456,19 +456,20 @@ export class ClosedLoopEngine {
     this.metrics.record({
       versionId: input.candidateHarnessId,
       parentVersionId: input.parentHarnessId,
-      visibleGain: twoStage.stageB?.deltas.capability ?? 0,
+      visibleGain: twoStage.stageB?.deltas.capability ?? null,
       heldOutGain: candidateMetrics.generalization.heldOutScore - baselineMetrics.generalization.heldOutScore,
       transferGain: candidateMetrics.generalization.transferScore - baselineMetrics.generalization.transferScore,
       promoted: eligible,
+      // Without a generalization gate there is no independent held-out verdict — "unknown", not "eligible".
       genuinelyBetterOnHeldOut:
         generalization === null
-          ? eligible
+          ? "unknown"
           : generalization.generalized && (twoStage.stageB?.deltas.generalization ?? 0) > 0,
       accepted: false,
       rolledBack: false,
       retainedBySuccessor: "unknown",
       executorModels: [...this.executorModels],
-      executorSensitivity: generalization?.executorSensitivity ?? 0,
+      executorSensitivity: generalization?.executorSensitivity ?? null,
     });
 
     const experiment = this.experiments.record(input.experimentId);

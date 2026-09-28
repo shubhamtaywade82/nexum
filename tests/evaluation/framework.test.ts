@@ -256,6 +256,37 @@ describe("observeExecution", () => {
     expect(observation.modelCalls).toHaveLength(1);
     expect(observation.turns).toBe(3); // max(reasoning=1, toolCalls=3)
   });
+
+  it("carries provider-reported token usage from model.answered", () => {
+    const observation = observeExecution({
+      scenario: scenario(),
+      runId: "r1",
+      agentId: "devagent",
+      status: "completed",
+      output: "done",
+      events: [
+        {
+          type: "model.answered",
+          tier: "local",
+          model: "qwen3",
+          promptTokens: 120,
+          completionTokens: 30,
+          latencyMs: 900,
+        },
+        { type: "model.answered", tier: "cloud", model: "gpt-oss", promptTokens: 200, completionTokens: 50 },
+      ],
+      startedAt: 0,
+      elapsedMs: 100,
+    });
+    expect(observation.modelCalls[0]).toEqual({
+      model: "qwen3",
+      tier: "local",
+      promptTokens: 120,
+      completionTokens: 30,
+      latencyMs: 900,
+    });
+    expect(observation.totalTokens).toBe(400);
+  });
 });
 
 describe("EvaluationRunner", () => {
