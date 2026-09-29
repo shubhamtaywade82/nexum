@@ -6,6 +6,7 @@
  */
 
 import { PlanStep } from "../orchestration/types.js";
+import type { McpElicitationRequest } from "../core/user-input.js";
 
 /** The always-alive actors. Every subsystem is one of these. */
 export type ActorId =
@@ -126,7 +127,7 @@ export const PRIMARY_VIEW_LABELS: Record<(typeof PRIMARY_VIEWS)[number], string>
 };
 
 /** Runtime mode drives the Context Strip contents. */
-export type RuntimeMode = "idle" | "planning" | "editing" | "testing" | "approval" | "clarification" | "streaming";
+export type RuntimeMode = "idle" | "planning" | "editing" | "testing" | "approval" | "clarification" | "elicitation" | "streaming";
 
 /** Agent operational modes — controls what the agent is allowed to do. */
 export type AgentMode = "ask" | "code" | "architect" | "review" | "debug" | "autonomous";
@@ -495,6 +496,7 @@ export interface RuntimeState {
   diagnosticsByPath: Record<string, number>;
   approval: ApprovalRequest | null;
   clarification: ClarificationRequest | null;
+  mcpElicitation: McpElicitationRequest | null;
   notifications: Notification[];
   lastError: string | null;
   theme: ThemeName;

@@ -63,6 +63,7 @@ import { createExecutionContext } from "../runtime/context/execution-context.js"
 import type { ExecutionRequest } from "../core/types.js";
 import type { StrategyHooks } from "../runtime/strategies/strategy-hooks.js";
 import { AgentConversationContext } from "./agent-conversation-context.js";
+import type { McpElicitationRequest, McpElicitationResponse } from "../core/user-input.js";
 
 // Confirmation gate for irreversible actions lives in the kernel now
 // (src/kernel/policy/approval-broker.ts): the classification table and the
@@ -90,6 +91,7 @@ export interface AgentEvents {
   onPlanUpdate?: (goal: string, steps: PlanStep[], status: "running" | "completed" | "failed") => void;
   onApprovalRequested?: (request: ApprovalRequest) => void;
   onClarificationRequested?: (request: ClarificationRequest) => void;
+  onMcpElicitationRequested?: (request: McpElicitationRequest) => void;
   onModelUsed?: (
     tier: string,
     model: string,
@@ -211,9 +213,12 @@ export class Agent {
       autoApprove: cfg.autoApprove ?? false,
       onApprovalRequested: (request) => this.emit("onApprovalRequested", request),
       onClarificationRequested: (request) => this.emit("onClarificationRequested", request),
+      onMcpElicitationRequested: (request) => this.emit("onMcpElicitationRequested", request),
       hasApprovalListener: () => !!this.events.onApprovalRequested || !!this.listeners.get("onApprovalRequested")?.size,
       hasClarificationListener: () =>
         !!this.events.onClarificationRequested || !!this.listeners.get("onClarificationRequested")?.size,
+      hasMcpElicitationListener: () =>
+        !!this.events.onMcpElicitationRequested || !!this.listeners.get("onMcpElicitationRequested")?.size,
     });
 
     this.conversation = new AgentConversation();
@@ -912,6 +917,14 @@ export class Agent {
     return this.approvals.requestClarification(request);
   }
 
+  async requestMcpElicitation(request: McpElicitationRequest): Promise<McpElicitationResponse> {
+    return this.approvals.requestMcpElicitation(request);
+  }
+
+  resolveMcpElicitation(response: McpElicitationResponse): void {
+    this.approvals.resolveMcpElicitation(response);
+  }
+
   resolveClarification(response: ClarificationResponse): void {
     this.approvals.resolveClarification(response);
   }
@@ -1112,7 +1125,10 @@ export class Agent {
   }
 
   async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<void> {
-    await this.tools.registerMcpServer(command, args, opts);
+    await this.tools.registerMcpServer(command, args, {
+      ...opts,
+      elicitation: opts.elicitation ?? { request: (request) => this.requestMcpElicitation(request) },
+    });
   }
 
   /** Connects every MCP server listed in config.mcpServers, one at a time
@@ -1127,6 +1143,7 @@ export class Agent {
         const tools = await this.tools.registerMcpServer(server.command, server.args ?? [], {
           serverName: server.name,
           ...(this.mcpTrust ? { trust: this.mcpTrust } : {}),
+          elicitation: { request: (request) => this.requestMcpElicitation(request) },
         });
         results.push({
           name: server.name,

@@ -127,6 +127,9 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
   agent.on("onClarificationRequested", (request: ClarificationRequest) => {
     bus.publish({ type: "clarification.requested", request });
   });
+  agent.on("onMcpElicitationRequested", (request) => {
+    bus.publish({ type: "mcp.elicitation.requested", request });
+  });
   agent.on(
     "onModelUsed",
     (tier: string, model: string, usage?: { promptTokens: number; completionTokens: number; latencyMs: number }) => {

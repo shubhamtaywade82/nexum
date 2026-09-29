@@ -16,6 +16,24 @@
  *   ollama-sdk → Nexum Core (this package's planes) → DevAgent / CryptoAgent
  */
 
+// ── MCP elicitation / user-input contracts
+export type {
+  McpElicitationMode,
+  McpElicitationAction,
+  McpElicitationValue,
+  McpElicitationOneOf,
+  McpElicitationFieldSchema,
+  McpElicitationFormSchema,
+  McpElicitationRequest,
+  McpElicitationResponse,
+  McpElicitationHandler,
+} from "./core/user-input.js";
+export {
+  validateMcpElicitationRequest,
+  validateMcpElicitationForm,
+  normalizeMcpElicitationResponse,
+} from "./core/user-input.js";
+
 // ── Stable runtime primitives ───────────────────────────────────────────────
 export type {
   AgentRuntime,
