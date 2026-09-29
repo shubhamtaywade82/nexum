@@ -36,6 +36,8 @@ export interface CliConfig {
   sandbox?: boolean;
   /** Absolute directory file-mutating tools are confined to (inside workspaceRoot). Unset = the whole workspace. */
   writeScope?: string;
+  /** Mount the host `docker` tool (daemon access is root-equivalent; default off). */
+  dockerTool?: boolean;
   languages?: Record<string, LanguageOverride>;
   lsp?: LspCliConfig;
   toolSelectionMode?: "heuristic" | "llm" | "hybrid";
@@ -114,6 +116,7 @@ interface ConfigFile {
   sandbox?: boolean;
   /** Write scope, relative to the workspace root (or absolute). */
   writeScope?: string;
+  dockerTool?: boolean;
   toolSelectionMode?: string;
   maxActiveTools?: number;
   apiKeys?: string[];
@@ -345,6 +348,7 @@ export function loadConfig(): CliConfig {
     shellImage: readEnv("SHELL_IMAGE") || file.shellImage,
     shellTimeoutSec,
     sandbox: readEnvFlag("SANDBOX", file.sandbox ?? true),
+    dockerTool: readEnvFlag("DOCKER_TOOL", file.dockerTool ?? false),
     writeScope: resolveWriteScope(readEnv("WRITE_SCOPE") || file.writeScope, workspaceRoot),
     toolSelectionMode,
     maxActiveTools,

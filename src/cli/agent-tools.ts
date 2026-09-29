@@ -117,6 +117,7 @@ export class AgentToolManager {
     onOutput?: ToolOnOutput,
     shellOpts?: { sandbox?: boolean; image?: string; timeoutSec?: number },
     fsOpts?: Omit<WorkspaceGuardOptions, "root">,
+    opts: { dockerTool?: boolean } = {},
   ): void {
     // One filesystem boundary for every file-touching pack.
     const guard = new WorkspaceGuard({ root, protectSensitiveReads: true, ...fsOpts });
@@ -129,7 +130,8 @@ export class AgentToolManager {
     const runner = new ShellTool({ workspaceRoot: root, ...shellOpts, writeScope });
     this.registerToolPack(projectPack(root, runner));
     this.registerToolPack(rubyPack(root, runner));
-    this.registerToolPack(dockerPack(root));
+    // Docker daemon access is root-equivalent on the host: opt-in only.
+    if (opts.dockerTool) this.registerToolPack(dockerPack(root));
     this.registerToolPack(databasePack(guard));
     // Default-on intelligence layer (semantic memory; RAG joins in the same
     // seam): every product agent gets durable semantic memory unless the
