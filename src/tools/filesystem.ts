@@ -1,9 +1,10 @@
-import { readFile, writeFile, rename, unlink, mkdir, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { Tool } from "./tool.js";
 import { guardPath, toGuard, PathEscapeError, SensitivePathError, type WorkspaceBoundary } from "./path-utils.js";
 import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
+import { readVerified, writeVerified } from "./verified-fs.js";
 
 export { PathEscapeError, SensitivePathError };
 
@@ -48,12 +49,11 @@ export class ReadFileTool extends Tool {
 
   async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const relPath = args.path as string;
-    const path = guardPath(this.guard, "read", relPath);
 
     // Read as bytes and cut on a byte boundary, then decode — slicing the
     // decoded string would count UTF-16 code units against a byte budget and
     // could split a multi-byte character.
-    const raw = await readFile(path);
+    const raw = await readVerified(this.guard, "read", relPath);
     const totalBytes = raw.byteLength;
     const truncated = totalBytes > ReadFileTool.MAX_CONTENT_BYTES;
     const slice = truncated ? raw.subarray(0, ReadFileTool.MAX_CONTENT_BYTES) : raw;
@@ -111,19 +111,7 @@ export class WriteFileTool extends Tool {
     const content = args.content as string;
     const path = guardPath(this.guard, "write", relPath);
     await mkdir(dirname(path), { recursive: true });
-
-    const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
-    try {
-      await writeFile(tmp, content, "utf-8");
-      await rename(tmp, path);
-      return { path: relPath, bytesWritten: Buffer.byteLength(content, "utf-8") };
-    } finally {
-      try {
-        await stat(tmp);
-        await unlink(tmp);
-      } catch {
-        // tmp already gone (rename succeeded) — nothing to clean up
-      }
-    }
+    await writeVerified(this.guard, relPath, content);
+    return { path: relPath, bytesWritten: Buffer.byteLength(content, "utf-8") };
   }
 }

@@ -1,7 +1,8 @@
-import { readdir, stat, rm, mkdir, copyFile, rename } from "node:fs/promises";
+import { readdir, stat, rm, mkdir, rename } from "node:fs/promises";
 import { resolve, relative } from "node:path";
 import { Tool } from "./tool.js";
-import { guardPath, toGuard, type WorkspaceBoundary } from "./path-utils.js";
+import { guardPath, toGuard, PathEscapeError, SensitivePathError, type WorkspaceBoundary } from "./path-utils.js";
+import { readVerified, revalidate, writeVerified } from "./verified-fs.js";
 import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
 
 export class ListDirectoryTool extends Tool {
@@ -69,6 +70,7 @@ export class DeleteFileTool extends Tool {
     const path = args.path as string;
     if (!path) return { error: "ArgumentError", message: "missing path" };
     const target = guardPath(this.guard, "delete", path);
+    await revalidate(this.guard, "delete", path, target);
     try {
       await rm(target, { recursive: true, force: true });
     } catch (e) {
@@ -98,6 +100,7 @@ export class MakeDirectoryTool extends Tool {
     const path = args.path as string;
     if (!path) return { error: "ArgumentError", message: "missing path" };
     const target = guardPath(this.guard, "mkdir", path);
+    await revalidate(this.guard, "mkdir", path, target);
     try {
       await mkdir(target, { recursive: true });
     } catch (e) {
@@ -131,11 +134,12 @@ export class CopyFileTool extends Tool {
     const source = args.source as string;
     const destination = args.destination as string;
     if (!source || !destination) return { error: "ArgumentError", message: "source and destination are required" };
-    const src = guardPath(this.guard, "copy", source);
-    const dest = guardPath(this.guard, "write", destination);
+    guardPath(this.guard, "copy", source);
+    guardPath(this.guard, "write", destination);
     try {
-      await copyFile(src, dest);
+      await writeVerified(this.guard, destination, await readVerified(this.guard, "copy", source));
     } catch (e) {
+      if (e instanceof PathEscapeError || e instanceof SensitivePathError) throw e;
       return { error: e instanceof Error ? e.name : "Error", message: e instanceof Error ? e.message : String(e) };
     }
     return { source, destination, copied: true };
@@ -168,6 +172,8 @@ export class MoveFileTool extends Tool {
     if (!source || !destination) return { error: "ArgumentError", message: "source and destination are required" };
     const src = guardPath(this.guard, "move", source);
     const dest = guardPath(this.guard, "write", destination);
+    await revalidate(this.guard, "move", source, src);
+    await revalidate(this.guard, "write", destination, dest);
     try {
       await rename(src, dest);
     } catch (e) {

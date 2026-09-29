@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { join, posix, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
-import { isSensitivePath } from "../safety/path-policy.js";
+import { findSensitivePaths, SensitiveScanLimitError, type SensitiveEntry } from "../core/fs/sensitive-scan.js";
 import { Tool } from "./tool.js";
 import { BRAND } from "../platform/brand.js";
 import type { ToolCallContext } from "../core/tools/tool-contract.js";
@@ -30,11 +30,6 @@ export interface ShellToolOptions {
    */
   writeScope?: string;
 }
-
-/** Directories never scanned for secrets (dependency/build trees, VCS). */
-const SCAN_SKIP_DIRS = new Set([".git", "node_modules", "vendor", ".venv", "venv", "dist", "build", "target", ".next"]);
-/** Workspace entries scanned for secrets per run before failing closed. */
-const MAX_SCAN_ENTRIES = 100_000;
 
 export class SandboxScanError extends Error {
   constructor(message: string) {
@@ -430,7 +425,18 @@ export class ShellTool extends Tool {
       }
     }
 
-    for (const secret of findSensitivePaths(root)) {
+    let secrets: SensitiveEntry[];
+    try {
+      secrets = findSensitivePaths(root);
+    } catch (e) {
+      if (e instanceof SensitiveScanLimitError) {
+        throw new SandboxScanError(
+          `workspace has more than ${e.limit} entries; refusing to start the sandbox without a complete secret scan`,
+        );
+      }
+      throw e;
+    }
+    for (const secret of secrets) {
       const target = toContainer(secret.path);
       if (secret.dir) {
         args.push(
@@ -456,39 +462,4 @@ function realOrResolved(p: string): string {
 function isWithin(root: string, p: string): boolean {
   const rel = relative(root, p);
   return rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep));
-}
-
-/**
- * Sensitive files/directories under the workspace (symlinks are not followed
- * or masked: a link to a masked secret resolves to the mask inside the
- * container, and a link out of the workspace has no target there).
- */
-function findSensitivePaths(root: string): Array<{ path: string; dir: boolean }> {
-  const found: Array<{ path: string; dir: boolean }> = [];
-  let scanned = 0;
-  const walk = (dir: string) => {
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (++scanned > MAX_SCAN_ENTRIES) {
-        throw new SandboxScanError(
-          `workspace has more than ${MAX_SCAN_ENTRIES} entries; refusing to start the sandbox without a complete secret scan`,
-        );
-      }
-      const full = join(dir, entry.name);
-      const rel = relative(root, full);
-      if (entry.isDirectory()) {
-        if (isSensitivePath(`${rel}${sep}`)) found.push({ path: full, dir: true });
-        else if (!SCAN_SKIP_DIRS.has(entry.name)) walk(full);
-      } else if (entry.isFile() && isSensitivePath(rel)) {
-        found.push({ path: full, dir: false });
-      }
-    }
-  };
-  walk(root);
-  return found;
 }

@@ -29,6 +29,7 @@
 import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isSensitivePath } from "../../safety/path-policy.js";
+import { findSensitivePaths, SensitiveScanLimitError, type SensitiveEntry } from "./sensitive-scan.js";
 
 export type FsOperation =
   | "read"
@@ -189,6 +190,32 @@ export class WorkspaceGuard {
         code: "sensitive_path",
         message: `${relativePath} is inside .git/ — git internals are changed through git, not file tools`,
       };
+    }
+
+    // deleting a directory must not take protected files with it
+    if (op === "delete" && existsSync(resolvedPath) && lstatSync(resolvedPath).isDirectory()) {
+      let inside: SensitiveEntry[];
+      try {
+        inside = findSensitivePaths(this.rootReal, resolvedPath);
+      } catch (e) {
+        if (!(e instanceof SensitiveScanLimitError)) throw e;
+        return {
+          allowed: false,
+          code: "sensitive_path",
+          message: `${relativePath} is too large to check for protected files (>${e.limit} entries); delete it outside the agent`,
+        };
+      }
+      if (inside.length > 0) {
+        const sample = inside
+          .slice(0, 3)
+          .map((f) => relative(this.rootReal, f.path))
+          .join(", ");
+        return {
+          allowed: false,
+          code: "sensitive_path",
+          message: `${relativePath} contains protected credential/secret files (${sample}${inside.length > 3 ? ", …" : ""})`,
+        };
+      }
     }
 
     // extra deny patterns
