@@ -13,6 +13,8 @@
  * the transport supports them.
  */
 
+import { randomUUID } from "node:crypto";
+
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -21,6 +23,8 @@ import {
   type Transport,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import type { McpElicitationHandler, McpElicitationRequest } from "../../core/user-input.js";
+import { normalizeMcpElicitationResponse, validateMcpElicitationRequest } from "../../core/user-input.js";
 
 /** Where a server runs and how to reach it. */
 export type McpTransportDescriptor =
@@ -67,6 +71,8 @@ export interface ConnectMcpServerOptions {
     externalMutation: boolean;
   }>;
   signal?: AbortSignal;
+  /** Handles server-initiated MCP elicitation/create requests. */
+  elicitation?: McpElicitationHandler;
 }
 
 function descriptorId(descriptor: McpTransportDescriptor): string {
@@ -124,7 +130,36 @@ export async function connectMcpServerV2(
   opts: ConnectMcpServerOptions = {},
 ): Promise<McpServerConnection> {
   const transport = buildTransport(descriptor);
-  const client = new Client(opts.clientInfo ?? { name: "nexum", version: "2.0.0" }, { capabilities: {} });
+  const serverId = opts.serverId ?? descriptorId(descriptor);
+  const client = new Client(
+    opts.clientInfo ?? { name: "nexum", version: "2.0.0" },
+    { capabilities: opts.elicitation ? { elicitation: { form: {}, url: {} } } : {} },
+  );
+
+  if (opts.elicitation) {
+    client.setRequestHandler("elicitation/create", async (request) => {
+      const params = request.params as {
+        mode?: "form" | "url";
+        message?: string;
+        requestedSchema?: Record<string, unknown>;
+        url?: string;
+      };
+      const elicitation: McpElicitationRequest = {
+        id: "mcp-elicit-" + randomUUID(),
+        serverId,
+        mode: params.mode === "url" ? "url" : "form",
+        message: String(params.message ?? ""),
+        ...(params.requestedSchema
+          ? { requestedSchema: params.requestedSchema as McpElicitationRequest["requestedSchema"] }
+          : {}),
+        ...(params.url ? { url: params.url } : {}),
+      };
+      const problems = validateMcpElicitationRequest(elicitation);
+      if (problems.length) throw new Error("invalid MCP elicitation request: " + problems.join("; "));
+      const response = await opts.elicitation.request(elicitation);
+      return normalizeMcpElicitationResponse(response);
+    });
+  }
   await client.connect(transport);
 
   if (opts.signal?.aborted) {
@@ -134,7 +169,7 @@ export async function connectMcpServerV2(
 
   const { tools } = await client.listTools();
   return {
-    serverId: opts.serverId ?? descriptorId(descriptor),
+    serverId,
     descriptor,
     client,
     tools: tools.map(normalizeTool),
