@@ -15,31 +15,42 @@
  *   NpmMarketplaceSource   — query npm registry for @nexum-plugin/* packages
  *   GitMarketplaceSource   — clone a git repo (read-only)
  *
- * Installation:
- *   - Plugin is downloaded to `.nexum/plugins/cache/<id>@<version>/`
- *   - Integrity is verified (sha256 from manifest)
- *   - Publisher signatures are verified when a `MarketplaceInstallPolicy`
- *     is configured (see ./trust.ts); tampered signatures always reject
- *   - Plugin is registered in `.nexum/plugins/installed.json`
- *   - On next host startup, the PluginLoader picks it up
+ * Installation (`install`):
+ *   - The publisher signature is checked BEFORE download. By default
+ *     (`signatures: "require"`) the entry must be signed by a key in the
+ *     trust store and carry a sha256; see ./trust.ts
+ *   - The artifact is downloaded to `.nexum/plugins/cache/<id>@<version>/`
+ *     and its sha256 verified
+ *   - The artifact is unpacked with the strict extractor in ./tar.ts and its
+ *     `package.json` validated (id, version, entry module, permissions)
+ *   - The record, including the signed entry, goes to `installed.json`
  *
- * This module is intentionally network-light: heavy operations (git clone,
- * npm install) are stubbed and ready for future implementation.
+ * Activation (`activate`):
+ *   - Signature (against the CURRENT trust store: removing a key revokes
+ *     its plugins) and artifact hash are re-checked
+ *   - The artifact is unpacked into a fresh private temp directory and the
+ *     plugin runs from there in a separate Node process under the permission
+ *     model (IsolatedPluginSandbox, transport "process"): it can read only
+ *     its own files, cannot write, spawn processes or load native addons,
+ *     and reaches the host only through the policy-checked capability bridge
+ *   - Nothing activates plugins automatically; the embedding host calls
+ *     `activate()` and registers the result on its PluginHost
  */
 
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
   renameSync,
   readdirSync,
   rmSync,
-  statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, extname } from "node:path";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
@@ -48,6 +59,13 @@ import {
   type MarketplaceInstallPolicy,
   type SignatureVerification,
 } from "./trust.js";
+import { extractTar, packDirectory } from "./tar.js";
+import {
+  IsolatedPluginSandbox,
+  type IsolatedPlugin,
+  type IsolatedPluginSandboxOptions,
+  type PluginSandboxPolicy,
+} from "../platform/plugins/sandbox.js";
 
 export type { MarketplaceInstallPolicy } from "./trust.js";
 
@@ -107,7 +125,37 @@ export interface InstalledPlugin {
   trustScore?: number;
   /** Verified publisher name (when the signature resolved to one). */
   publisher?: string;
+  /** The catalog entry as installed, signature included (re-verified on activation). */
+  entry?: MarketplaceEntry;
+  /** Entry module, relative to the package root. */
+  main?: string;
+  /** Capability permissions the package declares (`nexum.permissions`). */
+  permissions?: PluginPermissions;
 }
+
+/** What a plugin package asks to do on the host's capability bridge. */
+export interface PluginPermissions {
+  provide?: string[];
+  lookup?: string[];
+  declare?: string[];
+}
+
+export interface ActivateOptions {
+  /**
+   * Capability policy for the running plugin. Default: the permissions the
+   * package declared (shown on the install record), nothing more.
+   */
+  policy?: PluginSandboxPolicy;
+  /** Sandbox options (timeouts, heap limit, logger). */
+  sandbox?: Omit<IsolatedPluginSandboxOptions, "transport" | "readRoot" | "policy" | "onExit">;
+}
+
+/** Name of the downloaded artifact: a tar archive, gzip-compressed or not. */
+export const ARTIFACT_FILE = "plugin.artifact";
+
+const PLUGIN_ID_RE = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
+const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+-]*$/;
+const MAIN_EXTENSIONS = new Set([".js", ".mjs", ".cjs"]);
 
 export interface MarketplaceSource {
   readonly id: string;
@@ -128,7 +176,7 @@ export interface MarketplaceServiceOptions {
   inMemory?: boolean;
   /** Marketplace sources. */
   sources?: MarketplaceSource[];
-  /** Signature / trust enforcement applied on every install (default "warn"). */
+  /** Signature / trust enforcement applied on every install and activation (default "require"). */
   installPolicy?: MarketplaceInstallPolicy;
 }
 
@@ -209,40 +257,48 @@ export class MarketplaceService {
       throw new Error(`marketplace source "${entry.source}" not registered`);
     }
 
-    const installDir = join(this.cacheDir, `${entry.id}@${entry.version}`);
+    assertEntryShape(entry);
+    const installDir = join(this.cacheDir, `${encodeURIComponent(entry.id)}@${entry.version}`);
     if (existsSync(installDir)) {
       // Already installed — return existing record.
       const existing = this.cache.get(`${entry.id}@${entry.version}`);
-      if (existing) return existing;
+      if (existing?.entry && existing.sha256 === entry.sha256) return existing;
     }
 
     // ── Trust gate (publisher signatures) ─────────────────────────────
     // Runs BEFORE any download: an untrusted entry must not touch the disk.
     const verification = this.checkInstallPolicy(entry);
 
+    rmSync(installDir, { recursive: true, force: true });
     mkdirSync(installDir, { recursive: true });
-    const artifactPath = join(installDir, "plugin.tar.gz");
-    await source.download(entry, artifactPath);
-
-    // Verify integrity.
-    if (entry.sha256) {
+    const artifactPath = join(installDir, ARTIFACT_FILE);
+    let pkg: PluginPackage;
+    try {
+      await source.download(entry, artifactPath);
       const actual = sha256File(artifactPath);
-      if (actual !== entry.sha256) {
-        rmSync(installDir, { recursive: true, force: true });
+      if (entry.sha256 && actual !== entry.sha256) {
         throw new Error(`integrity check failed: expected ${entry.sha256}, got ${actual}`);
       }
+      // Unpack once to validate the package; activation unpacks a fresh copy.
+      pkg = withExtracted(artifactPath, (dir) => readPluginPackage(dir, entry));
+    } catch (err) {
+      rmSync(installDir, { recursive: true, force: true });
+      throw err;
     }
 
     const record: InstalledPlugin = {
       id: entry.id,
       version: entry.version,
       path: installDir,
-      sha256: entry.sha256,
+      sha256: sha256File(artifactPath),
       installedAt: new Date().toISOString(),
       source: entry.source,
       verification,
       trustScore: verification ? computeTrustScore(entry, verification) : undefined,
       publisher: verification?.publisher ?? entry.publisher,
+      entry,
+      main: pkg.main,
+      permissions: pkg.permissions,
     };
     this.cache.set(`${entry.id}@${entry.version}`, record);
     this.persistIndex();
@@ -293,7 +349,7 @@ export class MarketplaceService {
   verifyInstalled(id: string, version?: string): { ok: boolean; reason?: string } {
     const record = this.getInstalled(id, version);
     if (!record) return { ok: false, reason: "not installed" };
-    const artifact = join(record.path, "plugin.tar.gz");
+    const artifact = join(record.path, ARTIFACT_FILE);
     if (!existsSync(artifact)) {
       return { ok: false, reason: `artifact missing: ${artifact}` };
     }
@@ -306,6 +362,60 @@ export class MarketplaceService {
     return { ok: true };
   }
 
+  /**
+   * Load an installed plugin into a permission-restricted Node process (see
+   * module doc). Re-checks the signature against the current trust store and
+   * the artifact hash first; the returned plugin is registered on a
+   * PluginHost by the caller. The private copy is deleted when the plugin
+   * process exits (stop / terminate).
+   */
+  async activate(id: string, version?: string, opts: ActivateOptions = {}): Promise<IsolatedPlugin> {
+    const record = this.getInstalled(id, version);
+    if (!record) throw new Error(`plugin "${id}" is not installed`);
+    if (!record.entry || !record.main) {
+      throw new Error(`plugin "${record.id}@${record.version}" was installed by an older version; reinstall it`);
+    }
+    const entry = record.entry;
+    assertEntryShape(entry);
+    if (entry.id !== record.id || entry.version !== record.version) {
+      throw new Error(`install record for "${record.id}@${record.version}" does not match its entry`);
+    }
+    this.checkInstallPolicy(entry);
+    const integrity = this.verifyInstalled(record.id, record.version);
+    if (!integrity.ok) throw new Error(`refusing to activate "${record.id}": ${integrity.reason}`);
+    const artifactPath = join(record.path, ARTIFACT_FILE);
+    const artifact = readFileSync(artifactPath);
+    const hash = createHash("sha256").update(artifact).digest("hex");
+    if (entry.sha256 && hash !== entry.sha256) {
+      throw new Error(`refusing to activate "${record.id}": artifact does not match the signed sha256`);
+    }
+
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "nexum-plugin-")));
+    const cleanup = () => rmSync(dir, { recursive: true, force: true });
+    try {
+      extractTar(artifact, dir);
+      const pkg = readPluginPackage(dir, entry);
+      const plugin = await IsolatedPluginSandbox.load(join(dir, ...pkg.main.split("/")), {
+        ...opts.sandbox,
+        transport: "process",
+        readRoot: dir,
+        policy: opts.policy ?? { ...pkg.permissions },
+        onExit: cleanup,
+      });
+      if (plugin.manifest.id !== record.id || plugin.manifest.version !== record.version) {
+        await plugin.sandbox.terminate();
+        throw new Error(
+          `plugin module declares ${plugin.manifest.id}@${plugin.manifest.version}, ` +
+            `installed as ${record.id}@${record.version}`,
+        );
+      }
+      return plugin;
+    } catch (err) {
+      cleanup();
+      throw err;
+    }
+  }
+
   // ── internals ───────────────────────────────────────────────────────
 
   /**
@@ -315,10 +425,11 @@ export class MarketplaceService {
    * additionally demand presence / publisher trust.
    */
   private checkInstallPolicy(entry: MarketplaceEntry): SignatureVerification | undefined {
-    const mode = this.installPolicy.signatures ?? "warn";
+    const mode = this.installPolicy.signatures ?? "require";
     if (mode === "off") return undefined;
+    const requiresSignature = mode === "require" || mode === "require-verified";
 
-    if (this.installPolicy.requireSha256 && !entry.sha256) {
+    if ((this.installPolicy.requireSha256 || requiresSignature) && !entry.sha256) {
       throw new Error(`install policy rejected "${entry.id}": entry carries no sha256 artifact hash`);
     }
 
@@ -328,6 +439,11 @@ export class MarketplaceService {
     }
     if (mode === "require" && verification.status === "unsigned") {
       throw new Error(`install policy rejected "${entry.id}": entry is unsigned and policy requires signatures`);
+    }
+    if (requiresSignature && verification.status === "valid" && !verification.trustedKey) {
+      throw new Error(
+        `install policy rejected "${entry.id}": signing key "${verification.keyId}" is not in the trust store`,
+      );
     }
     if (mode === "require-verified") {
       if (verification.status === "unsigned") {
@@ -423,8 +539,8 @@ export class HttpMarketplaceSource implements MarketplaceSource {
       throw new Error(`entry "${entry.id}" has no downloadUrl`);
     }
     const response = await fetch(entry.downloadUrl);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    writeFileSync(destPath, buffer);
+    if (!response.ok) throw new Error(`failed to download ${entry.downloadUrl}: HTTP ${response.status}`);
+    writeFileSync(destPath, await boundedBody(response));
   }
 }
 
@@ -596,8 +712,7 @@ export class NpmMarketplaceSource implements MarketplaceSource {
     if (!response.ok) {
       throw new Error(`failed to download tarball: HTTP ${response.status}`);
     }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    writeFileSync(destPath, buffer);
+    writeFileSync(destPath, await boundedBody(response));
   }
 
   private async fetchEntryForPackage(name: string): Promise<MarketplaceEntry | undefined> {
@@ -755,6 +870,10 @@ export class GitMarketplaceSource implements MarketplaceSource {
     // a tarball at destPath.
     const gitUrl = entry.gitUrl ?? this.repoUrl;
     const subDir = entry.downloadUrl ?? ""; // subdirectory within the clone
+    const normalized = posix.normalize(subDir.replace(/\\/g, "/"));
+    if (subDir && (posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../"))) {
+      throw new Error(`entry "${entry.id}": downloadUrl "${subDir}" must be a subdirectory of the repository`);
+    }
     const cloneDir = mkdtempSync(join(tmpdir(), "nexum-mkt-dl-"));
     try {
       const rc = await gitClone(gitUrl, cloneDir, {
@@ -765,15 +884,13 @@ export class GitMarketplaceSource implements MarketplaceSource {
         throw new Error(`git clone failed (exit code ${rc}) for ${gitUrl}`);
       }
       // Locate the subdir within the clone.
-      const srcDir = subDir ? join(cloneDir, subDir) : cloneDir;
-      if (!existsSync(srcDir)) {
+      const srcDir = subDir ? join(cloneDir, ...normalized.split("/")) : cloneDir;
+      if (!existsSync(srcDir) || !lstatSync(srcDir).isDirectory()) {
         throw new Error(`subdirectory "${subDir}" not found in cloned repo`);
       }
-      // Tar the directory to destPath.
-      const tarRc = await runCommand("tar", ["-czf", destPath, "-C", srcDir, "."]);
-      if (tarRc !== 0) {
-        throw new Error(`tar failed (exit code ${tarRc})`);
-      }
+      // Deterministic tar: the same commit always hashes the same, so the
+      // publisher can sign its sha256.
+      writeFileSync(destPath, packDirectory(srcDir));
     } finally {
       try {
         rmSync(cloneDir, { recursive: true, force: true });
@@ -786,7 +903,19 @@ export class GitMarketplaceSource implements MarketplaceSource {
 
 /** Run `git clone <url> <dest>` with optional shallow flag. Returns exit code. */
 function gitClone(url: string, dest: string, opts: { shallow?: boolean; extraArgs?: string[] }): Promise<number> {
-  const args = ["clone", ...(opts.shallow ? ["--depth", "1"] : []), ...(opts.extraArgs ?? []), url, dest];
+  if (url.startsWith("-")) return Promise.reject(new Error(`invalid git URL "${url}"`));
+  // `--` so a catalog-supplied URL can never be read as an option
+  // (--upload-pack=…), and no ext:: transport (runs arbitrary commands).
+  const args = [
+    "-c",
+    "protocol.ext.allow=never",
+    "clone",
+    ...(opts.shallow ? ["--depth", "1"] : []),
+    ...(opts.extraArgs ?? []),
+    "--",
+    url,
+    dest,
+  ];
   return runCommand("git", args);
 }
 
@@ -821,9 +950,6 @@ function isValidEntry(value: unknown): value is MarketplaceEntry {
   return typeof v.id === "string" && typeof v.name === "string" && typeof v.version === "string";
 }
 
-// Re-export `tmpdir` consumer so imports stay used.
-void statSync;
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function sha256File(path: string): string {
@@ -831,4 +957,93 @@ function sha256File(path: string): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-void readdirSync; // keep import
+const MAX_ARTIFACT_BYTES = 100 * 1024 * 1024;
+
+async function boundedBody(response: Response): Promise<Buffer> {
+  const declared = Number(response.headers.get("content-length") ?? 0);
+  if (declared > MAX_ARTIFACT_BYTES) throw new Error(`artifact larger than ${MAX_ARTIFACT_BYTES} bytes`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > MAX_ARTIFACT_BYTES) throw new Error(`artifact larger than ${MAX_ARTIFACT_BYTES} bytes`);
+  return buffer;
+}
+
+/** Ids and versions become directory names: no separators beyond an npm scope, no dot-dot. */
+function assertEntryShape(entry: MarketplaceEntry): void {
+  if (typeof entry.id !== "string" || !PLUGIN_ID_RE.test(entry.id) || entry.id.includes("..")) {
+    throw new Error(`invalid plugin id "${String(entry.id)}"`);
+  }
+  if (typeof entry.version !== "string" || !VERSION_RE.test(entry.version) || entry.version.includes("..")) {
+    throw new Error(`invalid version "${String(entry.version)}" for plugin "${entry.id}"`);
+  }
+}
+
+interface PluginPackage {
+  main: string;
+  permissions: PluginPermissions;
+}
+
+function withExtracted<T>(artifactPath: string, fn: (dir: string) => T): T {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "nexum-plugin-check-")));
+  try {
+    extractTar(readFileSync(artifactPath), dir);
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function stringList(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string" || v === "")) {
+    throw new Error(`package.json nexum.permissions.${field} must be an array of non-empty strings`);
+  }
+  return value as string[];
+}
+
+/**
+ * Validate an unpacked plugin package: `package.json` with a `nexum` object,
+ * id (`nexum.id`, else `name`) and `version` equal to the catalog entry, and
+ * an entry module (`nexum.main`, else `main`, else index.js) that is a
+ * regular .js/.mjs/.cjs file inside the package.
+ */
+export function readPluginPackage(dir: string, entry: Pick<MarketplaceEntry, "id" | "version">): PluginPackage {
+  const pkgPath = join(dir, "package.json");
+  if (!existsSync(pkgPath)) throw new Error(`plugin "${entry.id}": package.json missing from the artifact`);
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    throw new Error(`plugin "${entry.id}": package.json is not valid JSON`);
+  }
+  const nexum = pkg?.nexum as Record<string, unknown> | undefined;
+  if (!nexum || typeof nexum !== "object" || Array.isArray(nexum)) {
+    throw new Error(`plugin "${entry.id}": package.json has no "nexum" object (not a Nexum plugin)`);
+  }
+  const id = typeof nexum.id === "string" ? nexum.id : pkg.name;
+  if (id !== entry.id) throw new Error(`plugin "${entry.id}": package declares id "${String(id)}"`);
+  if (pkg.version !== entry.version) {
+    throw new Error(`plugin "${entry.id}": package version ${String(pkg.version)} != catalog version ${entry.version}`);
+  }
+  const rawMain = [nexum.main, pkg.main, "index.js"].find((m) => typeof m === "string") as string;
+  const main = posix.normalize(rawMain.replace(/^\.\//, ""));
+  if (posix.isAbsolute(main) || main.startsWith("../") || main === ".." || main.includes("\\")) {
+    throw new Error(`plugin "${entry.id}": entry module "${rawMain}" is outside the package`);
+  }
+  if (!MAIN_EXTENSIONS.has(extname(main))) {
+    throw new Error(`plugin "${entry.id}": entry module "${rawMain}" must be a .js, .mjs or .cjs file`);
+  }
+  const mainPath = join(dir, ...main.split("/"));
+  if (!existsSync(mainPath) || !lstatSync(mainPath).isFile()) {
+    throw new Error(`plugin "${entry.id}": entry module "${rawMain}" not found in the artifact`);
+  }
+  const perms = (nexum.permissions ?? {}) as Record<string, unknown>;
+  if (typeof perms !== "object" || Array.isArray(perms)) {
+    throw new Error(`plugin "${entry.id}": nexum.permissions must be an object`);
+  }
+  const permissions: PluginPermissions = {};
+  for (const field of ["provide", "lookup", "declare"] as const) {
+    const list = stringList(perms[field], field);
+    if (list) permissions[field] = list;
+  }
+  return { main, permissions };
+}

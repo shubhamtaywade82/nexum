@@ -414,7 +414,8 @@ async function runPluginsVerify(ids: string[], values: { json?: boolean }, ctx: 
     const unsigned = rows.filter((r) => r.signature === "unsigned").length;
     if (unsigned > 0) {
       ctx.out(
-        `note: ${unsigned} plugin(s) unsigned — install policy "warn" allows them (see docs/guide/marketplace.md)`,
+        `note: ${unsigned} plugin(s) unsigned — installed under an explicit "warn"/"off" policy; ` +
+          `the default ("require") refuses them (see docs/guide/marketplace.md)`,
       );
     }
     ctx.out(failures === 0 && !missing ? "all installed plugins verified" : "verification FAILED");

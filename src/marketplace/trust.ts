@@ -21,9 +21,10 @@
  * `MarketplaceInstallPolicy`:
  *
  *   signatures: "off"               never verify (not recommended)
- *               "warn"  (default)   verify when possible, record result,
+ *               "warn"              verify when possible, record result,
  *                                   reject tampered signatures, allow unsigned
- *               "require"           signature must exist and be valid
+ *               "require" (default) signature must be valid AND made by a key
+ *                                   in the trust store; entry must carry sha256
  *               "require-verified"  … and the publisher must be "verified"
  *
  * A present-but-invalid signature is rejected in every mode except "off":
@@ -99,6 +100,12 @@ export interface SignatureVerification {
   status: SignatureStatus;
   /** Present when status === "valid". */
   keyId?: string;
+  /**
+   * True when the verifying key came from the trust store. A signature that
+   * only verifies against a key embedded in the entry proves integrity, not
+   * who signed it — anyone can sign with their own key.
+   */
+  trustedKey?: boolean;
   publisher?: string;
   trust?: PublisherTrustLevel;
   /** Present when status !== "valid". */
@@ -114,11 +121,15 @@ export interface PublisherTrustStoreOptions {
 
 export interface MarketplaceInstallPolicy {
   /**
-   * Signature enforcement for installs. Default "warn". See module doc.
-   * "invalid" signatures are always fatal except in "off" mode.
+   * Signature enforcement for installs and activations. Default "require".
+   * See module doc. "invalid" signatures are always fatal except in "off".
    */
   signatures?: "off" | "warn" | "require" | "require-verified";
-  /** Require entries to carry a sha256 (artifact integrity). Default false. */
+  /**
+   * Require entries to carry a sha256 (artifact integrity). Always on under
+   * "require"/"require-verified": without it the signature does not cover
+   * the artifact. Default false otherwise.
+   */
   requireSha256?: boolean;
   /** Publisher key registry used for verification. */
   trustStore?: PublisherTrustStore;
@@ -335,6 +346,7 @@ export function verifyEntrySignature(entry: MarketplaceEntry, trustStore?: Publi
   return {
     status: "valid",
     keyId: signature.keyId,
+    trustedKey: record !== undefined,
     publisher: record?.publisher,
     trust: record?.trust ?? "unknown",
   };
