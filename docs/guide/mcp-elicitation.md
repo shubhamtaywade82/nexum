@@ -37,3 +37,6 @@ connectMcpServerV2(descriptor, {
 ```
 
 The application-level `Agent` wires its TUI/CLI handler to the same contract.
+
+
+<!-- CI validation branch marker -->
