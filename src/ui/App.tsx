@@ -42,7 +42,9 @@ import { HelpOverlay } from "./overlays/HelpOverlay.js";
 import { ActorsOverlay } from "./overlays/ActorsOverlay.js";
 import { ApprovalOverlay } from "./overlays/ApprovalOverlay.js";
 import { ClarificationOverlay } from "./overlays/ClarificationOverlay.js";
+import { McpElicitationOverlay } from "./overlays/McpElicitationOverlay.js";
 import { ClarificationResponse } from "../runtime/types.js";
+import type { McpElicitationResponse } from "../core/user-input.js";
 import { ModelSwitcher } from "./overlays/ModelSwitcher.js";
 import { ModeSwitcher } from "./overlays/ModeSwitcher.js";
 import { ThemeSwitcher } from "./overlays/ThemeSwitcher.js";
@@ -71,6 +73,7 @@ export interface ShellAgent {
   hasResumablePlan?(): boolean;
   resolveApproval?(id: string, approved: boolean): void;
   resolveClarification?(response: ClarificationResponse): void;
+  resolveMcpElicitation?(response: McpElicitationResponse): void;
   listModels?(): Promise<string[]>;
   /** Cache-only: which of the given models are known to require a Cloud subscription. */
   modelAvailability?(models: string[]): Record<string, boolean>;
@@ -645,7 +648,7 @@ export function App({
       handleCommand(command);
       return;
     }
-    if (ui.overlay || state.clarification != null) return; // remaining keys belong to the overlay's own handler
+    if (ui.overlay || state.clarification != null || state.mcpElicitation != null) return; // remaining keys belong to the overlay's own handler
 
     // Prompt editing.
     if (key.return && key.shift) {
@@ -738,6 +741,8 @@ export function App({
   const showApproval = approval != null && (ui.overlay === null || ui.overlay === "diff");
   const clarification = state.clarification;
   const showClarification = clarification != null && !showApproval;
+  const mcpElicitation = state.mcpElicitation;
+  const showMcpElicitation = mcpElicitation != null && !showApproval && !showClarification;
   const viewIndex = VIEW_ORDER.indexOf(ui.activeView) + 1;
   const title = ` ${viewIndex} ${VIEW_LABELS[ui.activeView]} `;
   const rule = "─".repeat(Math.max(0, width - title.length - 2));
@@ -752,6 +757,7 @@ export function App({
     ui.sidebarVisible &&
     !showApproval &&
     !showClarification &&
+    !showMcpElicitation &&
     ui.overlay === null &&
     width >= MIN_WIDTH_FOR_SIDEBAR &&
     ui.activeView !== "dashboard";
@@ -798,6 +804,21 @@ export function App({
             )}
             {showApproval ? (
               <ApprovalOverlay request={approval} width={width} rows={contentRows} showDiff={ui.overlay === "diff"} />
+            ) : showMcpElicitation ? (
+              <McpElicitationOverlay
+                request={mcpElicitation}
+                width={width}
+                rows={contentRows}
+                onSubmit={(response) => {
+                  agent?.resolveMcpElicitation?.(response);
+                  bus.publish({ type: "mcp.elicitation.resolved", response });
+                }}
+                onCancel={() => {
+                  const response = { id: mcpElicitation.id, action: "cancel" } as const;
+                  agent?.resolveMcpElicitation?.(response);
+                  bus.publish({ type: "mcp.elicitation.resolved", response });
+                }}
+              />
             ) : showClarification ? (
               <ClarificationOverlay
                 request={clarification}

@@ -16,43 +16,44 @@ import {
 } from "../directory-tools.js";
 import { PatchTool, AppendTool, ApplyPatchTool, EditFileLinesTool } from "../edit-tools.js";
 import { CasEditor } from "../mutations/cas-editor.js";
-import { WorkspaceGuard } from "../../core/fs/workspace-guard.js";
+import { toGuard, type WorkspaceBoundary } from "../path-utils.js";
 import { SnapshotBackupTool } from "../backup-tools.js";
 import { WatchTool } from "../watch-tool.js";
 import { SearchCodeTool } from "../search-tools.js";
 import { ToolPack, packOf } from "../gateway/tool-pack.js";
 
-/** Filesystem CRUD + CAS patch + watch — the DevAgent's core mutation surface. */
-export function filesystemPack(root: string): ToolPack {
-  // CAS editor over the centralized workspace guard (review items 9, 10, 11):
-  // apply_patch is the primary editing primitive; edit_file_lines is the
-  // line-based convenience; find/replace (patch_file) stays as a wrapper.
-  const guard = new WorkspaceGuard({ root });
+/**
+ * Filesystem CRUD + CAS patch + watch — the DevAgent's core mutation surface.
+ * Every tool resolves paths through ONE WorkspaceGuard (pass a shared guard to
+ * apply a write scope / deny patterns; a bare root gets the agent default).
+ */
+export function filesystemPack(boundary: WorkspaceBoundary): ToolPack {
+  const guard = toGuard(boundary);
   const editor = new CasEditor({ guard });
   return packOf(
     "filesystem",
     "Workspace file operations: read, write, list, copy, move, delete, patch (CAS), watch.",
     "filesystem",
     [
-      new ReadFileTool(root),
-      new WriteFileTool(root),
-      new ListDirectoryTool(root),
-      new DeleteFileTool(root),
-      new MakeDirectoryTool(root),
-      new CopyFileTool(root),
-      new MoveFileTool(root),
+      new ReadFileTool(guard),
+      new WriteFileTool(guard),
+      new ListDirectoryTool(guard),
+      new DeleteFileTool(guard),
+      new MakeDirectoryTool(guard),
+      new CopyFileTool(guard),
+      new MoveFileTool(guard),
       [new ApplyPatchTool(editor), { risk: "medium", execution: { reversible: true } }],
       [new EditFileLinesTool(editor), { risk: "medium", execution: { reversible: true } }],
-      new PatchTool(root),
-      new AppendTool(root),
-      new SnapshotBackupTool(root),
-      new WatchTool(root),
+      new PatchTool(guard),
+      new AppendTool(guard),
+      new SnapshotBackupTool(guard),
+      new WatchTool(guard),
     ],
     "Filesystem",
   );
 }
 
 /** Workspace code search (kept inside the FilesystemPack family). */
-export function searchPack(root: string): ToolPack {
-  return packOf("search", "Workspace code search.", "search", [new SearchCodeTool(root)], "Search");
+export function searchPack(boundary: WorkspaceBoundary): ToolPack {
+  return packOf("search", "Workspace code search.", "search", [new SearchCodeTool(toGuard(boundary))], "Search");
 }

@@ -44,8 +44,8 @@ export interface GeneralizationVerdict {
   heldOutDeltas: Record<string, number>;
   /** Per-executor transfer deltas (candidate − baseline). */
   transferDeltas: Record<string, number>;
-  /** Executor sensitivity: spread of held-out deltas across executors. */
-  executorSensitivity: number;
+  /** Executor sensitivity: spread of held-out deltas across executors (null with fewer than 2). */
+  executorSensitivity: number | null;
   violations: string[];
 }
 
@@ -119,11 +119,11 @@ export class GeneralizationGate {
     }
 
     const deltas = Object.values(heldOutDeltas);
-    const executorSensitivity = deltas.length > 1 ? Math.max(...deltas) - Math.min(...deltas) : 0;
+    const executorSensitivity = deltas.length > 1 ? Math.max(...deltas) - Math.min(...deltas) : null;
 
     const generalized = violations.length === 0 && Object.keys(heldOutDeltas).length > 0;
     const rationale = generalized
-      ? `Candidate holds or improves on held-out evaluation across ${Object.keys(heldOutDeltas).length} executor(s); executor sensitivity ${(executorSensitivity * 100).toFixed(1)}%.`
+      ? `Candidate holds or improves on held-out evaluation across ${Object.keys(heldOutDeltas).length} executor(s); executor sensitivity ${executorSensitivity === null ? "n/a (needs ≥2 executors)" : `${(executorSensitivity * 100).toFixed(1)}%`}.`
       : violations.length > 0
         ? `Generalization gate failed: ${violations.join("; ")}`
         : "Generalization gate failed: no usable held-out evaluation cells.";

@@ -10,6 +10,7 @@ import { EventBus } from "../runtime/events/bus.js";
 import { initialRuntimeState, Store } from "../runtime/store.js";
 import { detectProjectInfo } from "../runtime/project-info.js";
 import { ClarificationResponse } from "../runtime/types.js";
+import type { McpElicitationResponse } from "../core/user-input.js";
 import { wireAgentBridge, BridgeableAgent } from "./agent-bridge.js";
 import { App } from "./App.js";
 import { validateAsl, generateAslGraph } from "../asl/commands.js";
@@ -206,6 +207,7 @@ const cfg = loadConfig();
     hasResumablePlan: () => agent.hasResumablePlan(),
     resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
     resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
+    resolveMcpElicitation: (resp: McpElicitationResponse) => agent.resolveMcpElicitation(resp),
     validateModel: () => agent.validateModel(),
     getSkillsRegistry: () => agent.getSkillsRegistry(),
     pinSkill: (id: string | null) => agent.pinSkill(id),

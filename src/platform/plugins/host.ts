@@ -241,6 +241,34 @@ export class DefaultPluginHost implements PluginHost {
     return this.capabilities.has(token);
   }
 
+  /**
+   * Snapshot of capability ownership: which plugin provides which tokens and
+   * which capability tags it declared. Consumed by capability attestation
+   * (src/core/capabilities/attestation.ts) and audits.
+   */
+  snapshotGrants(): { pluginId: PluginId; tokens: string[]; capabilities: string[] }[] {
+    const byPlugin = new Map<PluginId, { tokens: string[]; capabilities: string[] }>();
+    const entryFor = (id: PluginId): { tokens: string[]; capabilities: string[] } => {
+      let entry = byPlugin.get(id);
+      if (!entry) {
+        entry = { tokens: [], capabilities: [] };
+        byPlugin.set(id, entry);
+      }
+      return entry;
+    };
+    for (const [token, pluginId] of this.capabilityOwner) {
+      entryFor(pluginId).tokens.push(token);
+    }
+    for (const record of this.registry.all()) {
+      entryFor(record.manifest.id).capabilities = [...record.capabilities];
+    }
+    return [...byPlugin.entries()].map(([pluginId, entry]) => ({
+      pluginId,
+      tokens: entry.tokens,
+      capabilities: entry.capabilities,
+    }));
+  }
+
   on(event: PluginHostEvent, handler: PluginHostEventHandler): () => void {
     let set = this.handlers.get(event);
     if (!set) {

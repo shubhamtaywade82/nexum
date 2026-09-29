@@ -46,6 +46,7 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs",
     "db:generate": "drizzle-kit generate",
     "test": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/.bin/jest",
+    "test:docker": "NEXUM_DOCKER_TESTS=1 NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/.bin/jest tests/integration",
     "start": "node dist/ui/index.js",
     "dev": "tsx src/ui/index.ts",
     "dev:legacy": "tsx src/cli/tui.ts",
@@ -149,6 +150,22 @@
     "./evolution": {
       "types": "./dist/evolution/index.d.ts",
       "import": "./dist/evolution/index.js"
+    },
+    "./evaluation": {
+      "types": "./dist/evaluation/index.d.ts",
+      "import": "./dist/evaluation/index.js"
+    },
+    "./multiagent": {
+      "types": "./dist/multiagent/index.d.ts",
+      "import": "./dist/multiagent/index.js"
+    },
+    "./rag": {
+      "types": "./dist/rag/index.d.ts",
+      "import": "./dist/rag/index.js"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts/index.d.ts",
+      "import": "./dist/artifacts/index.js"
     },
     "./provider": {
       "types": "./dist/models/adapters/provider.d.ts",

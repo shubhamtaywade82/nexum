@@ -17,8 +17,9 @@
  * Provider adapters:
  *   EnvCredentialProvider      ← process.env / NEXUM_* / DEVAGENT_*
  *   FileCredentialProvider     ← .nexum/credentials.json (gitignored)
- *   KeychainCredentialProvider ← OS keychain (stub — future impl)
- *   VaultCredentialProvider    ← HashiCorp Vault / cloud secret manager (stub)
+ *   KeychainCredentialProvider ← OS keychain (macOS security / Linux secret-tool)
+ *   VaultCredentialProvider    ← remote secret managers behind the VaultClient
+ *                                port (HttpVaultClient: HashiCorp Vault KV v2)
  *
  * Redaction: every credential value is wrapped so that accidental logging
  * shows `***REDACTED***` instead of the secret. The raw value is only
@@ -83,12 +84,19 @@ export interface CredentialServiceOptions {
   defaultScope?: CredentialScope;
 }
 
+/** True when `name` (carrying `tags`) is visible under `scope`. Untagged credentials never match a tag scope. */
+export function isInScope(scope: CredentialScope, name: string, tags: readonly string[]): boolean {
+  if (scope.names.length > 0 && !scope.names.includes(name)) return false;
+  return scope.tags.every((t) => tags.includes(t));
+}
+
 export class CredentialService {
   private readonly providers: CredentialProvider[] = [];
   private readonly cache = new Map<string, CredentialRecord>();
   private readonly rootDir?: string;
   private readonly defaultScope?: CredentialScope;
   private readonly rotators = new Map<string, () => Promise<string>>();
+  private readonly declaredTags = new Map<string, string[]>();
 
   constructor(opts: CredentialServiceOptions = {}) {
     this.rootDir = opts.rootDir;
@@ -108,8 +116,24 @@ export class CredentialService {
     return this;
   }
 
-  /** Get a credential value by name (raw). Returns undefined if not found. */
+  /** Declare a credential's tags so tag-based scopes can admit it. */
+  declare(spec: CredentialSpec): this {
+    this.declaredTags.set(spec.name, [...(spec.tags ?? [])]);
+    return this;
+  }
+
+  /** Tags declared for a credential (empty when undeclared). */
+  tagsOf(name: string): string[] {
+    return [...(this.declaredTags.get(name) ?? [])];
+  }
+
+  /** Get a credential value by name (raw), honoring `defaultScope`. Returns undefined if not found or out of scope. */
   async get(name: string): Promise<string | undefined> {
+    if (this.defaultScope && !isInScope(this.defaultScope, name, this.tagsOf(name))) return undefined;
+    return this.lookup(name);
+  }
+
+  private async lookup(name: string): Promise<string | undefined> {
     const cached = this.cache.get(name);
     if (cached) return cached.value;
 
@@ -134,7 +158,10 @@ export class CredentialService {
 
   /** Require a credential (throws if not found). */
   async require(name: string): Promise<string> {
-    const value = await this.get(name);
+    if (this.defaultScope && !isInScope(this.defaultScope, name, this.tagsOf(name))) {
+      throw new Error(`credential "${name}" is not in the default scope`);
+    }
+    const value = await this.lookup(name);
     if (value === undefined) {
       throw new Error(
         `required credential "${name}" not found. ` +
@@ -169,7 +196,9 @@ export class CredentialService {
         }
       }
     }
-    return [...names].sort();
+    const scope = this.defaultScope;
+    const visible = scope ? [...names].filter((n) => isInScope(scope, n, this.tagsOf(n))) : [...names];
+    return visible.sort();
   }
 
   /** List credential records with redacted values (safe for display). */
@@ -210,9 +239,12 @@ export class CredentialService {
     });
   }
 
-  /** Create a scoped view (only credentials matching the scope are visible). */
+  /** Create a scoped view (only credentials matching the scope are visible). Replaces `defaultScope`. */
   scope(scope: CredentialScope): ScopedCredentialService {
-    return new ScopedCredentialService(this, scope);
+    return new ScopedCredentialService(scope, {
+      lookup: (name) => this.lookup(name),
+      tagsOf: (name) => this.tagsOf(name),
+    });
   }
 
   /** Invalidate the cache (force re-resolution on next get). */
@@ -221,25 +253,36 @@ export class CredentialService {
   }
 }
 
-/** A scoped view of the CredentialService (filters by tags/names). */
+interface ScopeSource {
+  lookup(name: string): Promise<string | undefined>;
+  tagsOf(name: string): string[];
+}
+
+/** A scoped view of the CredentialService (filters by tags and names). Obtain via `CredentialService.scope()`. */
 export class ScopedCredentialService {
   constructor(
-    private readonly parent: CredentialService,
     private readonly scope: CredentialScope,
+    private readonly source: ScopeSource,
   ) {}
 
+  private visible(name: string): boolean {
+    return isInScope(this.scope, name, this.source.tagsOf(name));
+  }
+
   async get(name: string): Promise<string | undefined> {
-    if (this.scope.names.length > 0 && !this.scope.names.includes(name)) {
-      return undefined;
-    }
-    return this.parent.get(name);
+    if (!this.visible(name)) return undefined;
+    return this.source.lookup(name);
   }
 
   async require(name: string): Promise<string> {
-    if (this.scope.names.length > 0 && !this.scope.names.includes(name)) {
-      throw new Error(`credential "${name}" is not in scope (tags: ${this.scope.tags.join(",")})`);
+    if (!this.visible(name)) {
+      throw new Error(
+        `credential "${name}" is not in scope (tags: ${this.scope.tags.join(",") || "-"}; names: ${this.scope.names.join(",") || "*"})`,
+      );
     }
-    return this.parent.require(name);
+    const value = await this.source.lookup(name);
+    if (value === undefined) throw new Error(`required credential "${name}" not found`);
+    return value;
   }
 }
 
@@ -329,62 +372,252 @@ export class FileCredentialProvider implements CredentialProvider {
   }
 }
 
-// ── Future providers (not yet implemented — see STABILITY.md) ───────────────
-//
-// These providers are explicitly INCOMPLETE. They are exported so consumers
-// can see the intended API shape, but they throw on use. To track their
-// implementation status, see https://github.com/shubhamtaywade82/nexum
-// issues labeled `credentials:keychain` / `credentials:vault`.
+// ── Keychain provider (OS keychain via platform CLI tools) ──────────────────
 
-/**
- * @experimental
- * @incomplete Throws on use — see STABILITY.md.
- *
- * KeychainCredentialProvider — reads credentials from the OS keychain
- * (macOS Keychain, Windows Credential Manager, Linux Secret Service).
- *
- * Planned implementation: use `keytar` (npm) to access the OS keychain.
- * The provider will store each credential under a service name derived
- * from the workspace root + the credential name.
- */
-export class KeychainCredentialProvider implements CredentialProvider {
-  readonly id = "keychain";
-  resolve(): string | undefined {
-    // INCOMPLETE: throws until keytar integration is wired up.
-    throw new Error(
-      "KeychainCredentialProvider is not yet implemented. " +
-        "Use EnvCredentialProvider or FileCredentialProvider instead. " +
-        "Track implementation: https://github.com/shubhamtaywade82/nexum/issues",
-    );
-  }
-  list(): string[] {
-    return [];
-  }
+/** Outcome of one executor run: stdout plus a normalized error marker. */
+export interface ExecResult {
+  code: number;
+  stdout: string;
+  /** True when the binary itself was missing (ENOENT) — not an error. */
+  notFound: boolean;
+}
+
+/** Injectable process runner (tests pass a fake; prod spawns real CLIs). `input` is written to stdin, which is then closed. */
+export type ExecFn = (command: string, args: string[], input?: string) => Promise<ExecResult>;
+
+/** Platform identifier (process.platform by default; injectable for tests). */
+export type Platform = "darwin" | "linux" | "win32" | "other";
+
+/** Real executor: node child_process.execFile, never throwing. */
+async function defaultExec(command: string, args: string[], input?: string): Promise<ExecResult> {
+  const { execFile } = await import("node:child_process");
+  return new Promise((resolve) => {
+    const child = execFile(command, args, { timeout: 10_000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+      const e = err as (NodeJS.ErrnoException & { code?: number | string }) | null;
+      resolve({
+        code: typeof e?.code === "number" ? e.code : e ? 1 : 0,
+        stdout: stdout?.toString() ?? "",
+        notFound: e !== null && typeof e.code === "string" && e.code === "ENOENT",
+      });
+    });
+    // Always close stdin: a CLI that reads it (secret-tool store) would otherwise block until the timeout.
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(input ?? "");
+  });
+}
+
+export interface KeychainCredentialProviderOptions {
+  /** Keychain service name (default "nexum"). */
+  service?: string;
+  /** Platform override (default process.platform). */
+  platform?: Platform;
+  /** Executor override (default real child_process). */
+  exec?: ExecFn;
 }
 
 /**
- * @experimental
- * @incomplete Throws on use — see STABILITY.md.
+ * KeychainCredentialProvider — OS keychain access without native deps:
+ *   macOS:  `security find-generic-password -s <service> -a <name> -w`
+ *   Linux:  `secret-tool lookup service <service> account <name>` (Secret Service / libsecret)
+ *   other:  no support — resolves undefined (never throws)
  *
- * VaultCredentialProvider — reads credentials from a remote secret manager
- * (HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, Doppler, etc.).
- *
- * Planned implementation: accept a `VaultClient` adapter (so the consumer
- * can plug in any backend). The provider will cache resolved credentials
- * with a configurable TTL.
+ * Degrades gracefully: missing binary, missing backend, or wrong platform all
+ * resolve undefined so the CredentialService chain simply tries the next
+ * provider. Enumerating keychain entries is deliberately NOT implemented
+ * (dump-keychain is slow and touches unrelated items) — list() is empty.
+ */
+export class KeychainCredentialProvider implements CredentialProvider {
+  readonly id = "keychain";
+  private readonly service: string;
+  private readonly platform: Platform;
+  private readonly exec: ExecFn;
+
+  constructor(opts: KeychainCredentialProviderOptions = {}) {
+    this.service = opts.service ?? "nexum";
+    this.platform = opts.platform ?? (process.platform as Platform);
+    this.exec = opts.exec ?? defaultExec;
+  }
+
+  /** Store a credential in the OS keychain (best effort — throws on failure). */
+  async set(name: string, value: string): Promise<void> {
+    if (this.platform === "darwin") {
+      const r = await this.exec("security", [
+        "add-generic-password",
+        "-U",
+        "-s",
+        this.service,
+        "-a",
+        name,
+        "-w",
+        value,
+      ]);
+      if (r.code !== 0 && !r.notFound) throw new Error(`keychain write failed (security exit ${r.code})`);
+      if (r.notFound) throw new Error("security(1) not available");
+      return;
+    }
+    if (this.platform === "linux") {
+      // secret-tool reads the secret from stdin (never argv, which is visible in the process table).
+      const r = await this.exec(
+        "secret-tool",
+        ["store", "--label=nexum", "service", this.service, "account", name],
+        value,
+      );
+      if (r.code === 0 && !r.notFound) return;
+      if (r.notFound) throw new Error("secret-tool not available (install libsecret-tools)");
+      throw new Error(`keychain write failed (secret-tool exit ${r.code})`);
+    }
+    throw new Error(`keychain writes unsupported on platform "${this.platform}"`);
+  }
+
+  async resolve(name: string): Promise<string | undefined> {
+    if (this.platform === "darwin") {
+      const r = await this.exec("security", ["find-generic-password", "-s", this.service, "-a", name, "-w"]);
+      if (r.code === 0 && !r.notFound) return r.stdout.trim() || undefined;
+      return undefined; // item missing, security missing, or keychain locked — not our problem to raise
+    }
+    if (this.platform === "linux") {
+      const r = await this.exec("secret-tool", ["lookup", "service", this.service, "account", name]);
+      if (r.code === 0 && !r.notFound) return r.stdout.trim() || undefined;
+      return undefined;
+    }
+    return undefined; // win32 / other: unsupported, chain continues
+  }
+
+  list(): string[] {
+    return []; // enumeration deliberately unsupported (see class doc)
+  }
+}
+
+// ── Vault provider (remote secret managers behind one client port) ─────────
+
+/** Minimal port for any secret backend (HashiCorp Vault, cloud SMs, Doppler…). */
+export interface VaultClient {
+  /** Read one secret; undefined = not found. Keys are the secret's fields. */
+  readSecret(path: string): Promise<Record<string, string> | undefined>;
+  /** Optional path listing for `list()` support. */
+  listPaths?(prefix: string): Promise<string[]>;
+}
+
+export interface HttpVaultClientOptions {
+  /** Vault address, e.g. https://vault.example.com:8200 (no /v1 suffix). */
+  baseUrl: string;
+  /** Auth token (X-Vault-Token). Supply via env or a credential — never hardcode. */
+  token: string;
+  /** KV mount point (default "secret", the KV v2 default). */
+  mount?: string;
+  /** fetch override (tests inject a fake; default global fetch). */
+  fetch?: typeof fetch;
+}
+
+/**
+ * HttpVaultClient — HashiCorp Vault KV v2 reader.
+ * GET {base}/v1/{mount}/data/{path} → { data: { data: { key: value } } }.
+ * Failures resolve undefined (a sealed/unreachable vault must not crash the
+ * credential chain); the token is only ever sent in the X-Vault-Token header.
+ */
+export class HttpVaultClient implements VaultClient {
+  private readonly base: string;
+  private readonly token: string;
+  private readonly mount: string;
+  private readonly doFetch: typeof fetch;
+
+  constructor(opts: HttpVaultClientOptions) {
+    this.base = opts.baseUrl.replace(/\/+$/, "");
+    this.token = opts.token;
+    this.mount = opts.mount ?? "secret";
+    this.doFetch = opts.fetch ?? (globalThis.fetch as typeof fetch);
+  }
+
+  async readSecret(path: string): Promise<Record<string, string> | undefined> {
+    const url = `${this.base}/v1/${this.mount}/data/${path.replace(/^\/+/, "")}`;
+    let resp: Response;
+    try {
+      resp = await this.doFetch(url, { headers: { "X-Vault-Token": this.token } });
+    } catch {
+      return undefined; // network/sealed/unreachable — degrade, never throw
+    }
+    if (!resp.ok) return undefined;
+    try {
+      const body = (await resp.json()) as { data?: { data?: Record<string, string> } };
+      return body.data?.data;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+export interface VaultCredentialProviderOptions {
+  /** Cache TTL in ms (default 5 min; 0 disables caching). */
+  ttlMs?: number;
+  /** Restrict reads to this path prefix (default: no restriction). */
+  prefix?: string;
+  /** Map a credential name to a secret path + field. Default: "a/b#c" → path "a/b", field "c"; no "#" → field "value". */
+  nameToPath?: (name: string) => { path: string; key: string };
+  /** Injectable clock for tests. */
+  now?: () => number;
+}
+
+/** Default name mapping: "team/api-key#token" → secret "team/api-key", field "token". */
+export function defaultVaultNameMapping(name: string): { path: string; key: string } {
+  const hash = name.lastIndexOf("#");
+  if (hash >= 0) return { path: name.slice(0, hash), key: name.slice(hash + 1) };
+  return { path: name, key: "value" };
+}
+
+/**
+ * VaultCredentialProvider — remote secret manager access behind the
+ * VaultClient port, with a TTL cache so repeated get()s don't re-read the
+ * backend. Resolution failures (missing path, unreachable vault, missing
+ * field) resolve undefined — the CredentialService chain moves on.
  */
 export class VaultCredentialProvider implements CredentialProvider {
   readonly id = "vault";
-  resolve(): string | undefined {
-    // INCOMPLETE: throws until the VaultClient adapter interface is finalized.
-    throw new Error(
-      "VaultCredentialProvider is not yet implemented. " +
-        "Use EnvCredentialProvider or FileCredentialProvider instead. " +
-        "Track implementation: https://github.com/shubhamtaywade82/nexum/issues",
-    );
+  private readonly client: VaultClient;
+  private readonly ttlMs: number;
+  private readonly prefix?: string;
+  private readonly nameToPath: (name: string) => { path: string; key: string };
+  private readonly now: () => number;
+  private readonly cache = new Map<string, { value?: string; at: number }>();
+
+  constructor(client: VaultClient, opts: VaultCredentialProviderOptions = {}) {
+    this.client = client;
+    this.ttlMs = opts.ttlMs ?? 300_000;
+    this.prefix = opts.prefix;
+    this.nameToPath = opts.nameToPath ?? defaultVaultNameMapping;
+    this.now = opts.now ?? Date.now;
   }
-  list(): string[] {
-    return [];
+
+  async resolve(name: string): Promise<string | undefined> {
+    const cached = this.cache.get(name);
+    if (cached && (this.ttlMs === 0 || this.now() - cached.at < this.ttlMs)) {
+      return cached.value;
+    }
+
+    const { path, key } = this.nameToPath(name);
+    const fullPath = this.prefix ? `${this.prefix.replace(/\/+$/, "")}/${path}` : path;
+    let value: string | undefined;
+    try {
+      const secret = await this.client.readSecret(fullPath);
+      value = secret?.[key];
+    } catch {
+      value = undefined; // backend hiccup — degrade, never throw
+    }
+    this.cache.set(name, { value, at: this.now() });
+    return value;
+  }
+
+  async list(): Promise<string[]> {
+    if (!this.client.listPaths || !this.prefix) return [];
+    try {
+      return await this.client.listPaths(this.prefix);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Drop cached entries (e.g. after a vault unseal or credential rotation). */
+  invalidate(): void {
+    this.cache.clear();
   }
 }
 

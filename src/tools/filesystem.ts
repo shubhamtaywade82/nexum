@@ -1,32 +1,16 @@
-import { readFile, writeFile, rename, unlink, mkdir, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { Tool } from "./tool.js";
-import { resolveWorkspacePath, PathEscapeError } from "./path-utils.js";
-import { isSensitivePath } from "../safety/path-policy.js";
+import { guardPath, toGuard, PathEscapeError, SensitivePathError, type WorkspaceBoundary } from "./path-utils.js";
+import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
+import { readVerified, writeVerified } from "./verified-fs.js";
 
-export { PathEscapeError };
+export { PathEscapeError, SensitivePathError };
 
 /** sha256 of the (truncated) content — the CAS token for apply_patch/edit_file_lines (review items 10/11). */
 function stampHash(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
-}
-
-/**
- * Error thrown when a tool attempts to read or write a sensitive file
- * (e.g. .env, credentials, private keys) that should not be exposed
- * to the agent. This is a UX safety net, not a security boundary —
- * the Docker sandbox and path containment already bound worst-case
- * blast radius.
- */
-export class SensitivePathError extends Error {
-  constructor(
-    public readonly path: string,
-    public readonly reason: string,
-  ) {
-    super(`access to sensitive path blocked: ${path} (${reason})`);
-    this.name = "SensitivePathError";
-  }
 }
 
 export class ReadFileTool extends Tool {
@@ -36,9 +20,11 @@ export class ReadFileTool extends Tool {
   // read_file on a lockfile or a log could blow the whole context, even though
   // the system prompt already promises callers a `truncated` flag.
   static readonly MAX_CONTENT_BYTES = 32 * 1024;
+  private readonly guard: WorkspaceGuard;
 
-  constructor(private readonly root: string) {
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
 
   get name(): string {
@@ -63,15 +49,11 @@ export class ReadFileTool extends Tool {
 
   async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const relPath = args.path as string;
-    if (isSensitivePath(relPath)) {
-      throw new SensitivePathError(relPath, "reading sensitive files is not allowed");
-    }
-    const path = resolveWorkspacePath(this.root, relPath);
 
     // Read as bytes and cut on a byte boundary, then decode — slicing the
     // decoded string would count UTF-16 code units against a byte budget and
     // could split a multi-byte character.
-    const raw = await readFile(path);
+    const raw = await readVerified(this.guard, "read", relPath);
     const totalBytes = raw.byteLength;
     const truncated = totalBytes > ReadFileTool.MAX_CONTENT_BYTES;
     const slice = truncated ? raw.subarray(0, ReadFileTool.MAX_CONTENT_BYTES) : raw;
@@ -93,8 +75,11 @@ export class ReadFileTool extends Tool {
 }
 
 export class WriteFileTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
 
   get name(): string {
@@ -124,24 +109,9 @@ export class WriteFileTool extends Tool {
   async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const relPath = args.path as string;
     const content = args.content as string;
-    if (isSensitivePath(relPath)) {
-      throw new SensitivePathError(relPath, "writing sensitive files is not allowed");
-    }
-    const path = resolveWorkspacePath(this.root, relPath);
+    const path = guardPath(this.guard, "write", relPath);
     await mkdir(dirname(path), { recursive: true });
-
-    const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
-    try {
-      await writeFile(tmp, content, "utf-8");
-      await rename(tmp, path);
-      return { path: relPath, bytesWritten: Buffer.byteLength(content, "utf-8") };
-    } finally {
-      try {
-        await stat(tmp);
-        await unlink(tmp);
-      } catch {
-        // tmp already gone (rename succeeded) — nothing to clean up
-      }
-    }
+    await writeVerified(this.guard, relPath, content);
+    return { path: relPath, bytesWritten: Buffer.byteLength(content, "utf-8") };
   }
 }

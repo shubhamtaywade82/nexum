@@ -94,6 +94,22 @@ export interface ProviderOptions {
    * multi-vendor routing. */
   apiKeys?: string[];
   timeoutMs?: number;
+  /** Chooses which cloud API key serves each request (e.g. KeyManager's
+   * model→key binding that keeps each key's model warm in Ollama Cloud
+   * VRAM). Structural interface — any `{ acquire, release }` works, no
+   * import from the router layer needed. When unset (or when acquire
+   * fails/times out), the plain priority-ordered endpoint pool is used.
+   * The SDK's 429 failover across the remaining keys stays active either
+   * way, as a last-resort safety net. */
+  keySelector?: CloudKeySelector;
+}
+
+/** See ProviderOptions.keySelector. `acquire` must resolve with the API key
+ * to prefer for `model` (or throw); `release` is called exactly once per
+ * successful acquire, after the request finishes (success or failure). */
+export interface CloudKeySelector {
+  acquire(model: string): Promise<string>;
+  release(apiKey: string): void;
 }
 
 export const DEFAULT_CLOUD_HOST = "https://ollama.com";
@@ -156,11 +172,17 @@ export class Provider {
   private hostOverride: string | undefined;
   private readonly apiKeys: string[];
   private readonly timeoutMs: number;
+  private readonly keySelector: CloudKeySelector | undefined;
   // Cached per (tier, host): reused across calls so the SDK's endpoint
   // circuit breaker remembers which cloud key last failed instead of
   // re-trying the same rate-limited key on every call.
   private client: OllamaClient | null = null;
   private clientCacheKey = "";
+  // Same caching rationale as `client`, but one client per preferred key
+  // (see buildKeyedClient): the preferred key is pinned as the highest-
+  // priority endpoint so its circuit-breaker state persists across calls.
+  private readonly keyedClients = new Map<string, OllamaClient>();
+  private keyedClientsCacheKey = "";
 
   constructor(opts: ProviderOptions) {
     this.tier = opts.tier;
@@ -169,6 +191,7 @@ export class Provider {
     this.apiKeys = opts.apiKeys && opts.apiKeys.length > 0 ? opts.apiKeys : opts.apiKey ? [opts.apiKey] : [];
     // Cloud has a 60s connect timeout; local has no timeout — never kill a running generation.
     this.timeoutMs = opts.timeoutMs ?? (opts.tier === "cloud" ? 60_000 : 0);
+    this.keySelector = opts.keySelector;
   }
 
   private get host(): string {
@@ -241,28 +264,81 @@ export class Provider {
       throw new ProviderError("missing apiKey for cloud chat");
     }
 
-    const client = this.buildClient();
     const model = opts.model ?? this.model;
-    const request = {
-      model,
-      messages: messages as unknown as SdkMessage[],
-      tools: opts.tools as any,
-      ...(this.tier === "local" || opts.options
-        ? { options: { ...(this.tier === "local" ? { num_ctx: 16384 } : {}), ...(opts.options ?? {}) } }
-        : {}),
-    };
-
+    // Best-effort key selection: acquire may wait for a busy bound key or
+    // probe availability, and may legitimately fail (all keys busy, probe
+    // timeouts). Any failure falls back to the plain endpoint pool — key
+    // preference is an optimization (VRAM warmth), never a correctness
+    // requirement, and the SDK's cross-key failover applies either way.
+    const preferredKey = this.tier === "cloud" ? await this.acquirePreferredKey(model) : undefined;
     try {
-      if (opts.stream) {
-        const stream = await client.chat({ ...request, stream: true });
-        stream.on("message", (e) => opts.onChunk?.(e.data.chunk as unknown as ChatResponse));
-        return toChatResponse(await stream.finalResult);
+      const client = preferredKey ? this.buildKeyedClient(preferredKey) : this.buildClient();
+      const request = {
+        model,
+        messages: messages as unknown as SdkMessage[],
+        tools: opts.tools as any,
+        ...(this.tier === "local" || opts.options
+          ? { options: { ...(this.tier === "local" ? { num_ctx: 16384 } : {}), ...(opts.options ?? {}) } }
+          : {}),
+      };
+
+      try {
+        if (opts.stream) {
+          const stream = await client.chat({ ...request, stream: true });
+          stream.on("message", (e) => opts.onChunk?.(e.data.chunk as unknown as ChatResponse));
+          return toChatResponse(await stream.finalResult);
+        }
+        const resp = await client.chat({ ...request, stream: false });
+        return resp as unknown as ChatResponse;
+      } catch (err) {
+        throw mapSdkError(err, this.tier, model, this.apiKeys.length);
       }
-      const resp = await client.chat({ ...request, stream: false });
-      return resp as unknown as ChatResponse;
-    } catch (err) {
-      throw mapSdkError(err, this.tier, model, this.apiKeys.length);
+    } finally {
+      if (preferredKey) this.keySelector?.release(preferredKey);
     }
+  }
+
+  /** Resolves the preferred key for `model`, or undefined when no selector is
+   * configured or it fails. Never lets a selection failure break a request. */
+  private async acquirePreferredKey(model: string): Promise<string | undefined> {
+    if (!this.keySelector) return undefined;
+    try {
+      return await this.keySelector.acquire(model);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Like buildClient, but with `preferredKey` pinned as the highest-priority
+   * endpoint — the other pool keys remain as failover endpoints below it, so
+   * the KeyManager's model→key warmth binding and the SDK's 429 rotation
+   * compose instead of replacing each other. */
+  private buildKeyedClient(preferredKey: string): OllamaClient {
+    const cacheKey = `${this.tier}|${this.host}`;
+    if (this.keyedClientsCacheKey !== cacheKey) {
+      this.keyedClients.clear();
+      this.keyedClientsCacheKey = cacheKey;
+    }
+    const cached = this.keyedClients.get(preferredKey);
+    if (cached) return cached;
+
+    const rest = this.apiKeys.filter((k) => k !== preferredKey);
+    const client = new OllamaClient({
+      endpoints: [
+        { name: "cloud-preferred", baseUrl: this.host, apiKey: preferredKey, priority: this.apiKeys.length + 1 },
+        ...rest.map((apiKey, i) => ({
+          name: `cloud-${i}`,
+          baseUrl: this.host,
+          apiKey,
+          priority: rest.length - i,
+        })),
+      ],
+      endpointHealth: { failureThreshold: 1 },
+      retries: 0,
+      timeoutMs: this.timeoutMs,
+    });
+    this.keyedClients.set(preferredKey, client);
+    return client;
   }
 
   async availableModels(): Promise<unknown> {

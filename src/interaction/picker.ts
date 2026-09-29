@@ -1,7 +1,7 @@
 /**
  * Universal picker model: one filter/select behavior reused by every list
  * (palette, model switcher, search). Pure logic lives here; the rendering
- * lives in src/tui/overlays/UniversalPicker.tsx.
+ * lives in src/ui/overlays/UniversalPicker.tsx.
  */
 
 export interface PickerItem {

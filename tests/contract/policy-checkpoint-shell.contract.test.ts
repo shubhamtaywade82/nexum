@@ -300,7 +300,10 @@ describe("Shell sandbox accounting contract (item 27)", () => {
     const record = beginRecord(acct);
     record.stdoutBytes = 1024;
     record.stderrBytes = 256;
-    await new Promise((r) => setTimeout(r, 5)); // let duration be measurable
+    // Sleep well above the 5ms assertion: Node timers may fire a touch early
+    // and Date.now() rounds, so a 5ms sleep can measure as 4ms on fast
+    // runners (observed flake on CI).
+    await new Promise((r) => setTimeout(r, 25));
     const done = acct.complete(record, 0);
 
     expect(done.exitStatus).toBe(0);

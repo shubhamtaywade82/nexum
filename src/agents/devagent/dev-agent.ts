@@ -16,6 +16,7 @@
  */
 
 import { DefaultAgentRuntime, AgentRegistry } from "../../runtime/agent/agent-runtime.js";
+import type { CriticPolicy } from "../../runtime/strategies/execution-strategy.js";
 import { createManagedExecutionContext } from "../../runtime/context/execution-context.js";
 import { profilePosture } from "../../core/policy/postures.js";
 import { IdempotencyManager } from "../../tools/idempotency.js";
@@ -36,6 +37,12 @@ export interface DevAgentOptions {
   profile?: "readonly" | "development" | "testing" | "devops";
   /** Durable execution history store root (review item 13). */
   stateRoot?: string;
+  /**
+   * In-loop critic for final answers (default ON — pass `false` to disable,
+   * or a CriticPolicy to tune attempts/severity). Weak answers get one
+   * bounded revision inside the same execution.
+   */
+  critic?: boolean | CriticPolicy;
 }
 
 export const DEVAGENT_DESCRIPTOR: AgentDescriptor = {
@@ -82,10 +89,22 @@ export class DevAgent {
       idempotency: this.idempotency,
     });
 
+    // Default-on in-loop critic (product policy): only high-severity
+    // weaknesses trigger a revision, one attempt — quality lift without
+    // runaway latency on healthy answers. `critic: false` opts out, a
+    // CriticPolicy tunes it.
+    const criticPolicy: CriticPolicy | undefined =
+      opts.critic === false
+        ? undefined
+        : opts.critic === true || opts.critic === undefined
+          ? { maxAttempts: 1, minSeverity: "high" }
+          : opts.critic;
+
     this.runtime =
       opts.runtime ??
       new DefaultAgentRuntime({
         recorder: undefined,
+        ...(criticPolicy ? { critic: criticPolicy } : {}),
       });
     if (!(this.runtime.agents as AgentRegistry).get("devagent")) {
       this.runtime.agents.register(DEVAGENT_DESCRIPTOR);

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { loadConfig } from "../../src/cli/config.js";
+import { trustWorkspace, WorkspaceTrustStore } from "../../src/cli/workspace-trust.js";
 
 describe("loadConfig apiKeys pool", () => {
   const originalEnv = { ...process.env };
@@ -25,6 +26,15 @@ describe("loadConfig apiKeys pool", () => {
     expect(loadConfig().apiKeys).toBeUndefined();
   });
 
+  it("resolves NEXUM_WRITE_SCOPE against the workspace root and leaves it unset by default", () => {
+    delete process.env.NEXUM_WRITE_SCOPE;
+    expect(loadConfig().writeScope).toBeUndefined();
+    process.env.NEXUM_WRITE_SCOPE = "src";
+    expect(loadConfig().writeScope).toBe(join(workspaceRoot, "src"));
+    process.env.NEXUM_WRITE_SCOPE = "/abs/scope";
+    expect(loadConfig().writeScope).toBe("/abs/scope");
+  });
+
   it("puts OLLAMA_API_KEY first in the pool", () => {
     process.env.OLLAMA_API_KEY = "primary_key";
     expect(loadConfig().apiKeys).toEqual(["primary_key"]);
@@ -41,7 +51,10 @@ describe("loadConfig apiKeys pool", () => {
     delete process.env.NEXUM_TEST_NO_GLOBAL;
     delete process.env.OLLAMA_API_KEY;
     writeFileSync(join(workspaceRoot, ".env"), "OLLAMA_API_KEY=env_workspace_key\nNEXUM_TIER=cloud\n");
-    const cfg = loadConfig();
+    // a workspace .env is repository content: it loads once the workspace is trusted
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    const cfg = loadConfig({ trustStore });
     expect(cfg.apiKey).toBe("env_workspace_key");
     expect(cfg.tier).toBe("cloud");
   });
@@ -173,12 +186,16 @@ describe("loadConfig host/tier interaction", () => {
     expect(cfg.host).toBeUndefined();
   });
 
-  it("still honours an explicit host from the config file on the cloud tier", () => {
+  it("still honours an explicit host from a trusted workspace config on the cloud tier", () => {
     mkdirSync(join(workspaceRoot, ".devagent"), { recursive: true });
     writeFileSync(join(workspaceRoot, ".devagent", "config.json"), JSON.stringify({ host: "https://proxy.example" }));
     process.env.OLLAMA_HOST = "http://127.0.0.1:9999";
     process.env.DEVAGENT_TIER = "cloud";
-    expect(loadConfig().host).toBe("https://proxy.example");
+    // untrusted, a repository cannot redirect model traffic (prompts, code, bearer token)
+    expect(loadConfig().host).toBeUndefined();
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    expect(loadConfig({ trustStore }).host).toBe("https://proxy.example");
   });
 
   it("defaults sandbox to true", () => {

@@ -22,10 +22,11 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { createTwoFilesPatch, diffLines } from "diff";
 import { WorkspaceGuard } from "../../core/fs/workspace-guard.js";
+import { readVerifiedWith, writeVerifiedWith } from "../verified-fs.js";
 
 export class ExpectedHashMismatchError extends Error {
   constructor(
@@ -83,7 +84,9 @@ export class CasEditor {
   /** Read through the guard, returning content + its hash (the CAS token). */
   async read(relativePath: string): Promise<{ path: string; absolute: string; content: string; hash: string }> {
     const absolute = this.opts.guard.requireAllowed("read", relativePath);
-    const content = await readFile(absolute, "utf8");
+    const content = (
+      await readVerifiedWith(() => this.opts.guard.requireAllowed("read", relativePath), relativePath)
+    ).toString("utf8");
     return { path: relativePath, absolute, content, hash: contentHash(content) };
   }
 
@@ -146,7 +149,9 @@ export class CasEditor {
     if (expectedHash !== null) {
       const verdict = this.opts.guard.check("read", relativePath);
       if (verdict.allowed && verdict.resolvedPath) {
-        current = await readFile(absolute, "utf8");
+        current = (
+          await readVerifiedWith(() => this.opts.guard.requireAllowed("read", relativePath), relativePath)
+        ).toString("utf8");
         const currentHash = contentHash(current);
         if (currentHash !== expectedHash) {
           throw new ExpectedHashMismatchError(relativePath, expectedHash, currentHash);
@@ -156,7 +161,10 @@ export class CasEditor {
         throw new ExpectedHashMismatchError(relativePath, expectedHash, "(missing)");
       }
     } else {
-      current = await readFile(absolute, "utf8").catch(() => "");
+      current = await readVerifiedWith(() => this.opts.guard.requireAllowed("read", relativePath), relativePath).then(
+        (b) => b.toString("utf8"),
+        () => "",
+      );
     }
     return this.applyAtomic(relativePath, absolute, current, nextContent, expectedHash ?? contentHash(current));
   }
@@ -175,7 +183,9 @@ export class CasEditor {
     expectedHash: string,
   ): Promise<{ absolute: string; content: string; hash: string }> {
     const absolute = this.opts.guard.requireAllowed("patch", relativePath);
-    const content = await readFile(absolute, "utf8");
+    const content = (
+      await readVerifiedWith(() => this.opts.guard.requireAllowed("patch", relativePath), relativePath)
+    ).toString("utf8");
     const hash = contentHash(content);
     if (hash !== expectedHash) {
       throw new ExpectedHashMismatchError(relativePath, expectedHash, hash);
@@ -191,11 +201,8 @@ export class CasEditor {
     after: string,
     previousHash: string,
   ): Promise<MutationResult> {
-    const dir = dirname(absolute);
-    await mkdir(dir, { recursive: true });
-    const tmp = join(dir, `.${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.nexum-tmp`);
-    await writeFile(tmp, after, "utf8");
-    await rename(tmp, absolute); // atomic on POSIX; same-directory rename
+    await mkdir(dirname(absolute), { recursive: true });
+    await writeVerifiedWith(() => this.opts.guard.requireAllowed("write", relativePath), relativePath, after);
     return {
       path: relativePath,
       applied: true,

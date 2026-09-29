@@ -158,4 +158,43 @@ describe("CredentialService", () => {
     delete process.env.NEXUM_SCOPED_A;
     delete process.env.NEXUM_SCOPED_B;
   });
+
+  it("scope() enforces tags: only credentials declared with ALL scope tags are visible", async () => {
+    process.env.NEXUM_TAG_TRADE = "t";
+    process.env.NEXUM_TAG_BOTH = "b";
+    process.env.NEXUM_TAG_NONE = "n";
+    const service = new CredentialService({ rootDir: tmpDir })
+      .declare({ name: "TAG_TRADE", tags: ["trading"] })
+      .declare({ name: "TAG_BOTH", tags: ["trading", "binance"] });
+    const trading = service.scope({ tags: ["trading"], names: [] });
+    expect(await trading.get("TAG_TRADE")).toBe("t");
+    expect(await trading.get("TAG_BOTH")).toBe("b");
+    expect(await trading.get("TAG_NONE")).toBeUndefined();
+    await expect(trading.require("TAG_NONE")).rejects.toThrow(/not in scope/);
+
+    const binance = service.scope({ tags: ["trading", "binance"], names: [] });
+    expect(await binance.get("TAG_TRADE")).toBeUndefined();
+    expect(await binance.get("TAG_BOTH")).toBe("b");
+    delete process.env.NEXUM_TAG_TRADE;
+    delete process.env.NEXUM_TAG_BOTH;
+    delete process.env.NEXUM_TAG_NONE;
+  });
+
+  it("defaultScope applies to unscoped get/require/list, and an explicit scope replaces it", async () => {
+    process.env.NEXUM_DS_IN = "in";
+    process.env.NEXUM_DS_OUT = "out";
+    const service = new CredentialService({
+      rootDir: tmpDir,
+      defaultScope: { tags: [], names: ["DS_IN"] },
+    });
+    expect(await service.get("DS_IN")).toBe("in");
+    expect(await service.get("DS_OUT")).toBeUndefined();
+    await expect(service.require("DS_OUT")).rejects.toThrow(/not in the default scope/);
+    const listed = await service.list();
+    expect(listed).toContain("DS_IN");
+    expect(listed).not.toContain("DS_OUT");
+    expect(await service.scope({ tags: [], names: ["DS_OUT"] }).get("DS_OUT")).toBe("out");
+    delete process.env.NEXUM_DS_IN;
+    delete process.env.NEXUM_DS_OUT;
+  });
 });

@@ -142,6 +142,214 @@ describe("Provider apiKeys pool (Ollama Cloud only)", () => {
   });
 });
 
+describe("Provider keySelector (KeyManager wiring)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+  afterEach(() => {
+    delete (globalThis as any).fetch;
+  });
+
+  const okBody = (content = "ok") =>
+    new Response(JSON.stringify({ model: "m", message: { role: "assistant", content }, done: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+  function authOf(call: unknown[]): string {
+    const headers = (call[1] as { headers?: HeadersInit } | undefined)?.headers;
+    return new Headers(headers ?? {}).get("authorization") ?? "";
+  }
+
+  it("sends the request with the key the selector acquired", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(okBody());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: { acquire: async () => "key_b", release: jest.fn() },
+    });
+    await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_b");
+  });
+
+  it("releases the acquired key after success and after failure", async () => {
+    (globalThis as any).fetch = jest.fn().mockResolvedValue(okBody());
+    const release = jest.fn();
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: { acquire: async () => "key_b", release },
+    });
+
+    await provider.chat([{ role: "user", content: "hi" }]);
+    expect(release).toHaveBeenCalledWith("key_b");
+    expect(release).toHaveBeenCalledTimes(1);
+
+    (globalThis as any).fetch = jest.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "boom" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow();
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the plain endpoint pool when acquire throws", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(okBody());
+    (globalThis as any).fetch = fakeFetch;
+    const release = jest.fn();
+
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: {
+        acquire: async () => {
+          throw new Error("all keys busy");
+        },
+        release,
+      },
+    });
+    const res = await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(res.message.content).toBe("ok");
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_a"); // first pool key by priority
+    expect(release).not.toHaveBeenCalled(); // nothing was acquired, nothing to release
+  });
+
+  it("keeps SDK failover as a safety net below the preferred key", async () => {
+    const fakeFetch = jest.fn().mockImplementation(async () => {
+      if (fakeFetch.mock.calls.length === 1) {
+        return new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return okBody();
+    });
+    (globalThis as any).fetch = fakeFetch;
+    const release = jest.fn();
+
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: { acquire: async () => "key_b", release },
+    });
+    const res = await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(res.message.content).toBe("ok");
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_b"); // preferred key tried first
+    expect(authOf(fakeFetch.mock.calls[1])).toBe("Bearer key_a"); // failed over to the rest of the pool
+    expect(release).toHaveBeenCalledWith("key_b");
+  });
+
+  it("re-uses the same preferred key for the same model across calls (warmth binding)", async () => {
+    const fakeFetch = jest.fn().mockImplementation(async () => okBody());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: { acquire: async () => "key_b", release: jest.fn() },
+    });
+    await provider.chat([{ role: "user", content: "one" }]);
+    await provider.chat([{ role: "user", content: "two" }]);
+
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_b");
+    expect(authOf(fakeFetch.mock.calls[1])).toBe("Bearer key_b");
+  });
+});
+
+// Documents the answer to "are multiple API keys auto-switched in live
+// sessions?": yes — a 429 (or timeout/auth/5xx) on the serving key rotates
+// the session to the next key in the pool automatically, mid-conversation,
+// with no manual switching. These tests pin the behavior by asserting which
+// key actually served each request via the Authorization header.
+describe("documented behavior: automatic key rotation in live sessions", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+  afterEach(() => {
+    delete (globalThis as any).fetch;
+  });
+
+  function authOf(call: unknown[]): string {
+    const headers = (call[1] as { headers?: HeadersInit } | undefined)?.headers;
+    return new Headers(headers ?? {}).get("authorization") ?? "";
+  }
+
+  it("a 429 on the serving key transparently rotates the session to the next key — no manual switch needed", async () => {
+    const fakeFetch = jest.fn().mockImplementation(async () => {
+      if (fakeFetch.mock.calls.length === 1) {
+        return new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ model: "m", message: { role: "assistant", content: "ok" }, done: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "cloud", model: "m", apiKeys: ["key_a", "key_b"], host: "https://x" });
+    const res = await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(res.message.content).toBe("ok");
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_a");
+    expect(authOf(fakeFetch.mock.calls[1])).toBe("Bearer key_b");
+  });
+
+  it("the next request starts from the last healthy key (rotation state persists across calls)", async () => {
+    const fakeFetch = jest.fn().mockImplementation(async () => {
+      const n = fakeFetch.mock.calls.length;
+      if (n === 1) {
+        return new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          model: "m",
+          message: { role: "assistant", content: n === 2 ? "first" : "second" },
+          done: true,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "cloud", model: "m", apiKeys: ["key_a", "key_b"], host: "https://x" });
+    await provider.chat([{ role: "user", content: "hi" }]);
+    const res = await provider.chat([{ role: "user", content: "hi again" }]);
+
+    expect(res.message.content).toBe("second");
+    expect(fakeFetch).toHaveBeenCalledTimes(3);
+    // Third call (second chat) went straight to the key that recovered the
+    // session — the rate-limited key was skipped by its circuit breaker.
+    expect(authOf(fakeFetch.mock.calls[2])).toBe("Bearer key_b");
+  });
+});
+
 describe("Provider streaming", () => {
   function streamOf(lines: string[]): Response {
     const encoder = new TextEncoder();

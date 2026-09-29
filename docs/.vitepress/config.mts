@@ -42,6 +42,7 @@ export default defineConfig({
           { text: "System Architecture", link: "/guide/architecture" },
           { text: "Agent Execution Kernel", link: "/guide/kernel" },
           { text: "Capability Router & Escalation", link: "/guide/capability-routing" },
+          { text: "Multi-Key Cloud Pools & Rotation", link: "/guide/model-keys" },
           { text: "DAG Planner & Parallel Execution", link: "/guide/planner" },
           { text: "Docker Sandboxing", link: "/guide/sandboxing" },
         ],
@@ -53,6 +54,25 @@ export default defineConfig({
           { text: "Offline DevDocs Search", link: "/guide/devdocs" },
           { text: "Rails Semantic AST Index", link: "/guide/rails" },
           { text: "Persistent Memory & Learning", link: "/guide/memory" },
+          { text: "Semantic Memory", link: "/guide/semantic-memory" },
+          { text: "Agentic RAG (Hybrid Retrieval)", link: "/guide/rag" },
+        ],
+      },
+      {
+        text: "Evaluation & Quality",
+        items: [
+          { text: "Agent Evaluation Framework", link: "/guide/evaluation" },
+          { text: "LLM-as-a-Judge", link: "/guide/llm-judge" },
+          { text: "In-Loop Critic & Self-Correction", link: "/guide/critic" },
+        ],
+      },
+      {
+        text: "Multi-Agent & Production",
+        items: [
+          { text: "Multi-Agent Coordination", link: "/guide/multiagent" },
+          { text: "Artifacts", link: "/guide/artifacts" },
+          { text: "Telemetry (OpenTelemetry)", link: "/guide/telemetry" },
+          { text: "Durable Job Queue", link: "/guide/durable-jobs" },
         ],
       },
       {
@@ -60,6 +80,11 @@ export default defineConfig({
         items: [
           { text: "35+ Built-in Tools Reference", link: "/guide/tools" },
           { text: "Model Context Protocol (MCP)", link: "/guide/mcp" },
+          { text: "Credentials & Secret Providers", link: "/guide/credentials" },
+          { text: "Plugin Sandbox & Isolation", link: "/guide/plugin-sandbox" },
+          { text: "Plugin Marketplace & Signing", link: "/guide/marketplace" },
+          { text: "Capability Attestation", link: "/guide/attestations" },
+          { text: "Trust & Security CLI", link: "/guide/security-cli" },
           { text: "Custom Skills & Prompts", link: "/guide/skills" },
           { text: "Model Benchmark Harness", link: "/guide/benchmarks" },
         ],

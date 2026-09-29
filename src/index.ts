@@ -16,6 +16,24 @@
  *   ollama-sdk → Nexum Core (this package's planes) → DevAgent / CryptoAgent
  */
 
+// ── MCP elicitation / user-input contracts
+export type {
+  McpElicitationMode,
+  McpElicitationAction,
+  McpElicitationValue,
+  McpElicitationOneOf,
+  McpElicitationFieldSchema,
+  McpElicitationFormSchema,
+  McpElicitationRequest,
+  McpElicitationResponse,
+  McpElicitationHandler,
+} from "./core/user-input.js";
+export {
+  validateMcpElicitationRequest,
+  validateMcpElicitationForm,
+  normalizeMcpElicitationResponse,
+} from "./core/user-input.js";
+
 // ── Stable runtime primitives ───────────────────────────────────────────────
 export type {
   AgentRuntime,
@@ -126,6 +144,21 @@ export {
   agentCorePack,
 } from "./tools/packs/index.js";
 
+// ── Filesystem boundary (one guard shared by every file-touching pack) ──────
+export {
+  WorkspaceGuard,
+  WorkspacePathError,
+  type WorkspaceGuardOptions,
+  type FsOperation,
+  type FsVerdict,
+} from "./core/fs/workspace-guard.js";
+export {
+  agentWorkspaceGuard,
+  PathEscapeError,
+  SensitivePathError,
+  type WorkspaceBoundary,
+} from "./tools/path-utils.js";
+
 // ── Product agents (review item 40) ─────────────────────────────────────────
 export { DevAgent, DEVAGENT_DESCRIPTOR, CryptoAgent, cryptoAgentDescriptor } from "./agents/index.js";
 
@@ -171,12 +204,48 @@ export {
   type ResolveResult,
 } from "./platform/plugins/index.js";
 
+// Plugin sandbox (P2 trust tier)
+export {
+  sandboxPlugin,
+  IsolatedPluginSandbox,
+  PluginSandboxViolation,
+  PluginSandboxTimeout,
+  type SandboxedPlugin,
+  type IsolatedPlugin,
+  type PluginSandboxPolicy,
+  type PluginSandboxHandle,
+  type SandboxViolation,
+  type SandboxAuditEntry,
+  type SandboxResourceLimits,
+  type IsolatedPluginSandboxOptions,
+} from "./platform/plugins/index.js";
+
 // Capability DI
 export {
   defineCapabilityToken,
   CapabilityRegistry,
   PLUGIN_HOST,
   type CapabilityToken,
+} from "./core/capabilities/index.js";
+
+// Capability attestation (P2 trust tier)
+export {
+  AttestationAuthority,
+  AttestationLedger,
+  attestHostGrants,
+  generateAttestationKeyPair,
+  loadOrCreateAuthority,
+  canonicalGrantPayload,
+  type AttestationSubject,
+  type AttestationSubjectType,
+  type CapabilityGrant,
+  type SealedGrant,
+  type CapabilityAttestation,
+  type AttestationVerification,
+  type AttestationAuthorityOptions,
+  type AuthorityKeyPair,
+  type LedgerEntry,
+  type CapabilityGrantsSnapshot,
 } from "./core/capabilities/index.js";
 
 // Service registry
@@ -219,6 +288,7 @@ export {
   type SubagentState,
   type SubagentProviderType,
   type SubagentServiceOptions,
+  type DefaultSubagentProvidersOptions,
 } from "./subagents/index.js";
 
 // Job service
@@ -288,14 +358,23 @@ export {
   FileCredentialProvider,
   KeychainCredentialProvider,
   VaultCredentialProvider,
+  HttpVaultClient,
   ScopedCredentialService,
   redact,
   defaultCredentialProviders,
+  defaultVaultNameMapping,
   type CredentialSpec,
   type CredentialRecord,
   type CredentialScope,
   type CredentialProvider,
   type CredentialServiceOptions,
+  type ExecResult,
+  type ExecFn,
+  type Platform,
+  type KeychainCredentialProviderOptions,
+  type VaultClient,
+  type HttpVaultClientOptions,
+  type VaultCredentialProviderOptions,
 } from "./credentials/index.js";
 
 // Attachment store
@@ -424,6 +503,27 @@ export {
   type NpmMarketplaceSourceOptions,
 } from "./marketplace/index.js";
 
+// Marketplace signing & publisher trust (P2 trust tier)
+export {
+  generatePublisherKeyPair,
+  signEntry,
+  verifyEntrySignature,
+  canonicalSignedPayload,
+  keyIdFromSpki,
+  computeTrustScore,
+  trustRiskBand,
+  PublisherTrustStore,
+  SIGNED_FIELDS,
+  type EntrySignature,
+  type PublisherKeyPair,
+  type PublisherKeyRecord,
+  type PublisherTrustLevel,
+  type SignatureStatus,
+  type SignatureVerification,
+  type PublisherTrustStoreOptions,
+  type TrustRiskBand,
+} from "./marketplace/trust.js";
+
 // Control plane (observability + control)
 export {
   ControlPlaneService,
@@ -486,3 +586,230 @@ export {
   type RedisEventHandler,
   type Unsubscribe,
 } from "./infrastructure/redis/index.js";
+// Semantic memory (embedding-backed long-term memory)
+export {
+  SemanticMemory,
+  MemoryRanker,
+  createSemanticMemory,
+  createWorkspaceSemanticMemory,
+  defaultEmbedder,
+  DEFAULT_RANKER_WEIGHTS,
+  type MemoryKind,
+  type MemoryEntryInput,
+  type MemoryHit,
+  type MemoryScore,
+  type MemoryRecallOptions,
+  type RankerWeights,
+  type SemanticMemoryOptions,
+  type CreateSemanticMemoryOptions,
+} from "./memory/semantic/semantic-memory.js";
+export {
+  HashEmbedder,
+  OllamaEmbedder,
+  FallbackEmbedder,
+  cosineSimilarity,
+  l2Normalize,
+  type EmbeddingProvider,
+  type HashEmbedderOptions,
+  type OllamaEmbedderOptions,
+  type FallbackEmbedderOptions,
+} from "./memory/semantic/embedding.js";
+export {
+  InMemoryVectorStore,
+  SqliteVectorStore,
+  matchesFilter,
+  type VectorStore,
+  type VectorRecord,
+  type VectorHit,
+  type VectorFilter,
+  type VectorQueryOptions,
+} from "./memory/semantic/vector-store.js";
+
+// Agentic RAG (hybrid retrieval + grounding)
+export {
+  RetrieverRegistry,
+  VectorRetriever,
+  KeywordRetriever,
+  GraphRetriever,
+  MetadataRetriever,
+  InMemoryKeywordIndex,
+  SqliteKeywordIndex,
+  InMemoryGraphIndex,
+  HybridRetriever,
+  fuseByRrf,
+  HeuristicReranker,
+  LlmReranker,
+  GroundingService,
+  extractClaims,
+  RagService,
+  createWorkspaceRagService,
+  buildContextBlock,
+  type Retriever,
+  type RetrievalQuery,
+  type RetrievedChunk,
+  type RetrievalOutcome,
+  type KeywordIndex,
+  type GraphIndex,
+  type Reranker,
+  type GroundingReport,
+  type RagAnswer,
+} from "./rag/index.js";
+
+// LLM-as-a-Judge
+export {
+  LlmJudge,
+  JudgeParseError,
+  weightedOverall,
+  defineRubric,
+  builtinRubrics,
+  ANSWER_QUALITY_RUBRIC,
+  TASK_COMPLETION_RUBRIC,
+  GROUNDEDNESS_RUBRIC,
+  InMemoryJudgeHistory,
+  SqliteJudgeHistory,
+  subjectDigest,
+  calibrateJudge,
+  pearson,
+  type Rubric,
+  type RubricCriterion,
+  type JudgeSubject,
+  type JudgeVerdict,
+  type CriterionScore,
+  type JudgeHistory,
+  type CalibrationSample,
+  type CalibrationReport,
+} from "./evaluation/judge/index.js";
+
+// Unified agent evaluation framework
+export {
+  defineDataset,
+  compareReports,
+  RULE_METRICS,
+  goalCompletion,
+  toolSelectionAccuracy,
+  argumentValidity,
+  trajectoryEfficiency,
+  recoverySuccess,
+  safetyForbidden,
+  runLatency,
+  runTokens,
+  runTurns,
+  argsContain,
+  RuleEvaluator,
+  JudgeEvaluator,
+  EvaluatorRegistry,
+  defaultEvaluatorRegistry,
+  EvaluationRunner,
+  FunctionHarness,
+  observeExecution,
+  renderMarkdownReport,
+  renderRegression,
+  ReportStore,
+  type Scenario,
+  type EvaluationDataset,
+  type ScenarioExpectation,
+  type ExpectedToolCall,
+  type TrajectoryObservation,
+  type MetricResult,
+  type Evaluator,
+  type Threshold,
+  type EvaluationReport,
+  type RegressionPolicy,
+  type AgentHarness,
+} from "./evaluation/index.js";
+
+// In-loop critic & self-correction
+export {
+  CriticService,
+  SelfCorrectionLoop,
+  VerifierService,
+  expectOutputContains,
+  expectNoPlaceholders,
+  expectMinLength,
+  severityAtLeast,
+  type Critique,
+  type CritiqueWeakness,
+  type CriticOptions,
+  type CriticSeverity,
+  type SelfCorrectionResult,
+  type VerificationCheck,
+  type VerificationReport,
+} from "./runtime/critic/index.js";
+export type { CriticPolicy } from "./runtime/strategies/execution-strategy.js";
+
+// Artifacts (versioned, provenance-carrying outputs)
+export {
+  InMemoryArtifactStore,
+  SqliteArtifactStore,
+  deriveArtifact,
+  contentHash,
+  newArtifactId,
+  type Artifact,
+  type ArtifactKind,
+  type ArtifactReference,
+  type ArtifactProvenance,
+  type ArtifactSaveInput,
+  type ArtifactQuery,
+  type ArtifactStore,
+} from "./artifacts/index.js";
+
+// Multi-agent coordination (bus · shared state · consensus · supervisor)
+export {
+  AgentMessageBus,
+  AgentInbox,
+  ConversationTracker,
+  SharedStateStore,
+  VersionConflictError,
+  ConsensusEngine,
+  MajorityVoting,
+  UnanimousVoting,
+  WeightedVoting,
+  QuorumVoting,
+  PriorityResolver,
+  ConflictResolver,
+  SupervisorAgent,
+  busTaskPort,
+  singleTaskPlanner,
+  newSupervisorTask,
+  type AgentMessage,
+  type DeliveryReceipt,
+  type SharedAgentState,
+  type ConflictPolicy,
+  type VotingStrategy,
+  type DecisionOutcome,
+  type SupervisionResult,
+  type WorkerAgent,
+} from "./multiagent/index.js";
+
+// OTel-compatible telemetry (spans + OTLP export + Prometheus metrics)
+export {
+  TelemetryService,
+  telemetryFromEnv,
+  Tracer,
+  SpanEventMapper,
+  simpleHash,
+  OtlpHttpExporter,
+  StdoutExporter,
+  InMemorySpanExporter,
+  spanToOtlp,
+  MetricsRegistry,
+  renderPrometheus,
+  type TelemetryOptions,
+  type Span,
+  type SpanKind,
+  type SpanStatus,
+  type SpanExporter,
+  type MetricsSnapshot,
+} from "./observability/index.js";
+export { DEFAULT_BUCKETS } from "./observability/index.js";
+
+// Durable job queue (leases, heartbeats, dead-lettering)
+export {
+  DurableJobQueue,
+  QueueWorker,
+  type DurableJob,
+  type DurableJobSpec,
+  type DurableJobState,
+  type QueueStats,
+  type QueueWorkerOptions,
+} from "./jobs/durable-queue.js";

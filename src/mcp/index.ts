@@ -22,3 +22,39 @@ export {
   type McpSecurityOverride as McpServerSecurityOverride,
 } from "./adapter/security-metadata.js";
 export { connectMcpServer } from "./client.js";
+export type {
+  McpElicitationMode,
+  McpElicitationAction,
+  McpElicitationValue,
+  McpElicitationOneOf,
+  McpElicitationFieldSchema,
+  McpElicitationFormSchema,
+  McpElicitationRequest,
+  McpElicitationResponse,
+  McpElicitationHandler,
+} from "../core/user-input.js";
+export {
+  validateMcpElicitationRequest,
+  validateMcpElicitationForm,
+  normalizeMcpElicitationResponse,
+} from "../core/user-input.js";
+
+// P2 trust tier — per-server trust levels, tool allow/deny, risk ceilings,
+// fingerprinted TOFU approvals (see trust.ts).
+export {
+  McpTrustPolicy,
+  McpApprovalStore,
+  mcpTrustPolicyFromConfig,
+  mcpServerFingerprint,
+  matchesPattern,
+  riskAtLeast,
+  type McpTrustLevel,
+  type McpToolRule,
+  type McpServerTrustRule,
+  type McpServerTrustConfig,
+  type McpServerDecision,
+  type McpToolDecision,
+  type McpTrustSource,
+  type McpTrustPolicyOptions,
+  type McpApprovalEntry,
+} from "./trust.js";

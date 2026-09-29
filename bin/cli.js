@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import 'dotenv/config';
+// No `import 'dotenv/config'`: a workspace .env is repository content and is
+// loaded only once the workspace is trusted (see src/cli/workspace-trust.ts).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -27,14 +28,37 @@ Usage:
   nexum session <list|show|attach>  Client commands against a running nexum serve
   nexum doctor                  Run system, workspace, and model diagnostics
   nexum migrate                 Migrate legacy .devagent state to .nexum
+  nexum trust [status|revoke]   Review and trust this workspace's settings and .env
   nexum asl [validate|graph]    Architecture definition commands
   nexum evolve [options]        Harness evolution and self-development commands
+  nexum plugins sandbox <file>  Trial-run a plugin in the worker sandbox
+  nexum plugins verify [id…]    Re-verify installed marketplace plugins
+  nexum marketplace keys …      Publisher trust store management
+  nexum mcp trust …             MCP server trust approvals & policy preview
+  nexum credentials …           Credential resolution preview (redacted)
+  nexum capabilities …          Capability attestation authority & ledger
 
 Options:
   -h, --help                    Show this help message
   -v, --version                 Show version
 `);
   process.exit(0);
+}
+
+if (command === 'trust') {
+  const { runTrustCli } = await import('../dist/cli/trust.js');
+  process.exit(await runTrustCli(process.argv.slice(3)));
+}
+
+// Settings a repository ships (.nexum/config.json, .env, …) apply only once the
+// workspace is trusted. The interactive UI asks; every other command runs
+// without them and says so on stderr.
+{
+  const nonInteractive = ['doctor', 'evolve', 'plugins', 'marketplace', 'mcp', 'credentials', 'capabilities', 'rpc', 'migrate', 'asl'];
+  const { ensureWorkspaceTrust } = await import('../dist/cli/trust.js');
+  await ensureWorkspaceTrust({ interactive: !nonInteractive.includes(command) });
+  const { applyEnvFiles } = await import('../dist/cli/config.js');
+  applyEnvFiles();
 }
 
 if (command === 'doctor') {
@@ -49,6 +73,14 @@ if (command === 'evolve') {
   const { runEvolutionCli } = await import('../dist/evolution/cli.js');
   await runEvolutionCli(process.argv.slice(3));
   process.exit(0);
+}
+
+// Trust & security command areas (plugins / marketplace / mcp / credentials /
+// capabilities). Everything else falls through to the interactive UI.
+if (['plugins', 'marketplace', 'mcp', 'credentials', 'capabilities'].includes(command)) {
+  const { runSecurityCli } = await import('../dist/cli/security.js');
+  const code = await runSecurityCli(command, process.argv.slice(3));
+  process.exit(code);
 }
 
 if (command === 'rpc') {
@@ -76,4 +108,3 @@ if (command === 'migrate') {
 } else {
   await import('../dist/ui/index.js');
 }
-

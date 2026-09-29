@@ -3,7 +3,11 @@
  */
 
 import { defineCapabilityToken } from "../../../core/capabilities/index.js";
-import { SubagentService, defaultSubagentProviders } from "../../../subagents/index.js";
+import {
+  SubagentService,
+  defaultSubagentProviders,
+  type DefaultSubagentProvidersOptions,
+} from "../../../subagents/index.js";
 import { definePlugin } from "../types.js";
 
 /** Token for the shared SubagentService. */
@@ -15,6 +19,8 @@ export interface SubagentServicePluginOptions {
   agents?: unknown;
   maxConcurrent?: number;
   maxTotalPerSession?: number;
+  /** Optional backends beyond in-process; each is registered only when configured. */
+  providers?: Omit<DefaultSubagentProvidersOptions, "runtime" | "agents">;
 }
 
 export function subagentServicePlugin(opts: SubagentServicePluginOptions = {}) {
@@ -36,6 +42,7 @@ export function subagentServicePlugin(opts: SubagentServicePluginOptions = {}) {
       // service starts with no providers and embedding app adds them later.
       if (opts.runtime && opts.agents) {
         for (const p of defaultSubagentProviders({
+          ...opts.providers,
           runtime: opts.runtime as never,
           agents: opts.agents as never,
         })) {

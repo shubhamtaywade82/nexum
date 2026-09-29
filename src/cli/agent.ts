@@ -1,4 +1,4 @@
-import { CliConfig, loadConfig } from "./config.js";
+import { CliConfig, loadConfig, type McpCliServerConfig } from "./config.js";
 import { WorkspaceManager } from "../platform/workspace.js";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
@@ -26,10 +26,13 @@ import { IntentResolver } from "../intent/intent-resolver.js";
 import { MemoryStore } from "../memory/store.js";
 import { DocsStore } from "../docs/store.js";
 import { AgentConversation } from "./agent-conversation.js";
-import { AgentToolManager } from "./agent-tools.js";
+import { AgentToolManager, type McpRegistrationOptions } from "./agent-tools.js";
+import { McpApprovalStore, McpTrustPolicy, mcpTrustPolicyFromConfig } from "../mcp/trust.js";
+import { preservingTrust, WorkspaceTrustStore } from "./workspace-trust.js";
 import { AgentIntelligence } from "./agent-intelligence.js";
 import { AgentLearning } from "./agent-learning.js";
 import { DynamicToolSelector } from "../tools/discovery.js";
+import { join } from "node:path";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
 
@@ -60,6 +63,7 @@ import { createExecutionContext } from "../runtime/context/execution-context.js"
 import type { ExecutionRequest } from "../core/types.js";
 import type { StrategyHooks } from "../runtime/strategies/strategy-hooks.js";
 import { AgentConversationContext } from "./agent-conversation-context.js";
+import type { McpElicitationRequest, McpElicitationResponse } from "../core/user-input.js";
 
 // Confirmation gate for irreversible actions lives in the kernel now
 // (src/kernel/policy/approval-broker.ts): the classification table and the
@@ -87,7 +91,12 @@ export interface AgentEvents {
   onPlanUpdate?: (goal: string, steps: PlanStep[], status: "running" | "completed" | "failed") => void;
   onApprovalRequested?: (request: ApprovalRequest) => void;
   onClarificationRequested?: (request: ClarificationRequest) => void;
-  onModelUsed?: (tier: string, model: string) => void;
+  onMcpElicitationRequested?: (request: McpElicitationRequest) => void;
+  onModelUsed?: (
+    tier: string,
+    model: string,
+    usage?: { promptTokens: number; completionTokens: number; latencyMs: number },
+  ) => void;
   /** Whole-mission phase system (see runtime/mission-derive.ts): a new mission
    * begins, a phase's status changes, or a live plan step transitions. */
   onMissionStarted?: (goal: string) => void;
@@ -164,7 +173,9 @@ export class Agent {
   private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>();
 
   readonly workspaceRoot: string;
-  private readonly mcpServerConfigs: Array<{ name: string; command: string; args?: string[] }>;
+  private readonly mcpServerConfigs: McpCliServerConfig[];
+  /** P2 trust tier: built from config when any server sets trust/tools/maxRisk. */
+  private readonly mcpTrust?: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
   readonly intentResolver = new IntentResolver();
   projectInfo?: ProjectInfo;
@@ -202,19 +213,24 @@ export class Agent {
       autoApprove: cfg.autoApprove ?? false,
       onApprovalRequested: (request) => this.emit("onApprovalRequested", request),
       onClarificationRequested: (request) => this.emit("onClarificationRequested", request),
+      onMcpElicitationRequested: (request) => this.emit("onMcpElicitationRequested", request),
       hasApprovalListener: () => !!this.events.onApprovalRequested || !!this.listeners.get("onApprovalRequested")?.size,
       hasClarificationListener: () =>
         !!this.events.onClarificationRequested || !!this.listeners.get("onClarificationRequested")?.size,
+      hasMcpElicitationListener: () =>
+        !!this.events.onMcpElicitationRequested || !!this.listeners.get("onMcpElicitationRequested")?.size,
     });
 
     this.conversation = new AgentConversation();
 
     this.tools = new AgentToolManager();
-    this.tools.registerBaseTools(cfg.workspaceRoot, (stream, chunk) => this.emit("onShellOutput", stream, chunk), {
-      sandbox: cfg.sandbox,
-      image: cfg.shellImage,
-      timeoutSec: cfg.shellTimeoutSec,
-    });
+    this.tools.registerBaseTools(
+      cfg.workspaceRoot,
+      (stream, chunk) => this.emit("onShellOutput", stream, chunk),
+      { sandbox: cfg.sandbox, image: cfg.shellImage, timeoutSec: cfg.shellTimeoutSec },
+      { writeScope: cfg.writeScope },
+      { dockerTool: cfg.dockerTool, dockerEgress: cfg.dockerEgress },
+    );
     this.tools.registerHybridTools(this.stack.localWorker);
     this.tools.registerClarificationTool(this);
 
@@ -246,7 +262,27 @@ export class Agent {
     // Workspace state (memory/checkpoint/sessions/docs) lives under .nexum —
     // resolved (and migrated from legacy .devagent when present) by the
     // WorkspaceManager, the single owner of that decision (docs/REBRANDING.md §4).
-    const statePaths = new WorkspaceManager(cfg.workspaceRoot).ensure();
+    // (the one-time .devagent → .nexum migration copies config.json: keep a
+    // trusted workspace trusted across it, never trust an untrusted one)
+    const statePaths = preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), () =>
+      new WorkspaceManager(cfg.workspaceRoot).ensure(),
+    );
+
+    // P2 trust tier: entries with trust/tools/maxRisk gates get a policy;
+    // entries without keep the connect-freely behavior (listing = consent).
+    this.mcpTrust = this.mcpServerConfigs.some(
+      (s) => s.trust !== undefined || s.tools !== undefined || s.maxRisk !== undefined,
+    )
+      ? mcpTrustPolicyFromConfig(this.mcpServerConfigs, {
+          // approvals stored in an untrusted workspace are repository
+          // content: ignore them (servers needing approval then ask)
+          approvals: cfg.workspaceTrust?.trusted
+            ? new McpApprovalStore(join(statePaths.dir, "mcp-trust.json"), (write) =>
+                preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), write),
+              )
+            : undefined,
+        })
+      : undefined;
 
     this.memory = new MemoryStore(statePaths.memoryDb);
     this.planCheckpoint = new CheckpointStore(statePaths.checkpoint);
@@ -671,8 +707,14 @@ export class Agent {
         // provider's own current tier/model there.
         const routedTier = (response.routedTier as string | undefined) ?? this.stack.provider.currentTier;
         const routedModel = (response.routedModel as string | undefined) ?? this.stack.provider.currentModel;
-        this.emit("onModelUsed", routedTier, routedModel);
-        this.emitUsage(response, elapsedMs);
+        const usage = this.readUsage(response);
+        if (usage) {
+          const { promptTokens, completionTokens } = usage;
+          this.emit("onModelUsed", routedTier, routedModel, { promptTokens, completionTokens, latencyMs: elapsedMs });
+          this.emit("onUsage", { ...usage, latencyMs: elapsedMs });
+        } else {
+          this.emit("onModelUsed", routedTier, routedModel);
+        }
       },
 
       prepareToolCall: (call) => {
@@ -875,6 +917,14 @@ export class Agent {
     return this.approvals.requestClarification(request);
   }
 
+  async requestMcpElicitation(request: McpElicitationRequest): Promise<McpElicitationResponse> {
+    return this.approvals.requestMcpElicitation(request);
+  }
+
+  resolveMcpElicitation(response: McpElicitationResponse): void {
+    this.approvals.resolveMcpElicitation(response);
+  }
+
   resolveClarification(response: ClarificationResponse): void {
     this.approvals.resolveClarification(response);
   }
@@ -1023,21 +1073,18 @@ export class Agent {
   // Ollama's /api/chat response carries eval_count/prompt_eval_count/eval_duration
   // (nanoseconds) untyped through ChatResponse's index signature — read them here
   // rather than widening the shared type for fields only this call site needs.
-  private emitUsage(response: { [key: string]: unknown }, latencyMs: number): void {
+  private readUsage(response: {
+    [key: string]: unknown;
+  }): { promptTokens: number; completionTokens: number; tokensPerSecond: number } | undefined {
     const promptTokens = response.prompt_eval_count as number | undefined;
     const completionTokens = response.eval_count as number | undefined;
     const evalDurationNs = response.eval_duration as number | undefined;
-    if (typeof promptTokens !== "number" && typeof completionTokens !== "number") return;
+    if (typeof promptTokens !== "number" && typeof completionTokens !== "number") return undefined;
     const tokensPerSecond =
       typeof completionTokens === "number" && typeof evalDurationNs === "number" && evalDurationNs > 0
         ? completionTokens / (evalDurationNs / 1e9)
         : 0;
-    this.emit("onUsage", {
-      promptTokens: promptTokens ?? 0,
-      completionTokens: completionTokens ?? 0,
-      tokensPerSecond,
-      latencyMs,
-    });
+    return { promptTokens: promptTokens ?? 0, completionTokens: completionTokens ?? 0, tokensPerSecond };
   }
 
   getRegistry() {
@@ -1077,20 +1124,27 @@ export class Agent {
     this.execution.endExecutionRun();
   }
 
-  async registerMcpServer(command: string, args: string[] = []): Promise<void> {
-    await this.tools.registerMcpServer(command, args);
+  async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<void> {
+    await this.tools.registerMcpServer(command, args, {
+      ...opts,
+      elicitation: opts.elicitation ?? { request: (request) => this.requestMcpElicitation(request) },
+    });
   }
 
   /** Connects every MCP server listed in config.mcpServers, one at a time
    * (each spawns a subprocess). Never throws — a server that fails to start
-   * shows up as `connected: false` rather than aborting the others or the
-   * TUI's own startup. */
+   * (or is denied by the trust policy) shows up as `connected: false` rather
+   * than aborting the others or the TUI's own startup. */
   async connectConfiguredMcpServers(): Promise<McpServerState[]> {
     const results: McpServerState[] = [];
     for (const server of this.mcpServerConfigs) {
       const start = Date.now();
       try {
-        const tools = await this.tools.registerMcpServer(server.command, server.args ?? []);
+        const tools = await this.tools.registerMcpServer(server.command, server.args ?? [], {
+          serverName: server.name,
+          ...(this.mcpTrust ? { trust: this.mcpTrust } : {}),
+          elicitation: { request: (request) => this.requestMcpElicitation(request) },
+        });
         results.push({
           name: server.name,
           connected: true,

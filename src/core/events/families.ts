@@ -26,6 +26,7 @@ const FAMILY_BY_PREFIX: Array<readonly [string, EventFamily]> = [
   ["model.answered", "execution"],
   ["approval.", "execution"],
   ["clarification.", "execution"],
+  ["mcp.elicitation.", "execution"],
   ["conversation.tool_call", "execution"],
   ["conversation.test_result", "execution"],
   // Presentation: UI-visible chrome that is not execution itself.

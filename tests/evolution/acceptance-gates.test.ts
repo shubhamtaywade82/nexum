@@ -165,6 +165,19 @@ describe("GeneralizationGate (fixed-executor protocol)", () => {
     expect(verdict.executorSensitivity).toBeCloseTo(0.08);
   });
 
+  it("reports executor sensitivity as unmeasured with a single executor", () => {
+    const verdict = gate.evaluate(
+      [
+        cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.9 }),
+      ],
+      "H0",
+      "H1",
+    );
+    expect(verdict.executorSensitivity).toBeNull();
+    expect(verdict.rationale).toContain("needs ≥2 executors");
+  });
+
   it("rejects cells with insufficient runs", () => {
     const verdict = gate.evaluate(
       [
@@ -180,6 +193,29 @@ describe("GeneralizationGate (fixed-executor protocol)", () => {
 });
 
 describe("EvolutionMetricsTracker (first-class loop metrics)", () => {
+  it("reports unmeasured quantities as null and averages only measured values", () => {
+    const t = new EvolutionMetricsTracker();
+    t.record(switchRecord({ visibleGain: 0.1, transferGain: null, executorSensitivity: null }));
+    t.record(switchRecord({ visibleGain: null, transferGain: 0.04, executorSensitivity: null }));
+    const report = t.report();
+    expect(report.meanVisibleGain).toBeCloseTo(0.1);
+    expect(report.meanTransferGain).toBeCloseTo(0.04);
+    expect(report.meanExecutorSensitivity).toBeNull();
+  });
+
+  it("computes experience correlation only from recorded experience confidence", () => {
+    const t = new EvolutionMetricsTracker();
+    for (let i = 0; i < 4; i++) t.record(switchRecord({ heldOutGain: i / 10, promoted: i % 2 === 0 }));
+    expect(t.report().experienceImprovementCorrelation).toBeNull();
+
+    const withExperience = new EvolutionMetricsTracker();
+    withExperience.record(switchRecord({ experienceConfidence: 0.9, promoted: true }));
+    withExperience.record(switchRecord({ experienceConfidence: 0.8, promoted: true }));
+    withExperience.record(switchRecord({ experienceConfidence: 0.2, promoted: false }));
+    withExperience.record(switchRecord({ experienceConfidence: null, promoted: false }));
+    expect(withExperience.report().experienceImprovementCorrelation).toBeGreaterThan(0.9);
+  });
+
   it("computes promotion precision = genuinely better on held-out / promoted", () => {
     const t = new EvolutionMetricsTracker();
     t.record(switchRecord({ versionId: "H1", promoted: true, genuinelyBetterOnHeldOut: true }));

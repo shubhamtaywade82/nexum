@@ -62,7 +62,15 @@ export type ExecutionEvent =
   | { type: "tool.completed"; id: string; result: Record<string, unknown> }
   | { type: "tool.failed"; id: string; error: string }
   // ── model calls ─────────────────────────────────────────────────────────
-  | { type: "model.answered"; tier: string; model: string }
+  | {
+      type: "model.answered";
+      tier: string;
+      model: string;
+      /** Provider-reported usage for this call (absent when the provider reported none). */
+      promptTokens?: number;
+      completionTokens?: number;
+      latencyMs?: number;
+    }
   // ── planner / execution progress ────────────────────────────────────────
   | { type: "execution.goal"; goal: string; steps: ExecutionStep[] }
   | { type: "execution.step"; step: ExecutionStep }
@@ -95,6 +103,8 @@ export type ExecutionEvent =
   | { type: "approval.resolved"; id: string; approved: boolean }
   | { type: "clarification.requested"; request: ClarificationRequest }
   | { type: "clarification.resolved"; response: ClarificationResponse }
+  | { type: "mcp.elicitation.requested"; request: import("../../core/user-input.js").McpElicitationRequest }
+  | { type: "mcp.elicitation.resolved"; response: import("../../core/user-input.js").McpElicitationResponse }
   // ── transcript records of execution acts ────────────────────────────────
   | {
       type: "conversation.tool_call";
@@ -149,6 +159,8 @@ const EXECUTION_EVENT_TYPES: ReadonlySet<string> = new Set([
   "approval.resolved",
   "clarification.requested",
   "clarification.resolved",
+  "mcp.elicitation.requested",
+  "mcp.elicitation.resolved",
   "conversation.tool_call",
   "conversation.test_result",
 ]);

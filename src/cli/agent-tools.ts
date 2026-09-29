@@ -1,8 +1,14 @@
 import { Registry } from "../tools/registry.js";
 import { Tool } from "../tools/tool.js";
 import { connectMcpServer } from "../mcp/client.js";
+import { connectMcpServerV2 } from "../mcp/adapter/mcp-client-factory.js";
+import { McpToolAdapter } from "../mcp/adapter/mcp-tool-adapter.js";
+import { mcpSecurityMetadata } from "../mcp/adapter/security-metadata.js";
+import type { McpSecurityOverride } from "../mcp/adapter/security-metadata.js";
+import { mcpServerFingerprint, type McpTrustPolicy } from "../mcp/trust.js";
 import type { LocalWorker } from "../models/local-worker.js";
 import type { ClarificationRequester } from "../tools/ask-user-tool.js";
+import type { McpElicitationHandler } from "../core/user-input.js";
 import type { LspManager } from "../lsp/manager.js";
 import type { BrowserManager } from "../browser/manager.js";
 import type { BinanceStreamManager } from "../domains/trading/binance-stream.js";
@@ -22,15 +28,37 @@ import {
   filesystemPack,
   gitPack,
   lspPack,
+  memoryPack,
   projectPack,
   railsPack,
+  ragPack,
   rubyPack,
   searchPack,
   shellPack,
   tradingPack,
 } from "../tools/packs/index.js";
+import { createWorkspaceSemanticMemory } from "../memory/semantic/semantic-memory.js";
+import type { SemanticMemory } from "../memory/semantic/semantic-memory.js";
+import { createWorkspaceRagService } from "../rag/workspace.js";
+import type { RagService } from "../rag/rag-service.js";
+import { readEnv } from "../platform/environment.js";
+import { workspaceStateDir } from "../platform/paths.js";
+import { join } from "node:path";
+import { WorkspaceGuard, type WorkspaceGuardOptions } from "../core/fs/workspace-guard.js";
+import { ShellTool } from "../tools/shell.js";
 
 export type ToolOnOutput = (stream: "stdout" | "stderr", chunk: string) => void;
+
+/** Trust-gated MCP registration options (P2 trust tier). */
+export interface McpRegistrationOptions {
+  /** Server name used for rule matching + approvals (default: `stdio:<command>`). */
+  serverName?: string;
+  /** Trust policy; when set, servers/tools must pass it to register. */
+  trust?: McpTrustPolicy;
+  /** Per-server security overrides applied to every registered tool. */
+  security?: McpSecurityOverride;
+  elicitation?: McpElicitationHandler;
+}
 
 /**
  * Tool ownership and registration.
@@ -59,6 +87,10 @@ export class AgentToolManager {
   readonly gateway: DefaultToolGateway;
   /** Packs mounted this session, by id (observability / capability scoping). */
   readonly mountedPacks = new Map<string, ToolPack>();
+  /** Lazily-created workspace semantic memory (see registerIntelligenceTools). */
+  semanticMemory?: SemanticMemory;
+  /** Lazily-created workspace RAG service (see registerIntelligenceTools). */
+  ragService?: RagService;
 
   constructor() {
     this.gateway = new DefaultToolGateway({
@@ -86,15 +118,53 @@ export class AgentToolManager {
     root: string,
     onOutput?: ToolOnOutput,
     shellOpts?: { sandbox?: boolean; image?: string; timeoutSec?: number },
+    fsOpts?: Omit<WorkspaceGuardOptions, "root">,
+    opts: { dockerTool?: boolean; dockerEgress?: boolean } = {},
   ): void {
-    this.registerToolPack(filesystemPack(root));
-    this.registerToolPack(shellPack(root, onOutput, shellOpts));
-    this.registerToolPack(searchPack(root));
+    // One filesystem boundary for every file-touching pack.
+    const guard = new WorkspaceGuard({ root, protectSensitiveReads: true, ...fsOpts });
+    const writeScope = fsOpts?.writeScope;
+    this.registerToolPack(filesystemPack(guard));
+    this.registerToolPack(shellPack(root, onOutput, { ...shellOpts, writeScope }));
+    this.registerToolPack(searchPack(guard));
     this.registerToolPack(gitPack(root));
-    this.registerToolPack(projectPack(root));
-    this.registerToolPack(rubyPack(root));
-    this.registerToolPack(dockerPack(root));
-    this.registerToolPack(databasePack(root));
+    // Project scripts and bundle are code the agent can edit: run them in the same sandbox as run_shell.
+    const runner = new ShellTool({ workspaceRoot: root, ...shellOpts, writeScope });
+    this.registerToolPack(projectPack(root, runner));
+    this.registerToolPack(rubyPack(root, runner));
+    // Docker daemon access is root-equivalent on the host: opt-in only.
+    if (opts.dockerTool) this.registerToolPack(dockerPack(root, { egress: opts.dockerEgress ?? false }));
+    this.registerToolPack(databasePack(guard));
+    // Default-on intelligence layer (semantic memory; RAG joins in the same
+    // seam): every product agent gets durable semantic memory unless the
+    // operator opts out via NEXUM_SEMANTIC_MEMORY=0.
+    this.registerIntelligenceTools(root);
+  }
+
+  /**
+   * Mount the intelligence plane (semantic memory + hybrid RAG) onto this
+   * agent. Default-on via registerBaseTools; safe to call directly for
+   * agents that mount custom tool sets. Degrades silently (no tools) when
+   * the workspace database cannot be opened.
+   */
+  registerIntelligenceTools(root: string): void {
+    if (readEnv("SEMANTIC_MEMORY") === "0") return;
+    try {
+      const memory = (this.semanticMemory ??= createWorkspaceSemanticMemory(root));
+      if (!this.mountedPacks.has("memory")) this.registerToolPack(memoryPack(memory));
+    } catch {
+      // Unwritable workspace — run without semantic memory tools rather
+      // than breaking tool registration entirely.
+      return;
+    }
+    try {
+      const rag = (this.ragService ??= createWorkspaceRagService({
+        dbPath: join(workspaceStateDir(root), "memory.db"),
+      }));
+      if (!this.mountedPacks.has("rag")) this.registerToolPack(ragPack(rag));
+    } catch {
+      // RAG is additive — semantic memory still works without it.
+    }
   }
 
   registerHybridTools(localWorker: LocalWorker | undefined): void {
@@ -135,8 +205,65 @@ export class AgentToolManager {
     this.kernelCatalog.registerLegacy(tool, category);
   }
 
-  async registerMcpServer(command: string, args: string[] = []): Promise<Tool[]> {
-    const tools = await connectMcpServer(command, args);
+  /** Options for MCP registration with trust gating (P2 trust tier).
+   * Without opts the connect-freely legacy path is used unchanged. */
+  async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<Tool[]> {
+    if (!opts.trust && !opts.security && !opts.elicitation) {
+      // Legacy path — no policy, no overrides, and no protocol callbacks; behavior identical to before.
+      const tools = await connectMcpServer(command, args);
+      for (const tool of tools) this.registerTool(tool, "MCP");
+      return tools;
+    }
+
+    const serverName = opts.serverName ?? `stdio:${command}`;
+    const connection = await connectMcpServerV2({
+      kind: "stdio",
+      command,
+      args,
+      ...(opts.elicitation ? { elicitation: opts.elicitation } : {}),
+    });
+
+    let security: McpSecurityOverride = { ...opts.security };
+    if (opts.trust) {
+      const fingerprint = mcpServerFingerprint(connection.descriptor);
+      const decision = await opts.trust.decideServer(serverName, fingerprint);
+      if (!decision.allowed) {
+        await connection.close();
+        throw new Error(`[mcp-trust] ${decision.reason}`);
+      }
+      security = { ...security, ...decision.rule?.security };
+    }
+
+    const tools: Tool[] = [];
+    for (const discovered of connection.tools) {
+      // Effective risk first (inference + overrides) so the ceiling sees what
+      // the gateway will actually enforce.
+      const metadata = mcpSecurityMetadata(discovered, security);
+      if (opts.trust) {
+        const decision = opts.trust.decideTool(serverName, discovered.name, metadata.risk);
+        if (!decision.allowed) continue;
+      }
+      tools.push(
+        new McpToolAdapter(
+          {
+            callTool: async (request) => {
+              const result = await connection.client.callTool({
+                name: request.name,
+                arguments: request.arguments,
+              });
+              return result as unknown as Record<string, unknown>;
+            },
+          },
+          {
+            name: discovered.name,
+            description: discovered.description,
+            inputSchema: discovered.inputSchema,
+            annotations: discovered.annotations,
+          },
+          security,
+        ),
+      );
+    }
     for (const tool of tools) this.registerTool(tool, "MCP");
     return tools;
   }
