@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DockerTool, AGENT_LABEL } from "../../src/tools/docker-tools.js";
+import { DockerTool, AGENT_LABEL, AGENT_NETWORK } from "../../src/tools/docker-tools.js";
 import { AgentToolManager } from "../../src/cli/agent-tools.js";
 
 let dir: string;
@@ -81,8 +81,6 @@ describe("DockerTool", () => {
       "--rm",
       "--name",
       "web",
-      "-p",
-      "127.0.0.1:8080:80",
       "-e",
       "MODE=dev",
       "-v",
@@ -103,6 +101,56 @@ describe("DockerTool", () => {
     const build = tool.plan(["build", "-t", "app:dev", "-f", "app/Dockerfile", "app"]);
     expect(build).toMatchObject({ ok: true });
     expect(build.ok && build.args.slice(0, 3)).toEqual(["build", "--label", AGENT_LABEL]);
+  });
+
+  describe("network egress", () => {
+    it("by default puts containers on the internal agent network and builds without network", () => {
+      const tool = new DockerTool(dir);
+      const run = tool.plan(["run", "-d", "alpine", "sleep", "60"]);
+      expect(run).toMatchObject({ ok: true, needsAgentNetwork: true });
+      expect(run.ok && run.args.slice(0, 5)).toEqual(["run", "--label", AGENT_LABEL, "--network", AGENT_NETWORK]);
+      expect(tool.plan(["run", "--network", "none", "alpine"])).toMatchObject({ ok: true });
+      expect(tool.plan(["run", `--network=${AGENT_NETWORK}`, "alpine"])).toMatchObject({ ok: true });
+      const build = tool.plan(["build", "."]);
+      expect(build.ok && build.args).toContain("--network=none");
+    });
+
+    it.each([
+      [["run", "--network", "bridge", "alpine"]],
+      [["run", "--net=my-net", "alpine"]],
+      [["run", "-p", "127.0.0.1:8080:80", "nginx"]],
+    ])("refuses egress-capable networking by default: %j", (args) => {
+      expect(new DockerTool(dir).plan(args)).toMatchObject({ ok: false });
+    });
+
+    it("with egress enabled allows bridge networks and loopback publishing, never host", () => {
+      const tool = new DockerTool(dir, { egress: true });
+      const run = tool.plan(["run", "-p", "127.0.0.1:8080:80", "--network", "bridge", "nginx"]);
+      expect(run).toMatchObject({ ok: true });
+      expect(run.ok && run.args).not.toContain(AGENT_NETWORK);
+      expect(tool.plan(["run", "-p", "8080:80", "nginx"])).toMatchObject({ ok: false });
+      expect(tool.plan(["run", "--network", "host", "nginx"])).toMatchObject({ ok: false });
+      const build = tool.plan(["build", "."]);
+      expect(build.ok && build.args).not.toContain("--network=none");
+    });
+
+    it("prepares the internal network before a run that uses it, and reports failures", async () => {
+      let ensured = 0;
+      const ok = new DockerTool(dir, {
+        ensureAgentNetwork: async () => {
+          ensured++;
+        },
+      });
+      await ok.call({ args: ["run", "--rm", "alpine", "true"] });
+      expect(ensured).toBe(1);
+      const broken = new DockerTool(dir, {
+        ensureAgentNetwork: async () => {
+          throw new Error('docker network "nexum-agent" exists but is not --internal');
+        },
+      });
+      const result = await broken.call({ args: ["run", "--rm", "alpine", "true"] });
+      expect(result).toMatchObject({ error: "DockerNetworkError" });
+    });
   });
 
   it("only touches containers this agent created", async () => {

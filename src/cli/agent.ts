@@ -223,7 +223,7 @@ export class Agent {
       (stream, chunk) => this.emit("onShellOutput", stream, chunk),
       { sandbox: cfg.sandbox, image: cfg.shellImage, timeoutSec: cfg.shellTimeoutSec },
       { writeScope: cfg.writeScope },
-      { dockerTool: cfg.dockerTool },
+      { dockerTool: cfg.dockerTool, dockerEgress: cfg.dockerEgress },
     );
     this.tools.registerHybridTools(this.stack.localWorker);
     this.tools.registerClarificationTool(this);

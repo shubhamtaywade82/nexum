@@ -7,7 +7,7 @@
  */
 
 import { ShellTool } from "../shell.js";
-import { DockerTool } from "../docker-tools.js";
+import { DockerTool, type DockerToolOptions } from "../docker-tools.js";
 import { RunTestsTool, RunLintTool, RunFormatTool, RunBuildTool } from "../project-tools.js";
 import { ToolPack, ToolPackEntry, packOf } from "../gateway/tool-pack.js";
 import type { LegacyToolMetadata } from "../gateway/tool-catalog.js";
@@ -117,12 +117,12 @@ export function shellPack(
 }
 
 /** @deprecated mount processPack instead (review item 21). */
-export function dockerPack(root: string): ToolPack {
+export function dockerPack(root: string, opts: DockerToolOptions = {}): ToolPack {
   return packOf(
     "docker",
     "Docker container management.",
     "devops",
-    [[new DockerTool(root), { risk: "high", sideEffects: { process: true, network: true } }]],
+    [[new DockerTool(root, opts), { risk: "high", sideEffects: { process: true, network: true } }]],
     "Docker",
   );
 }

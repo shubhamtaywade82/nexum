@@ -38,6 +38,8 @@ export interface CliConfig {
   writeScope?: string;
   /** Mount the host `docker` tool (daemon access is root-equivalent; default off). */
   dockerTool?: boolean;
+  /** Let containers started by the docker tool reach the network (default off: internal network only). */
+  dockerEgress?: boolean;
   languages?: Record<string, LanguageOverride>;
   lsp?: LspCliConfig;
   toolSelectionMode?: "heuristic" | "llm" | "hybrid";
@@ -117,6 +119,7 @@ interface ConfigFile {
   /** Write scope, relative to the workspace root (or absolute). */
   writeScope?: string;
   dockerTool?: boolean;
+  dockerEgress?: boolean;
   toolSelectionMode?: string;
   maxActiveTools?: number;
   apiKeys?: string[];
@@ -349,6 +352,7 @@ export function loadConfig(): CliConfig {
     shellTimeoutSec,
     sandbox: readEnvFlag("SANDBOX", file.sandbox ?? true),
     dockerTool: readEnvFlag("DOCKER_TOOL", file.dockerTool ?? false),
+    dockerEgress: readEnvFlag("DOCKER_EGRESS", file.dockerEgress ?? false),
     writeScope: resolveWriteScope(readEnv("WRITE_SCOPE") || file.writeScope, workspaceRoot),
     toolSelectionMode,
     maxActiveTools,

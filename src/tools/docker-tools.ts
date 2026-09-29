@@ -14,15 +14,22 @@ import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
  *     namespaces, devices, capabilities, env-file or host env pass-through;
  *   - `build` needs a workspace context without secrets and no host outputs
  *     (-o, --iidfile, cache export), secrets or SSH forwarding;
- *   - compose and cp are not offered (compose files can declare anything).
+ *   - compose and cp are not offered (compose files can declare anything);
+ *   - no egress by default: containers join AGENT_NETWORK (an --internal
+ *     network — agent containers reach each other, nothing reaches out) and
+ *     builds run with --network=none. `egress` opts back into bridge
+ *     networking and loopback-only port publishing.
  */
 export const AGENT_LABEL = "nexum.agent=true";
 const AGENT_LABEL_KEY = "nexum.agent";
+/** Internal (no-egress) network agent containers join by default. */
+export const AGENT_NETWORK = "nexum-agent";
 
 const SUBCOMMANDS = ["run", "build", "ps", "images", "logs", "inspect", "stop", "rm", "exec"] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
-type Plan = { ok: true; args: string[]; targets: string[] } | { ok: false; message: string };
+type Plan =
+  { ok: true; args: string[]; targets: string[]; needsAgentNetwork?: boolean } | { ok: false; message: string };
 
 interface FlagSpec {
   /** Flag takes a value. */
@@ -183,8 +190,11 @@ function parseFlags(
   args: string[],
   flags: Record<string, FlagSpec>,
   stopAfterPositionals = Infinity,
-): { ok: true; positionals: string[]; rest: string[] } | { ok: false; message: string } {
+):
+  | { ok: true; positionals: string[]; rest: string[]; values: Array<[string, string]> }
+  | { ok: false; message: string } {
   const positionals: string[] = [];
+  const values: Array<[string, string]> = [];
   let i = 0;
   for (; i < args.length && positionals.length < stopAfterPositionals; i++) {
     const arg = args[i];
@@ -237,18 +247,25 @@ function parseFlags(
     if (value === undefined) return { ok: false, message: `docker ${subcommand}: ${name} needs a value` };
     const problem = spec.check?.(value);
     if (problem) return { ok: false, message: `docker ${subcommand}: ${problem}` };
+    values.push([name, value]);
   }
-  return { ok: true, positionals, rest: args.slice(i) };
+  return { ok: true, positionals, rest: args.slice(i), values };
 }
 
 export interface DockerToolOptions {
   /** Label lookup for ownership checks (tests inject a fake; default asks the daemon). */
   labelOf?: (target: string) => Promise<string | undefined>;
+  /** Allow network egress (bridge networking, loopback port publishing). Default false. */
+  egress?: boolean;
+  /** Ensures AGENT_NETWORK exists and is internal (tests inject a fake; default asks the daemon). */
+  ensureAgentNetwork?: () => Promise<void>;
 }
 
 export class DockerTool extends Tool {
   private readonly guard: WorkspaceGuard;
   private readonly labelOf: (target: string) => Promise<string | undefined>;
+  private readonly egress: boolean;
+  private readonly ensureAgentNetwork: () => Promise<void>;
 
   constructor(
     private readonly root: string,
@@ -257,6 +274,8 @@ export class DockerTool extends Tool {
     super();
     this.guard = agentWorkspaceGuard(root);
     this.labelOf = opts.labelOf ?? defaultLabelOf(root);
+    this.egress = opts.egress ?? false;
+    this.ensureAgentNetwork = opts.ensureAgentNetwork ?? defaultEnsureAgentNetwork(root);
   }
 
   get name(): string {
@@ -264,10 +283,13 @@ export class DockerTool extends Tool {
   }
 
   get description(): string {
+    const network = this.egress
+      ? "Containers use bridge networking; -p on 127.0.0.1 only."
+      : `No network egress: containers join the internal "${AGENT_NETWORK}" network (they reach each other by name, nothing outside) and builds run without network; -p is unavailable.`;
     return (
       "Run a docker subcommand (run, build, ps, images, logs, inspect, stop, rm, exec) on containers this agent creates. " +
-      "No host bind mounts (use named volumes), no host network/devices/capabilities, -p on 127.0.0.1 only, " +
-      "env as NAME=VALUE only; build contexts must be inside the workspace and free of secrets."
+      "No host bind mounts (use named volumes), no host network/devices/capabilities, env as NAME=VALUE only; " +
+      `build contexts must be inside the workspace and free of secrets. ${network}`
     );
   }
 
@@ -298,7 +320,7 @@ export class DockerTool extends Tool {
         const parsed = parseFlags("run", args, RUN_FLAGS, 1);
         if (!parsed.ok) return parsed;
         if (parsed.positionals.length === 0) return { ok: false, message: "docker run: missing image" };
-        return { ok: true, args: ["run", "--label", AGENT_LABEL, ...args], targets: [] };
+        return this.planRunNetwork(args, parsed.values);
       }
       case "exec": {
         const parsed = parseFlags("exec", args, EXEC_FLAGS, 1);
@@ -319,6 +341,30 @@ export class DockerTool extends Tool {
         return { ok: true, args: [subcommand, ...args], targets: parsed.positionals };
       }
     }
+  }
+
+  /** Egress policy for `run`: internal network by default, bridge/-p only when egress is enabled. */
+  private planRunNetwork(args: string[], values: Array<[string, string]>): Plan {
+    const base = ["run", "--label", AGENT_LABEL];
+    if (this.egress) return { ok: true, args: [...base, ...args], targets: [] };
+    if (values.some(([name]) => name === "-p" || name === "--publish")) {
+      return {
+        ok: false,
+        message: `docker run: port publishing needs network egress enabled (dockerEgress); containers run on the internal "${AGENT_NETWORK}" network`,
+      };
+    }
+    const networks = values.filter(([name]) => name === "--network" || name === "--net").map(([, v]) => v);
+    const disallowed = networks.find((n) => n !== "none" && n !== AGENT_NETWORK);
+    if (disallowed !== undefined) {
+      return {
+        ok: false,
+        message: `docker run: network "${disallowed}" allows egress; use "${AGENT_NETWORK}" (internal) or "none", or enable dockerEgress`,
+      };
+    }
+    if (networks.length === 0) {
+      return { ok: true, args: [...base, "--network", AGENT_NETWORK, ...args], targets: [], needsAgentNetwork: true };
+    }
+    return { ok: true, args: [...base, ...args], targets: [], needsAgentNetwork: networks.includes(AGENT_NETWORK) };
   }
 
   private planBuild(args: string[]): Plan {
@@ -359,7 +405,8 @@ export class DockerTool extends Tool {
       }
       throw e;
     }
-    return { ok: true, args: ["build", "--label", AGENT_LABEL, ...args], targets: [] };
+    const network = this.egress ? [] : ["--network=none"];
+    return { ok: true, args: ["build", "--label", AGENT_LABEL, ...network, ...args], targets: [] };
   }
 
   async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -370,6 +417,14 @@ export class DockerTool extends Tool {
 
     const plan = this.plan(dockerArgs);
     if (!plan.ok) return { error: "DisallowedDockerCommandError", message: plan.message };
+
+    if (plan.needsAgentNetwork) {
+      try {
+        await this.ensureAgentNetwork();
+      } catch (e) {
+        return { error: "DockerNetworkError", message: e instanceof Error ? e.message : String(e) };
+      }
+    }
 
     for (const target of plan.targets) {
       if ((await this.labelOf(target)) !== "true") {
@@ -406,4 +461,37 @@ function defaultLabelOf(root: string): (target: string) => Promise<string | unde
         (err, stdout) => resolvePromise(err ? undefined : stdout.toString().trim()),
       );
     });
+}
+
+/**
+ * Create AGENT_NETWORK as an --internal network if missing, and refuse to use
+ * an existing one that is not internal (it would give containers egress).
+ */
+function defaultEnsureAgentNetwork(root: string): () => Promise<void> {
+  const docker = (args: string[]) =>
+    new Promise<{ ok: boolean; out: string }>((resolvePromise) => {
+      execFile("docker", args, { cwd: root, timeout: 15_000 }, (err, stdout, stderr) =>
+        resolvePromise({ ok: !err, out: `${stdout}${stderr}`.trim() }),
+      );
+    });
+  let ready: Promise<void> | null = null;
+  return () => {
+    ready ??= (async () => {
+      const inspected = await docker(["network", "inspect", "--format", "{{.Internal}}", AGENT_NETWORK]);
+      if (inspected.ok) {
+        if (inspected.out !== "true") {
+          throw new Error(
+            `docker network "${AGENT_NETWORK}" exists but is not --internal; remove it so the agent can recreate it`,
+          );
+        }
+        return;
+      }
+      const created = await docker(["network", "create", "--internal", "--label", AGENT_LABEL, AGENT_NETWORK]);
+      if (!created.ok) throw new Error(`could not create docker network "${AGENT_NETWORK}": ${created.out}`);
+    })().catch((e) => {
+      ready = null;
+      throw e;
+    });
+    return ready;
+  };
 }
