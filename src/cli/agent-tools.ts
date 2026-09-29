@@ -198,8 +198,8 @@ export class AgentToolManager {
   /** Options for MCP registration with trust gating (P2 trust tier).
    * Without opts the connect-freely legacy path is used unchanged. */
   async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<Tool[]> {
-    if (!opts.trust && !opts.security) {
-      // Legacy path — no policy, no overrides; behavior identical to before.
+    if (!opts.trust && !opts.security && !opts.elicitation) {
+      // Legacy path — no policy, no overrides, and no protocol callbacks; behavior identical to before.
       const tools = await connectMcpServer(command, args);
       for (const tool of tools) this.registerTool(tool, "MCP");
       return tools;
