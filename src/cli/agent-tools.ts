@@ -8,6 +8,7 @@ import type { McpSecurityOverride } from "../mcp/adapter/security-metadata.js";
 import { mcpServerFingerprint, type McpTrustPolicy } from "../mcp/trust.js";
 import type { LocalWorker } from "../models/local-worker.js";
 import type { ClarificationRequester } from "../tools/ask-user-tool.js";
+import type { McpElicitationHandler } from "../core/user-input.js";
 import type { LspManager } from "../lsp/manager.js";
 import type { BrowserManager } from "../browser/manager.js";
 import type { BinanceStreamManager } from "../domains/trading/binance-stream.js";
@@ -54,6 +55,7 @@ export interface McpRegistrationOptions {
   trust?: McpTrustPolicy;
   /** Per-server security overrides applied to every registered tool. */
   security?: McpSecurityOverride;
+  elicitation?: McpElicitationHandler;
 }
 
 /**
@@ -204,7 +206,12 @@ export class AgentToolManager {
     }
 
     const serverName = opts.serverName ?? `stdio:${command}`;
-    const connection = await connectMcpServerV2({ kind: "stdio", command, args });
+    const connection = await connectMcpServerV2({
+      kind: "stdio",
+      command,
+      args,
+      ...(opts.elicitation ? { elicitation: opts.elicitation } : {}),
+    });
 
     let security: McpSecurityOverride = { ...opts.security };
     if (opts.trust) {
