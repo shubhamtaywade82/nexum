@@ -131,12 +131,12 @@ export async function connectMcpServerV2(
 ): Promise<McpServerConnection> {
   const transport = buildTransport(descriptor);
   const serverId = opts.serverId ?? descriptorId(descriptor);
-  const client = new Client(
-    opts.clientInfo ?? { name: "nexum", version: "2.0.0" },
-    { capabilities: opts.elicitation ? { elicitation: { form: {}, url: {} } } : {} },
-  );
+  const client = new Client(opts.clientInfo ?? { name: "nexum", version: "2.0.0" }, {
+    capabilities: opts.elicitation ? { elicitation: { form: {}, url: {} } } : {},
+  });
 
-  if (opts.elicitation) {
+  const elicitationHandler = opts.elicitation;
+  if (elicitationHandler) {
     client.setRequestHandler("elicitation/create", async (request) => {
       const params = request.params as {
         mode?: "form" | "url";
@@ -150,13 +150,13 @@ export async function connectMcpServerV2(
         mode: params.mode === "url" ? "url" : "form",
         message: String(params.message ?? ""),
         ...(params.requestedSchema
-          ? { requestedSchema: params.requestedSchema as McpElicitationRequest["requestedSchema"] }
+          ? { requestedSchema: params.requestedSchema as unknown as McpElicitationRequest["requestedSchema"] }
           : {}),
         ...(params.url ? { url: params.url } : {}),
       };
       const problems = validateMcpElicitationRequest(elicitation);
       if (problems.length) throw new Error("invalid MCP elicitation request: " + problems.join("; "));
-      const response = await opts.elicitation.request(elicitation);
+      const response = await elicitationHandler.request(elicitation);
       if (response.id !== elicitation.id) {
         throw new Error("MCP elicitation response id does not match the active request");
       }

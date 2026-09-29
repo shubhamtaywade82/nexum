@@ -7,27 +7,31 @@ import {
 
 describe("MCP elicitation contracts", () => {
   it("accepts a valid form request", () => {
-    expect(validateMcpElicitationRequest({
-      id: "e1",
-      serverId: "server",
-      mode: "form",
-      message: "Choose a branch",
-      requestedSchema: {
-        type: "object",
-        properties: { branch: { type: "string", minLength: 1 } },
-        required: ["branch"],
-      },
-    })).toEqual([]);
+    expect(
+      validateMcpElicitationRequest({
+        id: "e1",
+        serverId: "server",
+        mode: "form",
+        message: "Choose a branch",
+        requestedSchema: {
+          type: "object",
+          properties: { branch: { type: "string", minLength: 1 } },
+          required: ["branch"],
+        },
+      }),
+    ).toEqual([]);
   });
 
   it("rejects non-http URL elicitation", () => {
-    expect(validateMcpElicitationRequest({
-      id: "e2",
-      serverId: "server",
-      mode: "url",
-      message: "Authenticate",
-      url: "file:///tmp/secret",
-    })).toContain("only permits http/https");
+    expect(
+      validateMcpElicitationRequest({
+        id: "e2",
+        serverId: "server",
+        mode: "url",
+        message: "Authenticate",
+        url: "file:///tmp/secret",
+      }),
+    ).toEqual([expect.stringContaining("only permits http/https")]);
   });
 
   it("validates required fields, types and choices", () => {
@@ -49,10 +53,12 @@ describe("MCP elicitation contracts", () => {
   });
 
   it("strips content from non-accept actions", () => {
-    expect(normalizeMcpElicitationResponse({
-      id: "e1",
-      action: "decline",
-      content: { ignored: "secret" },
-    })).toEqual({ action: "decline" });
+    expect(
+      normalizeMcpElicitationResponse({
+        id: "e1",
+        action: "decline",
+        content: { ignored: "secret" },
+      }),
+    ).toEqual({ action: "decline" });
   });
 });

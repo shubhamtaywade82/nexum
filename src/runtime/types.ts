@@ -127,7 +127,8 @@ export const PRIMARY_VIEW_LABELS: Record<(typeof PRIMARY_VIEWS)[number], string>
 };
 
 /** Runtime mode drives the Context Strip contents. */
-export type RuntimeMode = "idle" | "planning" | "editing" | "testing" | "approval" | "clarification" | "elicitation" | "streaming";
+export type RuntimeMode =
+  "idle" | "planning" | "editing" | "testing" | "approval" | "clarification" | "elicitation" | "streaming";
 
 /** Agent operational modes — controls what the agent is allowed to do. */
 export type AgentMode = "ask" | "code" | "architect" | "review" | "debug" | "autonomous";

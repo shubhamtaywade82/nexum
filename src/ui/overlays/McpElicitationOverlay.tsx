@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { spawn } from "node:child_process";
 import type {
@@ -35,7 +35,7 @@ function valuesOf(schema: McpElicitationFieldSchema): string[] {
   if (schema.enum) return schema.enum;
   if (schema.oneOf) return schema.oneOf.map((item) => item.const);
   if (schema.type === "array" && schema.items) {
-    return "enum" in schema.items ? schema.items.enum || [] : schema.items.anyOf.map((item) => item.const);
+    return "anyOf" in schema.items ? schema.items.anyOf.map((item) => item.const) : schema.items.enum || [];
   }
   return [];
 }
@@ -103,7 +103,15 @@ export function McpElicitationOverlay({
     const current = fields[0] ? schema?.properties[fields[0]]?.default : undefined;
     return typeof current === "string" || typeof current === "number" ? String(current) : "";
   })();
-  const [draft, setDraft] = useState(initialDraft);
+  const [draft, setDraftState] = useState(initialDraft);
+  // Keystrokes can arrive faster than React re-renders (fast typing, paste
+  // followed by Enter): the ref holds the latest draft so commit() never
+  // reads a stale closure.
+  const draftRef = useRef(initialDraft);
+  const setDraft = (update: string | ((value: string) => string)) => {
+    draftRef.current = typeof update === "function" ? update(draftRef.current) : update;
+    setDraftState(draftRef.current);
+  };
   const [error, setError] = useState<string | null>(null);
 
   const name = fields[index];
@@ -117,9 +125,9 @@ export function McpElicitationOverlay({
 
     const next = { ...values };
     if (kind === "string") {
-      next[name] = draft;
+      next[name] = draftRef.current;
     } else if (kind === "number" || kind === "integer") {
-      const numeric = Number(draft);
+      const numeric = Number(draftRef.current);
       if (!Number.isFinite(numeric) || (kind === "integer" && !Number.isInteger(numeric))) {
         setError("Enter a valid " + kind + ".");
         return;
@@ -179,7 +187,7 @@ export function McpElicitationOverlay({
       if (input === " " || input === "y" || input === "Y" || input === "n" || input === "N") {
         setValues((current) => ({
           ...current,
-          [name]: input === "y" || input === "Y" ? true : input === "n" || input === "N" ? false : !Boolean(current[name]),
+          [name]: input === "y" || input === "Y" ? true : input === "n" || input === "N" ? false : !current[name],
         }));
         setError(null);
       } else if (key.return) {
@@ -237,7 +245,9 @@ export function McpElicitationOverlay({
     return (
       <OverlayFrame title="MCP Elicitation · External URL" width={width} rows={rows}>
         <Box flexDirection="column" marginY={1}>
-          <Text bold color={theme.colors.info}>{request.message}</Text>
+          <Text bold color={theme.colors.info}>
+            {request.message}
+          </Text>
           <Text color={theme.colors.warning}>The MCP server requested an external browser flow.</Text>
           <Box marginY={1} borderStyle="round" borderColor={theme.colors.success} paddingX={1}>
             <Text color={theme.colors.success}>{request.url}</Text>
@@ -255,9 +265,13 @@ export function McpElicitationOverlay({
     return (
       <OverlayFrame title="MCP Elicitation · Form" width={width} rows={rows}>
         <Box flexDirection="column" marginY={1}>
-          <Text bold color={theme.colors.info}>{request.message}</Text>
+          <Text bold color={theme.colors.info}>
+            {request.message}
+          </Text>
           <Text color={theme.colors.error}>The server supplied an empty form schema.</Text>
-          <Text color={theme.colors.mutedForeground} dimColor>Esc = cancel</Text>
+          <Text color={theme.colors.mutedForeground} dimColor>
+            Esc = cancel
+          </Text>
         </Box>
       </OverlayFrame>
     );
@@ -266,17 +280,26 @@ export function McpElicitationOverlay({
   return (
     <OverlayFrame title="MCP Elicitation · Form" width={width} rows={rows}>
       <Box flexDirection="column" marginY={1}>
-        <Text bold color={theme.colors.info}>{request.message}</Text>
+        <Text bold color={theme.colors.info}>
+          {request.message}
+        </Text>
         <Text color={theme.colors.mutedForeground} dimColor>
           Form elicitation is for non-sensitive input. Never enter passwords, API keys, or other secrets here.
         </Text>
         <Box marginY={1} flexDirection="column">
-          <Text color={theme.colors.warning}>Field {index + 1}/{fields.length}: {field?.title || name}</Text>
+          <Text color={theme.colors.warning}>
+            Field {index + 1}/{fields.length}: {field?.title || name}
+          </Text>
           {field?.description ? <Text color={theme.colors.mutedForeground}>{field.description}</Text> : null}
           {kind === "enum" ? (
             <Box flexDirection="column" marginTop={1}>
               {labels.map((label, optionIndex) => (
-                <Text key={optionIndex} color={String(values[name]) === options[optionIndex] ? theme.colors.success : theme.colors.mutedForeground}>
+                <Text
+                  key={optionIndex}
+                  color={
+                    String(values[name]) === options[optionIndex] ? theme.colors.success : theme.colors.mutedForeground
+                  }
+                >
                   {String(values[name]) === options[optionIndex] ? "▶ " : "  "}[{optionIndex + 1}] {label}
                 </Text>
               ))}
@@ -284,7 +307,8 @@ export function McpElicitationOverlay({
           ) : kind === "multi-enum" ? (
             <Box flexDirection="column" marginTop={1}>
               {labels.map((label, optionIndex) => {
-                const selected = Array.isArray(values[name]) && (values[name] as string[]).includes(options[optionIndex]);
+                const selected =
+                  Array.isArray(values[name]) && (values[name] as string[]).includes(options[optionIndex]);
                 return (
                   <Text key={optionIndex} color={selected ? theme.colors.success : theme.colors.mutedForeground}>
                     [{selected ? "x" : " "}] [{optionIndex + 1}] {label}
