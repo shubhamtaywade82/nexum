@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, unlinkSync } from "node:fs";
 import { join, posix, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
@@ -13,6 +13,7 @@ import { BRAND } from "../platform/brand.js";
 import type { ToolCallContext } from "../core/tools/tool-contract.js";
 import { ShellExecutionAccountant } from "./shell-accounting.js";
 import { hostEnv } from "./command-runner.js";
+import { STATE_DIRS } from "../core/fs/workspace-guard.js";
 
 export interface ShellToolOptions {
   workspaceRoot: string;
@@ -405,8 +406,9 @@ export class ShellTool extends Tool {
    *   1. the workspace — read-write, or read-only when a write scope is set
    *   2. the write scope — read-write
    *   3. .git/hooks and .git/config — read-only (a planted hook or
-   *      core.fsmonitor would otherwise run on the HOST at the next git call)
-   *   4. every sensitive file (masked with /dev/null) and directory (masked
+   *      core.fsmonitor would otherwise run on the HOST at the next git call);
+   *      .nexum/ and .devagent/ — read-only (config and trust stores)
+   *   4. every sensitive file (masked with an empty file) and directory (masked
    *      with an empty tmpfs), so `cat .env` in the sandbox reads nothing
    */
   private workspaceMounts(): string[] {
@@ -433,6 +435,24 @@ export class ShellTool extends Tool {
       }
     }
 
+    // Nexum's state (config, plugin installs, trust stores) is read-only too.
+    // .nexum is created first when missing: otherwise the container could
+    // create it and plant a config the next Nexum run on the host would load.
+    const primaryState = join(root, STATE_DIRS[0]);
+    if (!existsSync(primaryState) && !isSymlink(primaryState)) mkdirSync(primaryState, { recursive: true });
+    let stateReal: string | undefined;
+    for (const name of STATE_DIRS) {
+      const statePath = join(root, name);
+      if (!existsSync(statePath)) continue;
+      // a symlinked state dir is protected where it really lives (if the container can reach it)
+      const real = realOrResolved(statePath);
+      if (isWithin(root, real) && real !== root && lstatSync(real).isDirectory()) {
+        args.push(...bind(real, toContainer(real), true));
+        stateReal ??= real;
+      }
+    }
+    const emptyFile = maskFile(stateReal);
+
     let secrets: SensitiveEntry[];
     try {
       secrets = findSensitivePaths(root, root, undefined, { aliasInodes: secretInodes(root) });
@@ -452,10 +472,38 @@ export class ShellTool extends Tool {
           ["type=tmpfs", mountField("target", target), "tmpfs-size=4096", "tmpfs-mode=0500"].join(","),
         );
       } else {
-        args.push(...bind("/dev/null", target, true));
+        args.push(...bind(emptyFile, target, true));
       }
     }
     return args;
+  }
+}
+
+/**
+ * The empty file that masks secret files. It lives in the (read-only) state
+ * directory inside the workspace rather than being /dev/null: Docker Desktop
+ * can always mount the workspace, but not necessarily arbitrary host paths.
+ * Falls back to /dev/null when there is no usable state directory.
+ */
+function maskFile(stateDir: string | undefined): string {
+  if (!stateDir) return "/dev/null";
+  const file = join(stateDir, "sandbox-empty");
+  try {
+    const st = lstatSync(file, { throwIfNoEntry: false });
+    if (st?.isFile() && st.size === 0) return file;
+    if (st) unlinkSync(file); // not empty (or not a file): recreate it
+    closeSync(openSync(file, "wx", 0o444));
+    return file;
+  } catch {
+    return "/dev/null";
+  }
+}
+
+function isSymlink(p: string): boolean {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
   }
 }
 

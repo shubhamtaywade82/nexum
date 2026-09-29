@@ -71,7 +71,9 @@ describe("hardlinked secrets", () => {
     const args = (
       new ShellTool({ workspaceRoot: root }) as unknown as { dockerArgs: (c: string, cmd: string) => string[] }
     ).dockerArgs("c1", "cat notes.txt");
-    expect(args).toContain("type=bind,source=/dev/null,target=/workspace/notes.txt,readonly");
+    expect(args).toContain(
+      `type=bind,source=${join(root, ".nexum", "sandbox-empty")},target=/workspace/notes.txt,readonly`,
+    );
   });
 
   it("docker build refuses a context holding an alias of a secret that lives outside the context", () => {

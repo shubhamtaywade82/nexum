@@ -29,6 +29,7 @@
 import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isSensitivePath } from "../../safety/path-policy.js";
+import { BRAND } from "../../platform/brand.js";
 import {
   defaultCredentialLocations,
   findSensitivePaths,
@@ -254,6 +255,17 @@ export class WorkspaceGuard {
       };
     }
 
+    // Nexum's own state (.nexum/, legacy .devagent/): config, plugin installs,
+    // publisher trust store, MCP approvals. An agent that could write there
+    // could turn its own sandbox off or trust its own plugins.
+    if (mutating && (isStateDir(relFinal) || isStateDir(relNominal))) {
+      return {
+        allowed: false,
+        code: "sensitive_path",
+        message: `${relativePath} is inside Nexum's state directory — configuration and trust are changed by the user, not file tools`,
+      };
+    }
+
     // deleting a directory must not take protected files with it
     if (op === "delete" && existsSync(resolvedPath) && lstatSync(resolvedPath).isDirectory()) {
       let inside: SensitiveEntry[];
@@ -366,6 +378,13 @@ function nearestExistingAncestor(p: string): { nearest: string; remainder: strin
 
 function isGitInternal(relPath: string): boolean {
   return relPath === ".git" || relPath.startsWith(`.git${sep}`);
+}
+
+/** Workspace state directories Nexum reads configuration and trust from. */
+export const STATE_DIRS: readonly string[] = [BRAND.configDir, BRAND.legacyConfigDir];
+
+function isStateDir(relPath: string): boolean {
+  return STATE_DIRS.some((d) => relPath === d || relPath.startsWith(`${d}${sep}`));
 }
 
 /** Sensitive as a file, or as a directory (so `secrets` / `.ssh` themselves are covered). */

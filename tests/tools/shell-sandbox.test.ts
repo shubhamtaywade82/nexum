@@ -4,7 +4,16 @@
  * runners through the sandbox instead of the host.
  */
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShellTool } from "../../src/tools/shell.js";
@@ -15,6 +24,7 @@ import { shellQuote, type CommandRunner } from "../../src/tools/command-runner.j
 import { WriteFileTool, SensitivePathError } from "../../src/tools/filesystem.js";
 import { AgentToolManager } from "../../src/cli/agent-tools.js";
 import { parityPosture } from "../../src/core/policy/postures.js";
+import { WorkspaceGuard } from "../../src/core/fs/workspace-guard.js";
 
 let root: string;
 
@@ -29,6 +39,8 @@ afterEach(() => {
 function dockerArgs(tool: ShellTool, command = "echo hi"): string[] {
   return (tool as unknown as { dockerArgs: (c: string, cmd: string) => string[] }).dockerArgs("c1", command);
 }
+
+const empty = () => join(root, ".nexum", "sandbox-empty");
 
 function mounts(args: string[]): string[] {
   return args.flatMap((a, i) => (args[i - 1] === "--mount" ? [a] : []));
@@ -71,7 +83,7 @@ describe("workspace mounts", () => {
     expect(m[1]).toBe(`type=bind,source=${join(root, "src")},target=/workspace/src`);
   });
 
-  it("masks secret files with /dev/null and secret directories with an empty tmpfs", () => {
+  it("masks secret files with an empty file and secret directories with an empty tmpfs", () => {
     writeFileSync(join(root, ".env"), "API_KEY=x");
     mkdirSync(join(root, "config"));
     writeFileSync(join(root, "config", ".env.production"), "API_KEY=y");
@@ -85,14 +97,23 @@ describe("workspace mounts", () => {
     const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
     expect(m).toEqual(
       expect.arrayContaining([
-        "type=bind,source=/dev/null,target=/workspace/.env,readonly",
-        "type=bind,source=/dev/null,target=/workspace/config/.env.production,readonly",
-        "type=bind,source=/dev/null,target=/workspace/server.pem,readonly",
+        `type=bind,source=${empty()},target=/workspace/.env,readonly`,
+        `type=bind,source=${empty()},target=/workspace/config/.env.production,readonly`,
+        `type=bind,source=${empty()},target=/workspace/server.pem,readonly`,
         "type=tmpfs,target=/workspace/secrets,tmpfs-size=4096,tmpfs-mode=0500",
       ]),
     );
     expect(m.join("\n")).not.toContain("app.ts");
     expect(m.join("\n")).not.toContain("node_modules");
+  });
+
+  it("the mask file is empty and re-created if something wrote to it", () => {
+    writeFileSync(join(root, ".env"), "API_KEY=x");
+    dockerArgs(new ShellTool({ workspaceRoot: root }));
+    rmSync(empty());
+    writeFileSync(empty(), "not empty");
+    dockerArgs(new ShellTool({ workspaceRoot: root }));
+    expect(readFileSync(empty(), "utf8")).toBe("");
   });
 
   it("mounts .git/hooks and .git/config read-only so nothing planted runs on the host", () => {
@@ -107,10 +128,29 @@ describe("workspace mounts", () => {
     );
   });
 
+  it("mounts .nexum (created if missing) and .devagent read-only", () => {
+    mkdirSync(join(root, ".devagent"));
+    const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
+    expect(existsSync(join(root, ".nexum"))).toBe(true);
+    expect(m).toEqual(
+      expect.arrayContaining([
+        `type=bind,source=${join(root, ".nexum")},target=/workspace/.nexum,readonly`,
+        `type=bind,source=${join(root, ".devagent")},target=/workspace/.devagent,readonly`,
+      ]),
+    );
+  });
+
+  it("protects a symlinked .nexum where it really lives", () => {
+    mkdirSync(join(root, "state"));
+    symlinkSync("state", join(root, ".nexum"));
+    const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
+    expect(m).toContain(`type=bind,source=${join(root, "state")},target=/workspace/state,readonly`);
+  });
+
   it("CSV-quotes mount fields containing commas", () => {
     writeFileSync(join(root, "a,b.pem"), "key");
     const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
-    expect(m).toContain('type=bind,source=/dev/null,"target=/workspace/a,b.pem",readonly');
+    expect(m).toContain(`type=bind,source=${empty()},"target=/workspace/a,b.pem",readonly`);
   });
 
   it("fails closed when the workspace is too large to scan for secrets", async () => {
@@ -186,6 +226,23 @@ describe("file tools cannot plant git hooks or config", () => {
       SensitivePathError,
     );
     expect(existsSync(join(root, ".git", "hooks", "pre-commit"))).toBe(false);
+  });
+});
+
+describe("file tools cannot change Nexum's own state", () => {
+  it("writes, deletes and moves under .nexum/ and .devagent/ are refused; reads are not", async () => {
+    mkdirSync(join(root, ".nexum"));
+    writeFileSync(join(root, ".nexum", "config.json"), '{"sandbox":true}');
+    const write = new WriteFileTool(root);
+    for (const path of [".nexum/config.json", ".nexum/publisher-trust.json", ".devagent/config.json"]) {
+      await expect(write.call({ path, content: '{"sandbox":false}' })).rejects.toThrow(SensitivePathError);
+    }
+    const guard = new WorkspaceGuard({ root });
+    expect(guard.check("delete", ".nexum").allowed).toBe(false);
+    expect(guard.check("move", ".nexum/config.json").allowed).toBe(false);
+    expect(guard.check("mkdir", ".nexum/plugins").allowed).toBe(false);
+    expect(guard.check("read", ".nexum/config.json").allowed).toBe(true);
+    expect(guard.check("write", "src/.nexum-notes.md").allowed).toBe(true);
   });
 });
 
