@@ -19,7 +19,8 @@ export interface ApprovalManagerOptions {
   hasApprovalListener: () => boolean;
   hasClarificationListener: () => boolean;
   onMcpElicitationRequested?: (request: McpElicitationRequest) => void;
-  hasMcpElicitationListener: () => boolean;
+  /** Optional for backwards-compatible callers; absence is fail-closed. */
+  hasMcpElicitationListener?: () => boolean;
 }
 
 export class ApprovalManager {
@@ -85,7 +86,7 @@ export class ApprovalManager {
 
   /** Server-initiated MCP input; decline rather than deadlock without UI. */
   async requestMcpElicitation(request: McpElicitationRequest): Promise<McpElicitationResponse> {
-    if (!this.opts.hasMcpElicitationListener()) return { id: request.id, action: "decline" };
+    if (this.opts.hasMcpElicitationListener?.() !== true) return { id: request.id, action: "decline" };
     return new Promise<McpElicitationResponse>((resolve) => {
       this.pendingMcpElicitations.set(request.id, resolve);
       this.opts.onMcpElicitationRequested?.(request);
