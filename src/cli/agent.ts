@@ -584,6 +584,14 @@ export class Agent {
     // errored; read at the top of the NEXT turn's buffering decision, then reset —
     // see the "recoveredFromError"/verifying logic below.
     let previousTurnHadToolError = false;
+    // Consecutive tool-error count across turns (unlike previousTurnHadToolError,
+    // NOT reset every turn) — catches a quick model that keeps calling tools with
+    // different-but-still-wrong arguments. verifyingRecovery below only escalates
+    // when the model gives up and answers prose instead of calling a tool; a weak
+    // model that just keeps retrying with malformed args never trips that path and
+    // can flail indefinitely on the quick model. Reset on any successful tool call.
+    let consecutiveToolErrors = 0;
+    const TOOL_FAILURE_ESCALATION_THRESHOLD = 2;
 
     // ── Kernel-native execution: the think→act→observe loop itself lives in
     // the kernel's ReActStrategy now (roadmap step 1, docs/guide/kernel.md).
@@ -621,6 +629,14 @@ export class Agent {
       },
 
       callModel: async (turnInfo, opts) => {
+        if (!escalated && consecutiveToolErrors >= TOOL_FAILURE_ESCALATION_THRESHOLD) {
+          escalated = true;
+          injectDelegationAddendum();
+          this.emit(
+            "onStatus",
+            `escalating to primary model: quick model failed ${consecutiveToolErrors} consecutive tool calls`,
+          );
+        }
         const capability: Capability | null = escalated ? escalationHint : "quick";
 
         // Buffer the attempt's streamed text instead of emitting it live, so a bad
@@ -773,6 +789,7 @@ export class Agent {
             "[system] The previous tool call escaped the workspace root. Retry with a path under the current workspace root.",
           );
           previousTurnHadToolError = true;
+          consecutiveToolErrors += 1;
 
           if (this.loopDetector.record(name, args, "PathEscapeError")) {
             return {
@@ -796,6 +813,7 @@ export class Agent {
 
         if (typeof record.error === "string") {
           previousTurnHadToolError = true;
+          consecutiveToolErrors += 1;
           if (this.loopDetector.record(name, args, record.error)) {
             return {
               abortRun: true,
@@ -803,6 +821,8 @@ export class Agent {
               output: `${lastAssistantText}\n[aborted] tool loop detected after repeated: ${name}`,
             };
           }
+        } else {
+          consecutiveToolErrors = 0;
         }
       },
 

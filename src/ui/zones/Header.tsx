@@ -23,7 +23,10 @@ function formatClock(now: number): string {
 export function Header({ state, width, now = Date.now() }: HeaderProps): React.JSX.Element {
   const theme = useTheme();
   const modeLabel = AGENT_MODE_LABELS[state.agentMode].label.toUpperCase();
-  const modelName = state.model.name || "-";
+  // lastTurnModel reflects what actually answered the last turn (routedTier/routedModel
+  // from onModelUsed), which can differ from state.model.name (the configured primary) —
+  // e.g. "quick" routing serves a small local model while the primary stays cloud.
+  const modelName = state.lastTurnModel ?? state.model.name ?? "-";
   const clock = formatClock(now);
 
   const showSubtitle = width >= 95;

@@ -5,6 +5,22 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+// --yolo: approve every destructive tool call without prompting (sets
+// NEXUM_AUTO_APPROVE, same as the env var). Stripped from argv before command
+// parsing so it can appear anywhere, e.g. `nexum --yolo "task"` or `nexum fix --yolo "issue"`.
+// Note: this only bypasses the confirmation prompt — policy denial rules
+// (force push, secrets, .nexum/.devagent mutation, etc.) still apply; see
+// AGENTS.md §7.18 "first decision wins".
+{
+  const args = process.argv.slice(2);
+  const yoloIndex = args.indexOf('--yolo');
+  if (yoloIndex !== -1) {
+    args.splice(yoloIndex, 1);
+    process.env.NEXUM_AUTO_APPROVE = 'true';
+    process.argv = [process.argv[0], process.argv[1], ...args];
+  }
+}
+
 const [command] = process.argv.slice(2);
 
 if (command === '--version' || command === '-v') {
@@ -39,6 +55,8 @@ Usage:
 Options:
   -h, --help                    Show this help message
   -v, --version                 Show version
+  --yolo                        Auto-approve confirmation prompts (NEXUM_AUTO_APPROVE);
+                                 policy denial rules still apply
 `);
   process.exit(0);
 }
