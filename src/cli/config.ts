@@ -92,6 +92,15 @@ export interface CliConfig {
    * The P2 trust fields (trust/tools/maxRisk) are optional gates — see
    * docs/guide/mcp.md § Trust policy. */
   mcpServers?: McpCliServerConfig[];
+  /** Whether the workspace's own settings were applied (see workspace-trust.ts). */
+  workspaceTrust: {
+    status: WorkspaceTrustStatus;
+    trusted: boolean;
+    /** Workspace config keys ignored because the workspace is not trusted. */
+    withheldKeys: string[];
+    /** Workspace .env files not loaded because the workspace is not trusted. */
+    skippedEnvFiles: string[];
+  };
 }
 
 /** One config-listed MCP server. Listing a server is consent to connect it:
@@ -186,16 +195,24 @@ function loadWorkspaceConfig(root: string): ConfigFile {
   return { ...legacy, ...current };
 }
 
-export function saveWorkspaceConfig(root: string, partial: Partial<ConfigFile>): void {
+export function saveWorkspaceConfig(
+  root: string,
+  partial: Partial<ConfigFile>,
+  trustStore: WorkspaceTrustStore = WorkspaceTrustStore.global(),
+): void {
   const dir = workspaceStateDir(root);
   const p = join(dir, "config.json");
   try {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    const current = loadWorkspaceConfig(root);
-    const merged = { ...current, ...partial };
-    writeFileSync(p, JSON.stringify(merged, null, 2), "utf8");
+    // a save the user makes keeps a trusted workspace trusted, and never
+    // makes an untrusted one trusted
+    preservingTrust(root, trustStore, () => {
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+      const current = loadWorkspaceConfig(root);
+      const merged = { ...current, ...partial };
+      writeFileSync(p, JSON.stringify(merged, null, 2), "utf8");
+    });
   } catch {
     // Non-fatal if directory is not writable
   }
@@ -230,9 +247,25 @@ function loadAgentsFile(root: string): string {
 }
 
 import { config as dotenvConfig } from "dotenv";
+import {
+  partitionWorkspaceConfig,
+  preservingTrust,
+  workspaceTrustState,
+  WorkspaceTrustStore,
+  type WorkspaceTrustStatus,
+} from "./workspace-trust.js";
 
-function loadEnvFiles(workspaceRoot: string): void {
-  if (envIs("TEST_NO_GLOBAL", "true")) return;
+/**
+ * Load `.env` files into Nexum's own process. The global one is the user's;
+ * the workspace/cwd ones are repository content and load only when the
+ * workspace is trusted (they can set PATH, NODE_OPTIONS, NEXUM_SANDBOX…).
+ * Returns the workspace files that were skipped.
+ */
+function loadEnvFiles(workspaceRoot: string, workspaceTrusted: boolean): string[] {
+  const cwdEnv = join(process.cwd(), ".env");
+  const workspaceEnv = join(workspaceRoot, ".env");
+  const skipped = workspaceTrusted ? [] : [...new Set([cwdEnv, workspaceEnv])].filter((f) => existsSync(f));
+  if (envIs("TEST_NO_GLOBAL", "true")) return skipped;
   // Canonical ~/.nexum/.env; legacy ~/.devagent/.env still loads (deprecated)
   // when the canonical file does not exist.
   const globalEnv = join(GLOBAL_CONFIG_DIR, ".env");
@@ -244,21 +277,40 @@ function loadEnvFiles(workspaceRoot: string): void {
       dotenvConfig({ path: legacyGlobalEnv, override: false, quiet: true } as any);
     }
   }
-  const cwdEnv = join(process.cwd(), ".env");
+  if (!workspaceTrusted) return skipped;
   if (existsSync(cwdEnv)) {
     dotenvConfig({ path: cwdEnv, override: true, quiet: true } as any);
   }
-  const workspaceEnv = join(workspaceRoot, ".env");
   if (existsSync(workspaceEnv) && workspaceEnv !== cwdEnv) {
     dotenvConfig({ path: workspaceEnv, override: true, quiet: true } as any);
   }
+  return skipped;
 }
 
-export function loadConfig(): CliConfig {
+/**
+ * Load the global .env and — only for a trusted workspace — the workspace
+ * .env files. The CLI entry calls this for every command (it replaces the
+ * unconditional `dotenv/config`); loadConfig() does the same on its own.
+ */
+export function applyEnvFiles(opts: LoadConfigOptions = {}): void {
   const workspaceRoot = findWorkspaceRoot(process.cwd());
-  loadEnvFiles(workspaceRoot);
+  const trust = workspaceTrustState(workspaceRoot, opts.trustStore ?? WorkspaceTrustStore.global());
+  loadEnvFiles(workspaceRoot, trust.trusted);
+}
+
+export interface LoadConfigOptions {
+  /** Where workspace trust is recorded (default: ~/.nexum/trusted-workspaces.json). */
+  trustStore?: WorkspaceTrustStore;
+}
+
+export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
+  const workspaceRoot = findWorkspaceRoot(process.cwd());
+  const trust = workspaceTrustState(workspaceRoot, opts.trustStore ?? WorkspaceTrustStore.global());
+  const skippedEnvFiles = loadEnvFiles(workspaceRoot, trust.trusted);
   const globalFile = loadGlobalConfig();
-  const workspaceFile = loadWorkspaceConfig(workspaceRoot);
+  const rawWorkspaceFile = loadWorkspaceConfig(workspaceRoot);
+  const { safe, withheld } = partitionWorkspaceConfig(rawWorkspaceFile);
+  const workspaceFile: ConfigFile = trust.trusted ? rawWorkspaceFile : safe;
   // Workspace config overrides global, env vars override both.
   // Product env vars resolve NEXUM_* first, then deprecated DEVAGENT_*
   // (see platform/environment.ts — legacy reads warn on stderr).
@@ -374,6 +426,12 @@ export function loadConfig(): CliConfig {
     autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? false),
     pricing,
     mcpServers: file.mcpServers,
+    workspaceTrust: {
+      status: trust.status,
+      trusted: trust.trusted,
+      withheldKeys: trust.trusted ? [] : withheld,
+      skippedEnvFiles,
+    },
   };
 }
 

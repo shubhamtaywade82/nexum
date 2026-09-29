@@ -28,6 +28,7 @@ import { DocsStore } from "../docs/store.js";
 import { AgentConversation } from "./agent-conversation.js";
 import { AgentToolManager, type McpRegistrationOptions } from "./agent-tools.js";
 import { McpApprovalStore, McpTrustPolicy, mcpTrustPolicyFromConfig } from "../mcp/trust.js";
+import { preservingTrust, WorkspaceTrustStore } from "./workspace-trust.js";
 import { AgentIntelligence } from "./agent-intelligence.js";
 import { AgentLearning } from "./agent-learning.js";
 import { DynamicToolSelector } from "../tools/discovery.js";
@@ -256,7 +257,11 @@ export class Agent {
     // Workspace state (memory/checkpoint/sessions/docs) lives under .nexum —
     // resolved (and migrated from legacy .devagent when present) by the
     // WorkspaceManager, the single owner of that decision (docs/REBRANDING.md §4).
-    const statePaths = new WorkspaceManager(cfg.workspaceRoot).ensure();
+    // (the one-time .devagent → .nexum migration copies config.json: keep a
+    // trusted workspace trusted across it, never trust an untrusted one)
+    const statePaths = preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), () =>
+      new WorkspaceManager(cfg.workspaceRoot).ensure(),
+    );
 
     // P2 trust tier: entries with trust/tools/maxRisk gates get a policy;
     // entries without keep the connect-freely behavior (listing = consent).
@@ -264,7 +269,13 @@ export class Agent {
       (s) => s.trust !== undefined || s.tools !== undefined || s.maxRisk !== undefined,
     )
       ? mcpTrustPolicyFromConfig(this.mcpServerConfigs, {
-          approvals: new McpApprovalStore(join(statePaths.dir, "mcp-trust.json")),
+          // approvals stored in an untrusted workspace are repository
+          // content: ignore them (servers needing approval then ask)
+          approvals: cfg.workspaceTrust?.trusted
+            ? new McpApprovalStore(join(statePaths.dir, "mcp-trust.json"), (write) =>
+                preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), write),
+              )
+            : undefined,
         })
       : undefined;
 
