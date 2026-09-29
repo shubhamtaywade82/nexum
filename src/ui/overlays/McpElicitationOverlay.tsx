@@ -99,7 +99,11 @@ export function McpElicitationOverlay({
     for (const [name, field] of Object.entries(schema?.properties || {})) next[name] = defaultOf(field);
     return next;
   });
-  const [draft, setDraft] = useState("");
+  const initialDraft = (() => {
+    const current = fields[0] ? schema?.properties[fields[0]]?.default : undefined;
+    return typeof current === "string" || typeof current === "number" ? String(current) : "";
+  })();
+  const [draft, setDraft] = useState(initialDraft);
   const [error, setError] = useState<string | null>(null);
 
   const name = fields[index];
