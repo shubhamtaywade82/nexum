@@ -157,6 +157,9 @@ export async function connectMcpServerV2(
       const problems = validateMcpElicitationRequest(elicitation);
       if (problems.length) throw new Error("invalid MCP elicitation request: " + problems.join("; "));
       const response = await opts.elicitation.request(elicitation);
+      if (response.id !== elicitation.id) {
+        throw new Error("MCP elicitation response id does not match the active request");
+      }
       const normalized = normalizeMcpElicitationResponse(response);
       if (elicitation.mode === "url" && normalized.content) {
         throw new Error("url elicitation responses must not contain form content");
