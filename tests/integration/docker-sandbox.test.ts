@@ -6,8 +6,13 @@
  *
  * Unit tests check the generated `docker run` arguments; these check that a
  * real daemon actually enforces them (secret masking, read-only git
- * internals, write scope, no network, dropped privileges, labelled
- * ownership, no egress for docker-tool containers).
+ * internals and Nexum state, write scope, no network, dropped privileges,
+ * labelled ownership, no egress for docker-tool containers).
+ *
+ * Verified on Linux (native dockerd, as root and as a non-root user in the
+ * docker group). Docker Desktop (macOS/Windows) runs containers in a VM and
+ * maps bind-mount ownership differently, so file-ownership assertions only
+ * run where the host has POSIX uids (not Windows).
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { execFileSync } from "node:child_process";
@@ -81,6 +86,15 @@ describeIfDocker("sandbox boundary against a real Docker daemon", () => {
   );
 
   it(
+    "keeps Nexum's state directory read-only",
+    async () => {
+      expect((await run("echo '{\"sandbox\":false}' > .nexum/config.json")).exit).not.toBe(0);
+      expect(existsSync(join(root, ".nexum", "config.json"))).toBe(false);
+    },
+    TIMEOUT,
+  );
+
+  it(
     "keeps .git hooks and config read-only",
     async () => {
       expect((await run("echo evil > .git/hooks/pre-commit")).exit).not.toBe(0);
@@ -111,7 +125,9 @@ describeIfDocker("sandbox boundary against a real Docker daemon", () => {
     "writes as the host user, and only inside the write scope when one is set",
     async () => {
       expect((await run("echo x > created.txt && echo ok")).out).toBe("ok");
-      expect(statSync(join(root, "created.txt")).uid).toBe(process.getuid!());
+      // Docker Desktop's file sharing maps new files to the host user; native
+      // dockerd relies on --user. Either way the host user must own them.
+      if (process.getuid) expect(statSync(join(root, "created.txt")).uid).toBe(process.getuid());
       const scoped = new ShellTool({ workspaceRoot: root, timeoutSec: 120, writeScope: join(root, "src") });
       expect((await run("echo x > outside.txt", scoped)).exit).not.toBe(0);
       expect((await run("echo x > src/inside.txt && echo ok", scoped)).out).toBe("ok");
