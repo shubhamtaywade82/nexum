@@ -2,6 +2,18 @@
 
 Nexum supports hierarchical configuration through environment variables, workspace `.nexum/config.json`, and global `~/.nexum/config.json`.
 
+## Workspace trust
+
+A workspace's own `.nexum/config.json`, `.env` files, MCP approvals and publisher keys are repository content — anyone who can commit can write them — so they configure Nexum only after you trust them:
+
+```bash
+nexum trust status   # what the workspace ships, and whether it is trusted
+nexum trust          # trust the current contents
+nexum trust revoke   # forget the decision
+```
+
+The interactive UI asks the first time it meets an untrusted workspace; other commands (`rpc`, `doctor`, CI) never prompt and run without those settings. Until trusted, only `model`, `theme`, `quickModel`, tool selection, timeouts, `writeScope` and the model-routing flags apply from the workspace config; `sandbox`, `dockerTool`, `dockerEgress`, `autoApprove`, `mcpServers`, `host`, `tier`, API keys, `systemPrompt` and `shellImage` are ignored, and the workspace `.env` is not loaded. Trust is stored in `~/.nexum/trusted-workspaces.json` and bound to the files' exact contents: any change (for example a `git pull`) asks again. Settings you save through Nexum keep a trusted workspace trusted. Global `~/.nexum/config.json`, `~/.nexum/.env` and your shell environment always apply.
+
 ---
 
 ## Environment Variables

@@ -1,7 +1,7 @@
 # Nexum Security & Trust Model
 
 > **Status:** Developer Preview. This document describes what the code on
-> this branch actually enforces. Known gaps are listed in §11 — read
+> this branch actually enforces. Known gaps are listed in §12 — read
 > them before running Nexum on anything you cannot afford to lose.
 
 Nexum runs an LLM that chooses tool calls. Assume the model can be steered
@@ -28,7 +28,8 @@ contained by **isolation** (what code can physically reach), not merely by
 | MCP servers                            | host subprocesses            | depends              | depends                   | depends (trusted code)           |
 | External-agent subagents               | host subprocesses            | yes                  | API key passed via env    | anything the agent CLI can       |
 | Trading tools                          | host                         | exchanges            | exchange keys             | **financial** (orders)           |
-| Marketplace plugins (`activate`)       | Node process, `--permission` | **yes** (§11)        | no (own files, empty env) | nothing on disk; bridge only     |
+| Workspace settings (`.nexum/`, `.env`) | configure Nexum itself       | —                    | —                         | apply only once trusted (§8)     |
+| Marketplace plugins (`activate`)       | Node process, `--permission` | none (§7)            | no (own files, empty env) | nothing on disk; bridge only     |
 | Plugins registered in code             | host process                 | yes                  | yes                       | anything (trusted code)          |
 
 ## 2. Filesystem boundary (WorkspaceGuard)
@@ -69,7 +70,7 @@ packs by `registerBaseTools`. Per operation it enforces:
    require the same inode; writes go through an exclusively created temp
    file proven to sit at the approved location before any content is
    written. Delete/move/mkdir re-validate immediately before the syscall
-   (narrowed, not closed — see §11).
+   (narrowed, not closed — see §12).
 
 `search_code` also passes ripgrep exclusion globs for secrets _after_ any
 caller glob (ripgrep lets later globs win) and drops matches from
@@ -101,8 +102,8 @@ are code the agent can edit). Paths starting with `-` are rejected (option
 injection).
 
 Verified against a real Docker 29 daemon on Linux, as root and as an
-unprivileged user, by `npm run test:docker` (§10). Not yet run on Docker
-Desktop (macOS/Windows) — see §10.
+unprivileged user, by `npm run test:docker` (§11). Not yet run on Docker
+Desktop (macOS/Windows) — see §11.
 
 ### Sandbox disabled (`NEXUM_SANDBOX=0` / `sandbox: false`)
 
@@ -196,7 +197,16 @@ unpacked into a fresh private temp directory, then run in a separate Node
 process under the permission model: `--permission
 --allow-fs-read=<package dir>` (no reads elsewhere, no writes, no child
 processes, no workers, no native addons, no WASI), an empty environment,
-a heap cap and lifecycle timeouts. The module's own manifest must match the
+a heap cap and lifecycle timeouts. Node's permission model does not cover
+the network, so before the plugin module is imported the bootstrap
+replaces every public network entry point — `net` connect/listen (which
+`http`, `https`, `fetch` and `WebSocket` go through), `tls`, `http2`,
+`dgram`, all `dns` lookups and `inspector` — with functions that throw
+`ERR_ACCESS_DENIED`. The originals are not reachable from plugin code:
+`process.binding` is denied by the permission model, and there are no
+addons, child processes or workers to reach sockets any other way. The
+host can opt a plugin back in with `sandbox: { allowNetwork: true }`.
+The module's own manifest must match the
 installed id/version. It reaches the host only through the capability
 bridge, which enforces the plugin's `provide`/`lookup`/`declare` allowlist
 (default: what the package declared, shown on the install record; the host
@@ -206,7 +216,42 @@ can pass a narrower policy) and only transfers structured-cloneable values.
 unchanged: that is your own code with full host trust. `IsolatedPluginSandbox`
 with the default `worker` transport isolates memory only.
 
-## 8. Other surfaces
+## 8. Workspace trust
+
+A repository can ship files that configure Nexum itself: `.nexum/config.json`
+(and legacy `.devagent/config.json`), `.nexum/mcp-trust.json`,
+`.nexum/publisher-trust.json`, and the workspace/cwd `.env`, which Nexum
+loads into its own process — where `PATH` or `NODE_OPTIONS` would decide
+what the next `git`, `gh`, `docker` or Node child actually runs. None of it
+applies until you trust that exact content (`src/cli/workspace-trust.ts`):
+
+- **Trust record** lives outside every workspace, in
+  `~/.nexum/trusted-workspaces.json` (mode 0600), keyed by the workspace's
+  real path and bound to a sha256 over the presence, contents and symlink
+  targets of those files. Any change — a `git pull`, a teammate's commit —
+  makes the workspace untrusted again (`direnv allow` semantics).
+- **Untrusted:** only settings that cannot run code, loosen isolation or
+  send the workspace anywhere apply (`model`, `theme`, `quickModel`, tool
+  selection, timeouts, `writeScope` — which can only narrow — and the
+  model-routing heuristics). Everything else, including unknown future keys,
+  is withheld: `sandbox`, `dockerTool`, `dockerEgress`, `autoApprove`,
+  `mcpServers`, `host`, `tier`, `apiKey(s)`, `systemPrompt`, `shellImage`.
+  Workspace `.env` files are not loaded, and workspace MCP approvals are
+  ignored (servers that need approval ask again).
+- **Deciding:** the interactive UI asks once, showing what would apply
+  (MCP commands in full, `.env` variable names — never values — with
+  `PATH`/`NODE_OPTIONS`/`LD_PRELOAD`/`NEXUM_*`-style names flagged). Every
+  other entry point (`rpc`, `doctor`, CI, piped input) never prompts: it
+  runs without the workspace settings and says so on stderr. `nexum trust`,
+  `nexum trust status`, `nexum trust revoke` manage it explicitly.
+- **Nexum's own writes** (saving config from the UI, `nexum mcp trust
+approve`, `nexum marketplace keys add`, runtime MCP approvals) re-stamp
+  trust only if the workspace was trusted, or had none of these files,
+  immediately before the write — they never launder somebody else's change.
+- The CLI no longer runs `dotenv/config` at startup; env files load through
+  the same gate.
+
+## 9. Other surfaces
 
 - **Web fetch** (`NodeFetchProvider`): destinations are validated at
   connect time (no DNS-rebinding window); loopback, private, link-local
@@ -230,7 +275,7 @@ with the default `worker` transport isolates memory only.
   (`paper_trade`) is marked financial and always requires confirmation;
   market-data tools are read-only.
 
-## 9. Policy engine
+## 10. Policy engine
 
 `RulePolicyEngine` evaluates rules in order and the **first decision
 wins**. Denials always run first — deny lists, risk ceilings, execution
@@ -241,9 +286,9 @@ the `parity` posture: `DestructiveShellRule`, `GitPublishRule`,
 `DeleteFileRule`, then `ConfirmationRule`. Financial side effects always
 require confirmation. `standard` and `restricted` postures confirm every
 high / medium-risk call. Policy is a UX and intent layer; the isolation in
-§2–§7 is what holds when the model is adversarial.
+§2–§8 is what holds when the model is adversarial.
 
-## 10. Verification
+## 11. Verification
 
 ```bash
 npm test                     # unit + contract suites (Docker not required)
@@ -261,20 +306,20 @@ host uid, so no `--user` is passed and the container runs as the image's
 user (root inside the container, all capabilities dropped,
 `no-new-privileges`).
 
-## 11. Known gaps
+## 12. Known gaps
 
-| Gap                                                                                                                                                                                                                                                                                | Impact                                                                                        |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Workspace config is trusted.** `.nexum/config.json` (and legacy `.devagent/`) in the workspace is loaded as configuration — including `sandbox`, `dockerTool` and MCP server commands. A cloned repository can ship one. The agent cannot write it (§2, §3), but its author can. | Inspect `.nexum/` in repositories you did not create before running Nexum in them.            |
-| Marketplace plugins have **network access**: Node 22's permission model does not restrict sockets. They cannot read your files or environment, so they have nothing of yours to send except what the capability bridge hands them.                                                 | Grant `lookup` permissions sparingly; only trust publisher keys you have verified.            |
-| `github` tool can still create/comment on/edit issues and PRs and re-run workflows with your token.                                                                                                                                                                                | Scope the `gh` token (fine-grained, single repo).                                             |
-| Delete/move/mkdir symlink race is narrowed, not closed (Node has no `openat2(RESOLVE_BENEATH)`).                                                                                                                                                                                   | Requires a concurrent writer inside the workspace.                                            |
-| Sandbox masks secrets present when the command starts; the webhook replay cache and hardlink inode cache (10 s) are in memory.                                                                                                                                                     | Restart re-opens the webhook window; a secret created mid-command is visible to that command. |
-| Browser has host network access.                                                                                                                                                                                                                                                   | Do not browse untrusted sites with sensitive local services reachable.                        |
-| `test:docker` not yet run on Docker Desktop (macOS/Windows); see §10.                                                                                                                                                                                                              | Run it once there before relying on the sandbox on those hosts.                               |
-| Not a formal audit; no guarantee against prompt injection or malicious MCP servers/plugins.                                                                                                                                                                                        | Run untrusted workloads on a disposable machine or VM.                                        |
+| Gap                                                                                                                                                                                                                                    | Impact                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Trusting a workspace trusts its settings completely, including its `.env` (`PATH`, `NODE_OPTIONS`) — that is what trust means. `AGENTS.md`/skills in the repo are always read as prompt content (prompt injection, not configuration). | Read the `nexum trust` summary before answering y.                                            |
+| Plugin network blocking is enforced inside the plugin's Node process (the permission model has no network switch in Node 22). It relies on the permission model keeping internal bindings out of reach.                                | Only trust publisher keys you have verified; for hostile code use a VM.                       |
+| `github` tool can still create/comment on/edit issues and PRs and re-run workflows with your token.                                                                                                                                    | Scope the `gh` token (fine-grained, single repo).                                             |
+| Delete/move/mkdir symlink race is narrowed, not closed (Node has no `openat2(RESOLVE_BENEATH)`).                                                                                                                                       | Requires a concurrent writer inside the workspace.                                            |
+| Sandbox masks secrets present when the command starts; the webhook replay cache and hardlink inode cache (10 s) are in memory.                                                                                                         | Restart re-opens the webhook window; a secret created mid-command is visible to that command. |
+| Browser has host network access.                                                                                                                                                                                                       | Do not browse untrusted sites with sensitive local services reachable.                        |
+| `test:docker` not yet run on Docker Desktop (macOS/Windows); see §11.                                                                                                                                                                  | Run it once there before relying on the sandbox on those hosts.                               |
+| Not a formal audit; no guarantee against prompt injection or malicious MCP servers/plugins.                                                                                                                                            | Run untrusted workloads on a disposable machine or VM.                                        |
 
-## 12. Reporting security issues
+## 13. Reporting security issues
 
 1. **Do not** open a public GitHub issue.
 2. Email `shubhamtaywade82@gmail.com` with details and a repro.
