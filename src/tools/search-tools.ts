@@ -58,6 +58,7 @@ export class SearchCodeTool extends Tool {
 
     const output = await this.runRipgrep(rgArgs);
     const matches: SearchMatch[] = [];
+    const aliasCache = new Map<string, boolean>();
 
     for (const line of output.split("\n")) {
       if (!line) continue;
@@ -66,6 +67,13 @@ export class SearchCodeTool extends Tool {
       if (firstColon === -1 || secondColon === -1) continue;
 
       const filePath = line.slice(0, firstColon);
+      // name-based excludes cannot see a hardlink to a secret; drop its lines here
+      let alias = aliasCache.get(filePath);
+      if (alias === undefined) {
+        alias = this.guard.isHardlinkedSecret(filePath);
+        aliasCache.set(filePath, alias);
+      }
+      if (alias) continue;
       const lineNo = Number(line.slice(firstColon + 1, secondColon));
       const text = line.slice(secondColon + 1);
       matches.push({ path: relative(this.guard.root, filePath), line: lineNo, text });

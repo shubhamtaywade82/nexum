@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { join, posix, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
-import { findSensitivePaths, SensitiveScanLimitError, type SensitiveEntry } from "../core/fs/sensitive-scan.js";
+import {
+  findSensitivePaths,
+  secretInodes,
+  SensitiveScanLimitError,
+  type SensitiveEntry,
+} from "../core/fs/sensitive-scan.js";
 import { Tool } from "./tool.js";
 import { BRAND } from "../platform/brand.js";
 import type { ToolCallContext } from "../core/tools/tool-contract.js";
@@ -430,7 +435,7 @@ export class ShellTool extends Tool {
 
     let secrets: SensitiveEntry[];
     try {
-      secrets = findSensitivePaths(root);
+      secrets = findSensitivePaths(root, root, undefined, { aliasInodes: secretInodes(root) });
     } catch (e) {
       if (e instanceof SensitiveScanLimitError) {
         throw new SandboxScanError(

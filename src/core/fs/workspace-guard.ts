@@ -29,7 +29,17 @@
 import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isSensitivePath } from "../../safety/path-policy.js";
-import { findSensitivePaths, SensitiveScanLimitError, type SensitiveEntry } from "./sensitive-scan.js";
+import {
+  defaultCredentialLocations,
+  findSensitivePaths,
+  inodeKey,
+  secretInodes,
+  SensitiveScanLimitError,
+  type SensitiveEntry,
+} from "./sensitive-scan.js";
+
+/** How long a computed secret-inode set is reused (hardlink checks are rare but bursty). */
+const SECRET_INODE_TTL_MS = 10_000;
 
 export type FsOperation =
   | "read"
@@ -83,6 +93,11 @@ export interface WorkspaceGuardOptions {
    * them); agent-facing tool packs turn it on so secrets never reach model context.
    */
   protectSensitiveReads?: boolean;
+  /**
+   * Credential stores outside the workspace whose files a hardlink in the
+   * workspace could alias (default: ~/.ssh, ~/.aws, ~/.gnupg, … ).
+   */
+  credentialLocations?: string[];
 }
 
 export class WorkspaceGuard {
@@ -100,6 +115,40 @@ export class WorkspaceGuard {
 
   get writeScope(): string | undefined {
     return this.writeScopeReal;
+  }
+
+  private secretInodeCache?: { at: number; inodes: Set<string> | "unknown" };
+
+  /**
+   * Inodes of all known secret files (workspace + credential locations),
+   * briefly cached; "unknown" when the workspace was too large to scan.
+   */
+  secretInodes(): Set<string> | "unknown" {
+    const now = Date.now();
+    if (!this.secretInodeCache || now - this.secretInodeCache.at > SECRET_INODE_TTL_MS) {
+      let inodes: Set<string> | "unknown";
+      try {
+        inodes = secretInodes(this.rootReal, this.opts.credentialLocations ?? defaultCredentialLocations());
+      } catch (e) {
+        if (!(e instanceof SensitiveScanLimitError)) throw e;
+        inodes = "unknown";
+      }
+      this.secretInodeCache = { at: now, inodes };
+    }
+    return this.secretInodeCache.inodes;
+  }
+
+  /** True when `absolutePath` is a regular file hardlinked to a secret (same device + inode). */
+  isHardlinkedSecret(absolutePath: string): boolean {
+    let st;
+    try {
+      st = lstatSync(absolutePath);
+    } catch {
+      return false;
+    }
+    if (!st.isFile() || st.nlink <= 1) return false;
+    const inodes = this.secretInodes();
+    return inodes === "unknown" || inodes.has(inodeKey(st)); // fail closed when the scan could not finish
   }
 
   /** Central verdict for one operation on one path. */
@@ -179,6 +228,19 @@ export class WorkspaceGuard {
         allowed: false,
         code: "sensitive_path",
         message: `${relativePath} matches a protected credential/secret pattern`,
+      };
+    }
+
+    // a hardlink is the secret under another name: content-revealing ops on one are sensitive too
+    if (
+      this.opts.protectSensitiveReads === true &&
+      CONTENT_REVEALING.includes(op) &&
+      this.isHardlinkedSecret(resolvedPath)
+    ) {
+      return {
+        allowed: false,
+        code: "sensitive_path",
+        message: `${relativePath} is a hardlink to a protected credential/secret file`,
       };
     }
 

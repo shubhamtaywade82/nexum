@@ -389,7 +389,11 @@ export class DockerTool extends Tool {
       }
     }
     try {
-      const secrets = findSensitivePaths(this.guard.root, contextVerdict.resolvedPath);
+      const inodes = this.guard.secretInodes();
+      if (inodes === "unknown") throw new SensitiveScanLimitError(0);
+      const secrets = findSensitivePaths(this.guard.root, contextVerdict.resolvedPath, undefined, {
+        aliasInodes: inodes,
+      });
       if (secrets.length > 0) {
         const sample = secrets.slice(0, 3).map((s) => relative(this.guard.root, s.path));
         return {
