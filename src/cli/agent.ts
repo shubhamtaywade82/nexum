@@ -1105,7 +1105,10 @@ export class Agent {
   }
 
   async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<void> {
-    await this.tools.registerMcpServer(command, args, opts);
+    await this.tools.registerMcpServer(command, args, {
+      ...opts,
+      elicitation: opts.elicitation ?? { request: (request) => this.requestMcpElicitation(request) },
+    });
   }
 
   /** Connects every MCP server listed in config.mcpServers, one at a time
