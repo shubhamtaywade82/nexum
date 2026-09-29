@@ -21,12 +21,17 @@ export interface ApprovalManagerOptions {
   onMcpElicitationRequested?: (request: McpElicitationRequest) => void;
   /** Optional for backwards-compatible callers; absence is fail-closed. */
   hasMcpElicitationListener?: () => boolean;
+  /** Maximum time an MCP elicitation may wait for a UI response (default 5 min). */
+  mcpElicitationTimeoutMs?: number;
 }
 
 export class ApprovalManager {
   private readonly pendingApprovals = new Map<string, (approved: boolean) => void>();
   private readonly pendingClarifications = new Map<string, (resp: ClarificationResponse) => void>();
   private readonly pendingMcpElicitations = new Map<string, (resp: McpElicitationResponse) => void>();
+  private readonly mcpElicitationQueue: McpElicitationRequest[] = [];
+  private readonly mcpElicitationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private activeMcpElicitationId: string | null = null;
   readonly broker: ApprovalBroker;
 
   constructor(private readonly opts: ApprovalManagerOptions) {
@@ -84,13 +89,49 @@ export class ApprovalManager {
     }
   }
 
-  /** Server-initiated MCP input; decline rather than deadlock without UI. */
+  /** Server-initiated MCP input; serialize requests because the TUI has one blocking surface. */
   async requestMcpElicitation(request: McpElicitationRequest): Promise<McpElicitationResponse> {
     if (this.opts.hasMcpElicitationListener?.() !== true) return { id: request.id, action: "decline" };
     return new Promise<McpElicitationResponse>((resolve) => {
       this.pendingMcpElicitations.set(request.id, resolve);
-      this.opts.onMcpElicitationRequested?.(request);
+      this.mcpElicitationQueue.push(request);
+      this.pumpNextMcpElicitation();
     });
+  }
+
+  private pumpNextMcpElicitation(): void {
+    if (this.activeMcpElicitationId || this.mcpElicitationQueue.length === 0) return;
+    const request = this.mcpElicitationQueue.shift()!;
+    this.activeMcpElicitationId = request.id;
+    this.opts.onMcpElicitationRequested?.(request);
+
+    const timeoutMs = this.opts.mcpElicitationTimeoutMs ?? 5 * 60_000;
+    if (timeoutMs > 0) {
+      this.mcpElicitationTimers.set(
+        request.id,
+        setTimeout(() => {
+          this.resolveMcpElicitation({ id: request.id, action: "decline" });
+        }, timeoutMs),
+      );
+    }
+  }
+
+  resolveMcpElicitation(response: McpElicitationResponse): void {
+    const handler = this.pendingMcpElicitations.get(response.id);
+    if (!handler) return;
+    this.pendingMcpElicitations.delete(response.id);
+    const timer = this.mcpElicitationTimers.get(response.id);
+    if (timer) {
+      clearTimeout(timer);
+      this.mcpElicitationTimers.delete(response.id);
+    }
+    if (this.activeMcpElicitationId === response.id) this.activeMcpElicitationId = null;
+    handler(response);
+    this.pumpNextMcpElicitation();
+  }
+
+  pendingMcpElicitationCount(): number {
+    return this.pendingMcpElicitations.size;
   }
 
   resolveMcpElicitation(response: McpElicitationResponse): void {
