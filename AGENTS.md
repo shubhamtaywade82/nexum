@@ -7,7 +7,7 @@
 - **Checkpoint/resume** (`src/runtime/checkpoint.ts`) — the orchestrator persists plan state after every step transition; a crashed multi-step task resumes instead of restarting, without re-running completed steps. Separately, `src/runtime/session.ts`'s `SessionStore` persists the LLM conversation transcript after every turn; `Agent.resumeSession()` / the `/resume` slash command restore it in a new process.
 - **Browser automation** (`src/browser/manager.ts`) — a lazily-launched headless Chromium (Playwright), one reused page, exposed as `browser_navigate`/`click`/`fill`/`get_text`/`screenshot`/`evaluate`/`close` tools.
 - **Parallel step execution** — independent plan steps run concurrently (`Promise.all` per round); dependents still wait for their dependency's batch.
-- **Docker‑sandboxed shell execution** – every `run_shell` call and every project/Ruby script runner (`run_tests`, `run_lint`, `run_format`, `run_build`, `run_rubocop`, `run_rspec`) runs inside an isolated container: no network, host uid, no capabilities, read-only root filesystem, secrets masked, `.git` hooks/config read-only, bounded memory/CPU/PIDs and hard time‑outs (see §7.4 and `SECURITY.md`).
+- **Docker‑sandboxed shell execution** – every `run_shell` call and every project/Ruby script runner (`run_tests`, `run_lint`, `run_format`, `run_build`, `run_rubocop`, `run_rspec`) runs inside an isolated container: no network, host uid, no capabilities, read-only root filesystem, secrets masked, `.git` hooks/config and `.nexum/` read-only, bounded memory/CPU/PIDs and hard time‑outs (see §7.4 and `SECURITY.md`).
 - **LSP‑backed code intelligence** (`src/lsp/`, `src/intelligence/`) — 14 languages configured, degrading to a text fallback when a server isn't installed instead of failing.
 - **Rails semantic index** (`src/domains/rails/`) — 13 scanners (controller/model/job/mailer/policy/concern/migration/schema/view/rspec/routes/gem/service) feeding a graph store and query engine.
 - A **benchmark harness** (`src/benchmark/`) — scores installed models on JSON validity and tool-calling correctness, with latency/tokens-per-sec.
@@ -55,7 +55,7 @@ SKIP_NETWORK_TESTS=true npm test   # skip suites that call real external APIs (B
 npm run test:docker                # opt-in: sandbox boundary against a REAL Docker daemon
 ```
 
-`npm run test:docker` (`tests/integration/`, gated by `NEXUM_DOCKER_TESTS=1`) needs the sandbox image (`docker build -t nexum-sandbox:latest docker/nexum-sandbox/`). It verifies secret masking, read-only `.git` internals, write scope, no network, dropped capabilities, host-uid writes, and the docker tool's egress/ownership rules. Run it after touching `src/tools/shell.ts`, `src/tools/docker-tools.ts`, `src/core/fs/`, or `docker/`.
+`npm run test:docker` (`tests/integration/`, gated by `NEXUM_DOCKER_TESTS=1`) needs the sandbox image (`docker build -t nexum-sandbox:latest docker/nexum-sandbox/`). It verifies secret masking, read-only `.git` internals and `.nexum/`, write scope, no network, dropped capabilities, host-uid writes, and the docker tool's egress/ownership rules. Run it after touching `src/tools/shell.ts`, `src/tools/docker-tools.ts`, `src/core/fs/`, or `docker/`.
 
 You can also watch tests during development with the standard Jest `--watch` flag (e.g. `npx jest --watch`).
 
@@ -109,7 +109,7 @@ You can also watch tests during development with the standard Jest `--watch` fla
 │   ├── domains/             # rails (semantic index + scanners), ruby (rubocop/rspec), trading
 │   ├── evaluation/, evolution/   # evaluation framework, self-development loop
 │   ├── intelligence/, lsp/  # LSP intelligence router, language server pool (14 languages)
-│   ├── marketplace/         # plugin marketplace (see SECURITY.md: INCOMPLETE)
+│   ├── marketplace/         # plugin marketplace: signed install, strict tar extraction, sandboxed activation
 │   ├── mcp/                 # MCP client + tool adapter
 │   ├── models/              # provider adapters, model catalog, capability router
 │   ├── orchestration/       # orchestrator, planner, loop detector, delegation
@@ -138,7 +138,7 @@ You can also watch tests during development with the standard Jest `--watch` fla
 3. **Sanitisation of Text**
    - `sanitizeText` strips ANSI escape sequences and control characters before they enter the store, protecting the TUI from malicious output.
 4. **Docker‑Sandboxed Shell Tool**
-   - `ShellTool` (`src/tools/shell.ts`) runs each command via `docker run` with `--network=none`, `--user <host uid>`, `--cap-drop=ALL`, `no-new-privileges`, `--read-only` + tmpfs `/tmp`, memory/CPU/PID limits, a hard timeout and a 32 KiB output ceiling; it escalates kills if the container is stubborn. Mounts: the workspace (read-only except the write scope when one is set), `.git/hooks` + `.git/config` read-only, every secret file masked with `/dev/null` and secret directory with an empty tmpfs (including hardlink aliases). The project/Ruby script runners execute through the same `ShellTool` — never spawn them on the host directly. With `sandbox: false` commands run on the host: every call then requires confirmation and credential env vars are stripped (`hostEnv()` in `src/tools/command-runner.ts`).
+   - `ShellTool` (`src/tools/shell.ts`) runs each command via `docker run` with `--network=none`, `--user <host uid>`, `--cap-drop=ALL`, `no-new-privileges`, `--read-only` + tmpfs `/tmp`, memory/CPU/PID limits, a hard timeout and a 32 KiB output ceiling; it escalates kills if the container is stubborn. Mounts: the workspace (read-only except the write scope when one is set), `.git/hooks` + `.git/config` and `.nexum/`/`.devagent/` read-only (`.nexum` is created first so the container cannot plant one), every secret file masked with the empty `.nexum/sandbox-empty` file and secret directory with an empty tmpfs (including hardlink aliases). The project/Ruby script runners execute through the same `ShellTool` — never spawn them on the host directly. With `sandbox: false` commands run on the host: every call then requires confirmation and credential env vars are stripped (`hostEnv()` in `src/tools/command-runner.ts`).
 5. **Loop Detection**
    - `src/orchestration/loop-detector.ts` tracks repeated tool‑call signatures to avoid infinite retries, a common failure mode for LLM‑driven agents.
 6. **Capability-Based Model Router**
@@ -154,7 +154,9 @@ You can also watch tests during development with the standard Jest `--watch` fla
 11. **Host-Side Infra Tools Are Allowlists**
     - `GitTool` (host): allowlisted subcommands; blocks force/hard flags, pushes to protected branches (incl. `HEAD:main` refspecs), options that run commands/write or read host files (`--upload-pack`, `--receive-pack`, `--exec`, `--output`, `--no-index`, `commit -F`, `blame --contents`, `--pathspec-from-file`, …, matched by unique prefix too), and push/pull to anything but a configured remote.
     - `DockerTool` is **opt-in** (`dockerTool` / `NEXUM_DOCKER_TOOL=1`): flag allowlists for `run`/`exec`/`build`, no bind mounts or host namespaces, everything labelled `nexum.agent=true` and only labelled objects touched, containers on the internal `nexum-agent` network with no egress unless `dockerEgress` / `NEXUM_DOCKER_EGRESS=1`.
-    - `GitHubTool` blocks `merge`/`delete`/`close` verbs (note: `gh api` is not restricted — see `SECURITY.md` §9); `SqliteQueryTool` is read-only (SELECT/PRAGMA/EXPLAIN only).
+    - `GitHubTool` is a per-subcommand verb allowlist (no merge/close/delete/approve/release publishing/repo changes); `gh api` is GET/HEAD-only with no fields, `--input`, `graphql` or other hosts; body/template files go through the guard (`SECURITY.md` §6). `SqliteQueryTool` is read-only (SELECT/PRAGMA/EXPLAIN only).
+    - The guard refuses every mutation under `.nexum/` and `.devagent/` (config, plugin installs, trust stores): configuration and trust are changed by the user, never by agent tools.
+    - Marketplace (`src/marketplace/`): `install()` requires, by default, a signature from a key in the publisher trust store plus a signed `sha256`, then unpacks with the strict extractor in `tar.ts` and validates `package.json`. `activate()` re-checks signature and hash and runs the plugin via `IsolatedPluginSandbox` with `transport: "process"` (Node `--permission`, read-only access to its own package, empty env). Nothing activates plugins automatically. Never load marketplace code in-process or with the `worker` transport.
 12. **Environment‑Driven Configuration**
     - Runtime values such as `NEXUM_MODEL`, `NEXUM_TIMEOUT_MS`, `NEXUM_SHELL_IMAGE`, `NEXUM_TOOL_SELECTION_MODE` are read from `process.env` (via `dotenv`, with deprecated `DEVAGENT_*` fallbacks — see `src/platform/environment.ts`), see `src/cli/config.ts` and the README's environment variable table.
 13. **Multiple API Keys — Ollama Cloud Key Pool, Not Multi-Vendor Routing**
@@ -168,7 +170,7 @@ You can also watch tests during development with the standard Jest `--watch` fla
 17. **One Filesystem Boundary — `WorkspaceGuard`**
     - Every file-touching tool resolves paths through the single guard built in `registerBaseTools` (`src/core/fs/workspace-guard.ts`): containment (symlinks resolved), optional write scope (`writeScope` / `NEXUM_WRITE_SCOPE`), secrets (list in `src/safety/path-policy.ts`, checked on requested **and** resolved path, plus hardlink aliases of workspace secrets and `~/.ssh`, `~/.aws`, …), no writes under `.git/`, no deleting the root or directories holding secrets. Tools call `guardPath()` and do I/O through `readVerified`/`writeVerified` (`src/tools/verified-fs.ts`), which re-check the target around the syscall. Never add a tool that touches the filesystem with raw paths; take a `WorkspaceBoundary` and go through the guard. Tool-facing errors stay `PathEscapeError` / `SensitivePathError` (the agent loop and grader key on those names).
 18. **Policy: First Decision Wins**
-    - `RulePolicyEngine` returns the first rule decision. The CLI agent uses the `parity` posture, whose arg rules (`DestructiveShellRule`, `GitPublishRule`, `DeleteFileRule`) run before the confirmation ladder — a rule that returns `allow` bypasses everything after it. Tools that must always ask declare it structurally (`policy.confirmation: "required"`, `execution.isolation: "host"`), and arg rules must not grant benign allows to host execution.
+    - `RulePolicyEngine` returns the first rule decision. Denial rules (deny lists, risk ceiling, execution profile, `ModeRestrictionRule`, `BudgetGuardRule`) always run first, then the posture's rules, then `ConfirmationRule`. The CLI agent uses the `parity` posture, whose arg rules (`DestructiveShellRule`, `GitPublishRule`, `DeleteFileRule`) run before the confirmation ladder — a rule that returns `allow` bypasses confirmation, but never a denial. Tools that must always ask declare it structurally (`policy.confirmation: "required"`, `execution.isolation: "host"`), and arg rules must not grant benign allows to host execution.
 
 ---
 

@@ -1,8 +1,7 @@
 # Nexum Security & Trust Model
 
 > **Status:** Developer Preview. This document describes what the code on
-> this branch actually enforces. Surfaces marked **INCOMPLETE** are not safe
-> to rely on for security guarantees. Known gaps are listed in §9 — read
+> this branch actually enforces. Known gaps are listed in §11 — read
 > them before running Nexum on anything you cannot afford to lose.
 
 Nexum runs an LLM that chooses tool calls. Assume the model can be steered
@@ -13,24 +12,24 @@ contained by **isolation** (what code can physically reach), not merely by
 
 ## 1. Trust Surfaces
 
-| Surface                                | Runs where               | Network              | Sees secrets              | Can mutate                       |
-| -------------------------------------- | ------------------------ | -------------------- | ------------------------- | -------------------------------- |
-| `run_shell` (sandbox, default)         | Docker container         | none                 | no (masked)               | workspace (or write scope) only  |
-| Project/Ruby script runners            | same sandbox             | none                 | no (masked)               | workspace (or write scope) only  |
-| `run_shell` / runners, sandbox **off** | **host**                 | yes                  | **yes**                   | **anything your user can**       |
-| Filesystem tools                       | host, via WorkspaceGuard | no                   | no                        | workspace (or write scope) only  |
-| `search_code`, `sqlite_query`, LSP     | host, via WorkspaceGuard | no                   | no                        | no                               |
-| `git`                                  | host                     | configured remotes   | uses your git credentials | repo + configured remotes        |
-| `github` (`gh`)                        | host                     | GitHub               | uses your `gh` token      | GitHub (see §9)                  |
-| `docker` (**opt-in**)                  | host daemon              | none by default      | no                        | agent-labelled containers/images |
-| Browser (Playwright)                   | host Chromium            | yes                  | no                        | remote sites                     |
-| Web fetch                              | host                     | public internet only | no                        | no                               |
-| Webhook ingress                        | host                     | inbound              | HMAC secrets              | triggers agent handlers          |
-| MCP servers                            | host subprocesses        | depends              | depends                   | depends (trusted code)           |
-| External-agent subagents               | host subprocesses        | yes                  | API key passed via env    | anything the agent CLI can       |
-| Trading tools                          | host                     | exchanges            | exchange keys             | **financial** (orders)           |
-| Plugin marketplace                     | host                     | yes                  | no                        | **INCOMPLETE**                   |
-| Plugin runtime                         | host (opt. worker)       | depends              | depends                   | **INCOMPLETE**                   |
+| Surface                                | Runs where                   | Network              | Sees secrets              | Can mutate                       |
+| -------------------------------------- | ---------------------------- | -------------------- | ------------------------- | -------------------------------- |
+| `run_shell` (sandbox, default)         | Docker container             | none                 | no (masked)               | workspace (or write scope) only  |
+| Project/Ruby script runners            | same sandbox                 | none                 | no (masked)               | workspace (or write scope) only  |
+| `run_shell` / runners, sandbox **off** | **host**                     | yes                  | **yes**                   | **anything your user can**       |
+| Filesystem tools                       | host, via WorkspaceGuard     | no                   | no                        | workspace (or write scope) only  |
+| `search_code`, `sqlite_query`, LSP     | host, via WorkspaceGuard     | no                   | no                        | no                               |
+| `git`                                  | host                         | configured remotes   | uses your git credentials | repo + configured remotes        |
+| `github` (`gh`)                        | host                         | GitHub               | uses your `gh` token      | issues/PRs only (§6)             |
+| `docker` (**opt-in**)                  | host daemon                  | none by default      | no                        | agent-labelled containers/images |
+| Browser (Playwright)                   | host Chromium                | yes                  | no                        | remote sites                     |
+| Web fetch                              | host                         | public internet only | no                        | no                               |
+| Webhook ingress                        | host                         | inbound              | HMAC secrets              | triggers agent handlers          |
+| MCP servers                            | host subprocesses            | depends              | depends                   | depends (trusted code)           |
+| External-agent subagents               | host subprocesses            | yes                  | API key passed via env    | anything the agent CLI can       |
+| Trading tools                          | host                         | exchanges            | exchange keys             | **financial** (orders)           |
+| Marketplace plugins (`activate`)       | Node process, `--permission` | **yes** (§11)        | no (own files, empty env) | nothing on disk; bridge only     |
+| Plugins registered in code             | host process                 | yes                  | yes                       | anything (trusted code)          |
 
 ## 2. Filesystem boundary (WorkspaceGuard)
 
@@ -59,13 +58,18 @@ packs by `registerBaseTools`. Per operation it enforces:
    possible secret (fail closed).
 5. **Git internals** — file tools never write under `.git/` (a planted
    hook or `core.fsmonitor` would run on the host at the next git command).
+   **Nexum state** — nor under `.nexum/` or `.devagent/` (config, plugin
+   installs, publisher trust store, MCP approvals): an agent that could
+   write there could switch its own sandbox off or trust its own plugins.
+   Reading is allowed; `credentials.json` and `*.pem` there are secrets
+   (rule 3).
 6. **Destructive shapes** — the workspace root cannot be deleted or moved;
    a directory holding protected files cannot be deleted.
 7. **Races** — reads open the file then re-resolve through the guard and
    require the same inode; writes go through an exclusively created temp
    file proven to sit at the approved location before any content is
    written. Delete/move/mkdir re-validate immediately before the syscall
-   (narrowed, not closed — see §9).
+   (narrowed, not closed — see §11).
 
 `search_code` also passes ripgrep exclusion globs for secrets _after_ any
 caller glob (ripgrep lets later globs win) and drops matches from
@@ -82,17 +86,23 @@ Default (`sandbox: true`). Each call runs `docker run` with:
 - the workspace mounted read-write — or read-only with only the write scope
   read-write when one is set;
 - `.git/hooks` and `.git/config` mounted read-only;
-- every secret file masked with `/dev/null` and every secret directory with
-  an empty tmpfs (same list as §2, including hardlink aliases); the shell
-  refuses to start if the secret scan exceeds 100k entries.
+- `.nexum/` (created first if missing, so the container cannot create it)
+  and `.devagent/` mounted read-only — where they really live, if symlinked;
+- every secret file masked with an empty read-only file
+  (`.nexum/sandbox-empty`, a workspace path Docker Desktop can always
+  share; `/dev/null` only if no state directory is usable) and every secret
+  directory with an empty tmpfs (same list as §2, including hardlink
+  aliases); the shell refuses to start if the secret scan exceeds 100k
+  entries.
 
 `run_tests` / `run_lint` / `run_format` / `run_build` and `run_rubocop` /
 `run_rspec` execute through the same sandbox (package scripts and Gemfiles
 are code the agent can edit). Paths starting with `-` are rejected (option
 injection).
 
-Verified against a real Docker 29 daemon, as root and as an unprivileged
-user, by `npm run test:docker` (§8).
+Verified against a real Docker 29 daemon on Linux, as root and as an
+unprivileged user, by `npm run test:docker` (§10). Not yet run on Docker
+Desktop (macOS/Windows) — see §10.
 
 ### Sandbox disabled (`NEXUM_SANDBOX=0` / `sandbox: false`)
 
@@ -140,7 +150,63 @@ escape are blocked, including git's unique-prefix abbreviations (`--out=`):
 `push`/`pull` only target remotes already configured (`git remote`). The
 parity posture asks before every push.
 
-## 6. Other surfaces
+## 6. `github` tool (host)
+
+`gh` runs with your GitHub token, so the tool allowlists verbs per
+subcommand instead of blocking a few:
+
+- `pr` list/view/diff/checks/status/create/comment/edit/review/ready
+  (`review --approve` blocked); `issue` list/view/status/create/comment/
+  edit; `release` list/view; `repo` view; `run` list/view/rerun. Merge,
+  close, reopen, delete, lock, transfer, release create/upload/download,
+  repo create/fork/clone/edit/archive, secrets, variables, `auth`,
+  `extension`, `alias` and anything else are refused.
+- `gh api` is read-only: one endpoint path (no URL, no `graphql` — it is
+  always a POST), `--method` GET/HEAD only, headers limited to `Accept` and
+  `X-GitHub-Api-Version`, no `-f`/`-F`/`--field`/`--raw-field`/`--input`
+  (any of them turns the request into a write), no `--hostname`.
+- `--body-file`/`-F`/`--template`/`-T` must name a workspace file the guard
+  lets the agent read (never a secret, never outside the workspace, never
+  stdin).
+
+## 7. Plugins and the marketplace
+
+**Install** (`MarketplaceService.install`): the signature policy runs
+before anything is downloaded. The default is `signatures: "require"`: the
+entry must be signed by a key **in the publisher trust store** (a signature
+that only verifies against a key embedded in the entry proves nothing about
+who signed it) and must carry a `sha256`, which the signature covers.
+`"require-verified"` additionally requires a `verified` publisher; `"warn"`
+and `"off"` must be configured explicitly. A present-but-invalid signature
+is refused in every mode except `"off"`. The artifact is then hashed and
+unpacked by a strict extractor (`src/marketplace/tar.ts`: regular files and
+directories only — symlinks, hardlinks, devices, absolute paths, `..`,
+duplicates, bad checksums and oversized archives are rejected) and its
+`package.json` validated: `nexum` object present, id and version equal to
+the signed entry, entry module a `.js`/`.mjs`/`.cjs` file inside the
+package, declared `nexum.permissions` well-formed. Catalog ids/versions
+cannot escape the cache directory; git sources clone with `--` before the
+URL and `protocol.ext.allow=never`, and pack the plugin directory into a
+deterministic tar so its sha256 can be signed.
+
+**Activation** (`MarketplaceService.activate`, never automatic): signature
+re-checked against the **current** trust store (removing a key revokes its
+plugins), artifact re-hashed against the record and the signed sha256,
+unpacked into a fresh private temp directory, then run in a separate Node
+process under the permission model: `--permission
+--allow-fs-read=<package dir>` (no reads elsewhere, no writes, no child
+processes, no workers, no native addons, no WASI), an empty environment,
+a heap cap and lifecycle timeouts. The module's own manifest must match the
+installed id/version. It reaches the host only through the capability
+bridge, which enforces the plugin's `provide`/`lookup`/`declare` allowlist
+(default: what the package declared, shown on the install record; the host
+can pass a narrower policy) and only transfers structured-cloneable values.
+
+`DefaultPluginHost.register(plugin)` with an in-process plugin object is
+unchanged: that is your own code with full host trust. `IsolatedPluginSandbox`
+with the default `worker` transport isolates memory only.
+
+## 8. Other surfaces
 
 - **Web fetch** (`NodeFetchProvider`): destinations are validated at
   connect time (no DNS-rebinding window); loopback, private, link-local
@@ -164,40 +230,51 @@ parity posture asks before every push.
   (`paper_trade`) is marked financial and always requires confirmation;
   market-data tools are read-only.
 
-## 7. Policy engine
+## 9. Policy engine
 
 `RulePolicyEngine` evaluates rules in order and the **first decision
-wins**. The CLI agent uses the `parity` posture: `DestructiveShellRule`,
-`GitPublishRule`, `DeleteFileRule`, then (when configured) deny lists /
-risk ceilings / execution profile, `ModeRestrictionRule`,
-`BudgetGuardRule`, `ConfirmationRule`. Financial side effects always
+wins**. Denials always run first — deny lists, risk ceilings, execution
+profile, `ModeRestrictionRule` (read-only agent modes), `BudgetGuardRule`
+— and only then a posture's own rules, so no product "allow" (such as
+parity's benign-shell allowance) can pre-empt a denial. The CLI agent uses
+the `parity` posture: `DestructiveShellRule`, `GitPublishRule`,
+`DeleteFileRule`, then `ConfirmationRule`. Financial side effects always
 require confirmation. `standard` and `restricted` postures confirm every
 high / medium-risk call. Policy is a UX and intent layer; the isolation in
-§2–§4 is what holds when the model is adversarial.
+§2–§7 is what holds when the model is adversarial.
 
-## 8. Verification
+## 10. Verification
 
 ```bash
 npm test                     # unit + contract suites (Docker not required)
 docker build -t nexum-sandbox:latest docker/nexum-sandbox/
-npm run test:docker          # real daemon: masking, git RO, write scope, no network,
+npm run test:docker          # real daemon: masking, git/.nexum RO, write scope, no network,
                              # caps/no-new-privs, host uid, docker-tool egress & ownership
 ```
 
-## 9. Known gaps
+`test:docker` has passed on Linux (native dockerd, root and non-root). It
+has **not** been run on Docker Desktop. Differences that matter there:
+Docker Desktop runs containers in a VM and shares host paths through its
+file-sharing layer, which maps ownership to the host user (so the uid
+assertion is skipped on hosts without POSIX uids); on Windows there is no
+host uid, so no `--user` is passed and the container runs as the image's
+user (root inside the container, all capabilities dropped,
+`no-new-privileges`).
 
-| Gap                                                                                                                                                                                                                                                     | Impact                                                                                        |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Plugin marketplace — INCOMPLETE.** `install()` verifies and caches the artifact but never extracts or activates it; signature mode defaults to `warn` (unsigned plugins install with a warning).                                                      | Not an activation path yet; do not treat it as a trust boundary.                              |
-| **Plugin runtime — INCOMPLETE.** `PluginHost.register()` runs plugins in-process with full host trust; `sandboxPlugin` (policy mediation) and `IsolatedPluginSandbox` (`worker_threads` resource limits) are opt-in and are **not** OS-level isolation. | Only install plugins you would run as your own code.                                          |
-| `github` tool blocks `merge`/`delete`/`close` verbs, but `gh api` can issue arbitrary API calls.                                                                                                                                                        | Scope the `gh` token (fine-grained, single repo).                                             |
-| Parity posture: `DestructiveShellRule` allows non-destructive sandboxed shell commands before `ModeRestrictionRule`, so read-only agent modes can still write via the shell inside the sandbox.                                                         | Use `standard`/`restricted` postures when read-only modes must be strict.                     |
-| Delete/move/mkdir symlink race is narrowed, not closed (Node has no `openat2(RESOLVE_BENEATH)`).                                                                                                                                                        | Requires a concurrent writer inside the workspace.                                            |
-| Sandbox masks secrets present when the command starts; the webhook replay cache and hardlink inode cache (10 s) are in memory.                                                                                                                          | Restart re-opens the webhook window; a secret created mid-command is visible to that command. |
-| Browser has host network access.                                                                                                                                                                                                                        | Do not browse untrusted sites with sensitive local services reachable.                        |
-| Not a formal audit; no guarantee against prompt injection or malicious MCP servers/plugins.                                                                                                                                                             | Run untrusted workloads on a disposable machine or VM.                                        |
+## 11. Known gaps
 
-## 10. Reporting security issues
+| Gap                                                                                                                                                                                                                                                                                | Impact                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **Workspace config is trusted.** `.nexum/config.json` (and legacy `.devagent/`) in the workspace is loaded as configuration — including `sandbox`, `dockerTool` and MCP server commands. A cloned repository can ship one. The agent cannot write it (§2, §3), but its author can. | Inspect `.nexum/` in repositories you did not create before running Nexum in them.            |
+| Marketplace plugins have **network access**: Node 22's permission model does not restrict sockets. They cannot read your files or environment, so they have nothing of yours to send except what the capability bridge hands them.                                                 | Grant `lookup` permissions sparingly; only trust publisher keys you have verified.            |
+| `github` tool can still create/comment on/edit issues and PRs and re-run workflows with your token.                                                                                                                                                                                | Scope the `gh` token (fine-grained, single repo).                                             |
+| Delete/move/mkdir symlink race is narrowed, not closed (Node has no `openat2(RESOLVE_BENEATH)`).                                                                                                                                                                                   | Requires a concurrent writer inside the workspace.                                            |
+| Sandbox masks secrets present when the command starts; the webhook replay cache and hardlink inode cache (10 s) are in memory.                                                                                                                                                     | Restart re-opens the webhook window; a secret created mid-command is visible to that command. |
+| Browser has host network access.                                                                                                                                                                                                                                                   | Do not browse untrusted sites with sensitive local services reachable.                        |
+| `test:docker` not yet run on Docker Desktop (macOS/Windows); see §10.                                                                                                                                                                                                              | Run it once there before relying on the sandbox on those hosts.                               |
+| Not a formal audit; no guarantee against prompt injection or malicious MCP servers/plugins.                                                                                                                                                                                        | Run untrusted workloads on a disposable machine or VM.                                        |
+
+## 12. Reporting security issues
 
 1. **Do not** open a public GitHub issue.
 2. Email `shubhamtaywade82@gmail.com` with details and a repro.
