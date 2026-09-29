@@ -187,3 +187,24 @@ describe("file tools cannot plant git hooks or config", () => {
     expect(existsSync(join(root, ".git", "hooks", "pre-commit"))).toBe(false);
   });
 });
+
+describe("host mode (sandbox disabled) requires confirmation", () => {
+  function policyOf(manager: AgentToolManager, id: string) {
+    return manager.kernelCatalog.definition(id)?.policy.confirmation;
+  }
+
+  it("run_shell and script runners require confirmation only when running on the host", () => {
+    const host = new AgentToolManager();
+    host.registerBaseTools(root, undefined, { sandbox: false });
+    for (const id of ["run_shell", "run_tests", "run_build", "run_rspec", "run_rubocop"]) {
+      expect(policyOf(host, id)).toBe("required");
+    }
+
+    const sandboxed = new AgentToolManager();
+    sandboxed.registerBaseTools(root, undefined, { sandbox: true });
+    // sandboxed script runners stay unattended; run_shell is high-risk and confirms either way
+    for (const id of ["run_tests", "run_rspec"]) {
+      expect(policyOf(sandboxed, id)).not.toBe("required");
+    }
+  });
+});

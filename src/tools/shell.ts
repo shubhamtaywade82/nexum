@@ -7,6 +7,7 @@ import { Tool } from "./tool.js";
 import { BRAND } from "../platform/brand.js";
 import type { ToolCallContext } from "../core/tools/tool-contract.js";
 import { ShellExecutionAccountant } from "./shell-accounting.js";
+import { hostEnv } from "./command-runner.js";
 
 export interface ShellToolOptions {
   workspaceRoot: string;
@@ -94,7 +95,7 @@ export class ShellTool extends Tool {
   get description(): string {
     return this.sandbox
       ? "Run a shell command inside an isolated Docker sandbox (no network) rooted at the workspace. Secret files (.env, keys, secrets/) read as empty, and .git hooks/config are read-only."
-      : "Run a shell command on the host rooted at the workspace.";
+      : "Run a shell command directly on the HOST (no sandbox) in the workspace. Every command needs human confirmation; credential environment variables are removed.";
   }
 
   override get capabilities(): string[] {
@@ -211,7 +212,9 @@ export class ShellTool extends Tool {
     }
 
     return new Promise((resolvePromise) => {
-      const child = dockerArgs ? spawn("docker", dockerArgs) : spawn("sh", ["-c", command], { cwd: this.root });
+      const child = dockerArgs
+        ? spawn("docker", dockerArgs)
+        : spawn("sh", ["-c", command], { cwd: this.root, env: hostEnv() });
       let stdout = Buffer.alloc(0);
       let stderr = Buffer.alloc(0);
       let settled = false;

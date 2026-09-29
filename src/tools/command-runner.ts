@@ -12,6 +12,18 @@ export interface CommandOutcome {
   error?: string;
 }
 
+/** Environment variable names that carry credentials. */
+const CREDENTIAL_ENV = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE)/i;
+
+/**
+ * The environment for commands run directly on the host: the parent's
+ * environment minus credential-looking variables (the agent's own API keys,
+ * tokens), so a script the agent wrote cannot read them from its env.
+ */
+export function hostEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !CREDENTIAL_ENV.test(name)));
+}
+
 /** POSIX single-quote an argument for `sh -c`. */
 export function shellQuote(arg: string): string {
   return /^[A-Za-z0-9_./:=@%+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
@@ -48,6 +60,7 @@ export function runCommand(opts: {
   return new Promise((resolvePromise) => {
     const child = spawn(opts.bin, opts.args, {
       cwd: opts.root,
+      env: hostEnv(),
       ...(opts.hostTimeoutMs ? { timeout: opts.hostTimeoutMs } : {}),
     });
     let stdout = "";

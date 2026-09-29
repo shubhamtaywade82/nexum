@@ -10,11 +10,33 @@ import { ShellTool } from "../shell.js";
 import { DockerTool } from "../docker-tools.js";
 import { RunTestsTool, RunLintTool, RunFormatTool, RunBuildTool } from "../project-tools.js";
 import { ToolPack, ToolPackEntry, packOf } from "../gateway/tool-pack.js";
+import type { LegacyToolMetadata } from "../gateway/tool-catalog.js";
 import type { ToolRisk } from "../../core/tools/tool-contract.js";
 import { ShellExecutionAccountant } from "../shell-accounting.js";
 import type { CommandRunner } from "../command-runner.js";
 
 export type PackShellOutput = (stream: "stdout" | "stderr", chunk: string) => void;
+
+/** True only when commands go through a Docker-sandboxed ShellTool. */
+export function runsSandboxed(runner: CommandRunner | undefined): boolean {
+  return (runner as { sandbox?: unknown } | undefined)?.sandbox === true;
+}
+
+const SHELL_SIDE_EFFECTS = { filesystem: true, process: true, network: true };
+
+/** Metadata for run_shell: on the host (sandbox disabled) every command needs a human's confirmation. */
+export function shellMetadata(sandboxed: boolean): LegacyToolMetadata {
+  return sandboxed
+    ? { risk: "high", sideEffects: SHELL_SIDE_EFFECTS }
+    : { risk: "high", sideEffects: SHELL_SIDE_EFFECTS, policy: { confirmation: "required" } };
+}
+
+/** Metadata for script runners (package.json / bundle): host execution needs confirmation too. */
+export function scriptRunnerMetadata(sandboxed: boolean): LegacyToolMetadata {
+  return sandboxed
+    ? { risk: "medium" }
+    : { risk: "high", sideEffects: SHELL_SIDE_EFFECTS, policy: { confirmation: "required" } };
+}
 
 export interface ProcessPackOptions {
   root: string;
@@ -47,7 +69,7 @@ export function processPack(opts: ProcessPackOptions): ToolPack {
     {
       tool: shell,
       category: "Shell",
-      metadata: { risk: "high" as ToolRisk, sideEffects: { filesystem: true, process: true, network: true } },
+      metadata: shellMetadata(shell.sandbox),
     },
     {
       tool: new DockerTool(opts.root),
@@ -62,7 +84,7 @@ export function processPack(opts: ProcessPackOptions): ToolPack {
     ].map((tool) => ({
       tool,
       category: "Project",
-      metadata: { risk: "medium" as ToolRisk },
+      metadata: scriptRunnerMetadata(shell.sandbox),
     })),
   ];
   return packOf(
@@ -89,7 +111,7 @@ export function shellPack(
     "shell",
     shell.sandbox ? "Shell command execution (Docker-sandboxed when available)." : "Shell command execution (host).",
     "process",
-    [[shell, { risk: "high", sideEffects: { filesystem: true, process: true, network: true } }]],
+    [[shell, shellMetadata(shell.sandbox)]],
     "Shell",
   );
 }
@@ -120,7 +142,7 @@ export function projectPack(root: string, runner?: CommandRunner): ToolPack {
     ].map((tool) => ({
       tool,
       category: "Project",
-      metadata: { risk: "medium" as ToolRisk },
+      metadata: scriptRunnerMetadata(runsSandboxed(runner)),
     })),
     "Project",
   );
