@@ -116,7 +116,7 @@ host.register(plugin);
 await host.start();
 ```
 
-`activate()` never runs implicitly. The plugin runs in its own Node process under the permission model: it can read only its unpacked package (a private temp directory, deleted when the process exits), cannot write files, spawn processes, start workers or load native addons, and starts with an empty environment. Network access is **not** restricted by Node's permission model. Everything it does on the host goes through the capability bridge, limited to the `permissions` the package declared (recorded on the install record for review); pass `{ policy }` to grant less. Capability values cross the bridge by structured clone, so functions and live objects cannot be looked up.
+`activate()` never runs implicitly. The plugin runs in its own Node process under the permission model: it can read only its unpacked package (a private temp directory, deleted when the process exits), cannot write files, spawn processes, start workers or load native addons, starts with an empty environment, and has no network: before the plugin loads, every network entry point (`net`, `tls`, `http2`, `dgram`, `dns`, `inspector` — and so `http`, `fetch`, `WebSocket`) is replaced with one that throws `ERR_ACCESS_DENIED`. Pass `{ sandbox: { allowNetwork: true } }` to let a specific plugin reach the network. Everything it does on the host goes through the capability bridge, limited to the `permissions` the package declared (recorded on the install record for review); pass `{ policy }` to grant less. Capability values cross the bridge by structured clone, so functions and live objects cannot be looked up.
 
 ## Trust scoring
 

@@ -31,8 +31,9 @@
  *   - The artifact is unpacked into a fresh private temp directory and the
  *     plugin runs from there in a separate Node process under the permission
  *     model (IsolatedPluginSandbox, transport "process"): it can read only
- *     its own files, cannot write, spawn processes or load native addons,
- *     and reaches the host only through the policy-checked capability bridge
+ *     its own files, cannot write, spawn processes, load native addons or
+ *     open network connections, and reaches the host only through the
+ *     policy-checked capability bridge
  *   - Nothing activates plugins automatically; the embedding host calls
  *     `activate()` and registers the result on its PluginHost
  */

@@ -28,7 +28,12 @@
  *     separate Node process under the permission model (`--permission`),
  *     allowed to read only its own package directory — no writes, no child
  *     processes, no workers, no native addons, and an empty environment.
- *     The permission model does not restrict network access.
+ *     Node's permission model does not cover the network, so before the
+ *     plugin module loads the bootstrap disables every network entry point
+ *     (net/tls/http2 connect and listen, dgram, dns, inspector); with
+ *     `process.binding` denied by the permission model and no addons or
+ *     child processes, the plugin has no route to a socket. Pass
+ *     `allowNetwork: true` to opt a plugin back in.
  *
  * Both tiers are opt-in and non-breaking: registering a plugin directly with
  * `DefaultPluginHost` keeps today's unsandboxed behaviour.
@@ -315,6 +320,8 @@ export interface IsolatedPluginSandboxOptions {
    * plugin file's directory). Nothing outside it is readable.
    */
   readRoot?: string;
+  /** Process transport: let the plugin open network connections (default false). */
+  allowNetwork?: boolean;
   /** Called once when the worker/process has exited (cleanup hook). */
   onExit?: () => void;
   /** Worker resource ceilings (defaults: 128 MB heap, 16 MB code range). */
@@ -358,6 +365,37 @@ const parentPort = {
   on: (event, fn) => process.on(event, fn),
 };
 process.on("disconnect", () => process.exit(0));
+`;
+// Runs before the plugin module is imported. The permission model already
+// denies process.binding, addons, workers and child processes, so these
+// public entry points are the only way to a socket (or a DNS query).
+const NETWORK_LOCKDOWN = `
+(() => {
+  const deny = (what) => function () {
+    const err = new Error("network access is not allowed in the plugin sandbox (" + what + ")");
+    err.code = "ERR_ACCESS_DENIED";
+    throw err;
+  };
+  const net = require("node:net");
+  net.Socket.prototype.connect = deny("net.Socket.connect");
+  net.Server.prototype.listen = deny("net.Server.listen");
+  net.connect = net.createConnection = deny("net.connect");
+  require("node:tls").connect = deny("tls.connect");
+  require("node:http2").connect = deny("http2.connect");
+  const dgram = require("node:dgram");
+  dgram.createSocket = deny("dgram.createSocket");
+  for (const k of ["bind", "send", "connect"]) dgram.Socket.prototype[k] = deny("dgram." + k);
+  const dns = require("node:dns");
+  for (const target of [dns, dns.promises, dns.Resolver.prototype, dns.promises.Resolver.prototype]) {
+    for (const k of Object.keys(target)) {
+      if (typeof target[k] === "function" && /^(lookup|resolve|reverse)/.test(k)) target[k] = deny("dns." + k);
+    }
+  }
+  const inspector = require("node:inspector");
+  inspector.open = deny("inspector.open");
+  inspector.Session.prototype.connect = deny("inspector.Session");
+  inspector.Session.prototype.connectToMainThread = deny("inspector.Session");
+})();
 `;
 const BRIDGE_BOOTSTRAP = `
 const pending = new Map();
@@ -770,7 +808,7 @@ function processTransport(
       `--allow-fs-read=${readRoot}`,
       `--max-old-space-size=${heapMb}`,
       "-e",
-      PROCESS_PREAMBLE + BRIDGE_BOOTSTRAP,
+      PROCESS_PREAMBLE + (opts.allowNetwork ? "" : NETWORK_LOCKDOWN) + BRIDGE_BOOTSTRAP,
     ],
     {
       stdio: ["ignore", "ignore", "pipe", "ipc"],

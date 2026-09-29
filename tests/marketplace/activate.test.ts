@@ -116,19 +116,33 @@ describe("activate", () => {
   );
 
   it(
-    "the plugin cannot read outside its package, write, spawn processes or see the host environment",
+    "the plugin cannot read outside its package, write, spawn processes, use the network or see the host environment",
     async () => {
       const secret = join(dir, "secret.txt");
       writeFileSync(secret, "TOP SECRET");
       const probe = `
         const fs = await import("node:fs");
         const cp = await import("node:child_process");
+        const net = await import("node:net");
+        const tls = await import("node:tls");
+        const dgram = await import("node:dgram");
+        const dns = await import("node:dns");
+        const attemptAsync = async (fn) => { try { await fn(); return "ALLOWED"; } catch (e) { return e.code ?? e.cause?.code ?? String(e); } };
         const attempt = (fn) => { try { fn(); return "ALLOWED"; } catch (e) { return e.code ?? String(e); } };
         ctx.provide("probe:result", JSON.stringify({
           read: attempt(() => fs.readFileSync(${JSON.stringify(secret)}, "utf8")),
           write: attempt(() => fs.writeFileSync(${JSON.stringify(join(dir, "pwned.txt"))}, "x")),
           spawn: attempt(() => cp.execSync("id")),
           env: Object.keys(process.env).filter((k) => k !== "NEXUM_PLUGIN_DATA"),
+          net: {
+            fetch: await attemptAsync(() => fetch("http://127.0.0.1:8080/")),
+            socket: attempt(() => net.connect(9, "127.0.0.1")),
+            listen: attempt(() => net.createServer().listen(0)),
+            udp: attempt(() => dgram.createSocket("udp4").send("x", 53, "127.0.0.1")),
+            dns: await attemptAsync(() => dns.promises.lookup("example.com")),
+            tls: attempt(() => tls.connect(443, "127.0.0.1")),
+            binding: attempt(() => process.binding("tcp_wrap")),
+          },
         }));`;
       const { service, entry } = setup("probe-plugin", "1.0.0", {
         pkg: { nexum: { permissions: { provide: ["probe:*"] } } },
@@ -140,11 +154,13 @@ describe("activate", () => {
       await host.start();
       const result = JSON.parse(host.lookup<string>("probe:result")!);
       await host.stop();
+      const denied = "ERR_ACCESS_DENIED";
       expect(result).toEqual({
-        read: "ERR_ACCESS_DENIED",
-        write: "ERR_ACCESS_DENIED",
-        spawn: "ERR_ACCESS_DENIED",
+        read: denied,
+        write: denied,
+        spawn: denied,
         env: [],
+        net: { fetch: denied, socket: denied, listen: denied, udp: denied, dns: denied, tls: denied, binding: denied },
       });
       expect(existsSync(join(dir, "pwned.txt"))).toBe(false);
     },

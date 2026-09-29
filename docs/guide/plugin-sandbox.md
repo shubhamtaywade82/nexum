@@ -114,7 +114,7 @@ const plugin = await IsolatedPluginSandbox.load(file, {
 });
 ```
 
-The plugin then runs in a separate Node process started with `--permission --allow-fs-read=<readRoot>`: reads outside `readRoot`, all writes, child processes, workers, native addons and WASI fail with `ERR_ACCESS_DENIED`; the environment is empty. The bridge and policy are the same as with a worker. Node 22's permission model does not restrict network access. Marketplace plugins always use this transport (see [marketplace](/guide/marketplace)).
+The plugin then runs in a separate Node process started with `--permission --allow-fs-read=<readRoot>`: reads outside `readRoot`, all writes, child processes, workers, native addons and WASI fail with `ERR_ACCESS_DENIED`; the environment is empty. Node 22's permission model has no network switch, so the bootstrap also replaces every network entry point (`net`, `tls`, `http2`, `dgram`, `dns`, `inspector`) with one that throws `ERR_ACCESS_DENIED` before the plugin module loads; `allowNetwork: true` skips that. The bridge and policy are the same as with a worker. Marketplace plugins always use this transport (see [marketplace](/guide/marketplace)).
 
 ## Choosing a tier
 
