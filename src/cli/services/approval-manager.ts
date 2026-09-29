@@ -8,6 +8,7 @@
  */
 
 import { ApprovalBroker, describeConfirmation } from "../../core/policy/approval-broker.js";
+import type { McpElicitationRequest, McpElicitationResponse } from "../../core/user-input.js";
 import { ApprovalRequest, ClarificationRequest, ClarificationResponse } from "../../runtime/types.js";
 
 export interface ApprovalManagerOptions {
@@ -17,11 +18,14 @@ export interface ApprovalManagerOptions {
   /** Has any listener been registered (checked before deadlocking waits)? */
   hasApprovalListener: () => boolean;
   hasClarificationListener: () => boolean;
+  onMcpElicitationRequested?: (request: McpElicitationRequest) => void;
+  hasMcpElicitationListener: () => boolean;
 }
 
 export class ApprovalManager {
   private readonly pendingApprovals = new Map<string, (approved: boolean) => void>();
   private readonly pendingClarifications = new Map<string, (resp: ClarificationResponse) => void>();
+  private readonly pendingMcpElicitations = new Map<string, (resp: McpElicitationResponse) => void>();
   readonly broker: ApprovalBroker;
 
   constructor(private readonly opts: ApprovalManagerOptions) {
@@ -77,6 +81,27 @@ export class ApprovalManager {
       this.pendingClarifications.delete(response.id);
       handler(response);
     }
+  }
+
+  /** Server-initiated MCP input; decline rather than deadlock without UI. */
+  async requestMcpElicitation(request: McpElicitationRequest): Promise<McpElicitationResponse> {
+    if (!this.opts.hasMcpElicitationListener()) return { id: request.id, action: "decline" };
+    return new Promise<McpElicitationResponse>((resolve) => {
+      this.pendingMcpElicitations.set(request.id, resolve);
+      this.opts.onMcpElicitationRequested?.(request);
+    });
+  }
+
+  resolveMcpElicitation(response: McpElicitationResponse): void {
+    const handler = this.pendingMcpElicitations.get(response.id);
+    if (handler) {
+      this.pendingMcpElicitations.delete(response.id);
+      handler(response);
+    }
+  }
+
+  pendingMcpElicitationCount(): number {
+    return this.pendingMcpElicitations.size;
   }
 
   pendingApprovalCount(): number {
