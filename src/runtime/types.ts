@@ -32,8 +32,8 @@ export type ActorHealth = "healthy" | "active" | "waiting" | "error" | "thinking
 /**
  * Built-in color themes. The first three are Nexum-native palettes kept
  * byte-compatible with the pre-theme-registry era; the rest are vendored
- * from the termcn (ink-ui) registry under src/tui/ui/lib/terminal-themes/.
- * The mapping ThemeName -> Theme tokens lives in src/tui/ui/theme-registry.ts.
+ * from the termcn (ink-ui) registry under src/ui/ui/lib/terminal-themes/.
+ * The mapping ThemeName -> Theme tokens lives in src/ui/ui/theme-registry.ts.
  */
 export type ThemeName =
   | "default"
@@ -127,7 +127,8 @@ export const PRIMARY_VIEW_LABELS: Record<(typeof PRIMARY_VIEWS)[number], string>
 };
 
 /** Runtime mode drives the Context Strip contents. */
-export type RuntimeMode = "idle" | "planning" | "editing" | "testing" | "approval" | "clarification" | "elicitation" | "streaming";
+export type RuntimeMode =
+  "idle" | "planning" | "editing" | "testing" | "approval" | "clarification" | "elicitation" | "streaming";
 
 /** Agent operational modes — controls what the agent is allowed to do. */
 export type AgentMode = "ask" | "code" | "architect" | "review" | "debug" | "autonomous";

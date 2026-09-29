@@ -62,7 +62,15 @@ export type ExecutionEvent =
   | { type: "tool.completed"; id: string; result: Record<string, unknown> }
   | { type: "tool.failed"; id: string; error: string }
   // ── model calls ─────────────────────────────────────────────────────────
-  | { type: "model.answered"; tier: string; model: string }
+  | {
+      type: "model.answered";
+      tier: string;
+      model: string;
+      /** Provider-reported usage for this call (absent when the provider reported none). */
+      promptTokens?: number;
+      completionTokens?: number;
+      latencyMs?: number;
+    }
   // ── planner / execution progress ────────────────────────────────────────
   | { type: "execution.goal"; goal: string; steps: ExecutionStep[] }
   | { type: "execution.step"; step: ExecutionStep }

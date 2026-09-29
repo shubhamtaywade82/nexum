@@ -81,6 +81,12 @@ export interface ToolExecutionSpec {
    * (git commit/push, GitHub mutations, trading, external API mutations).
    */
   idempotencyKey?: "none" | "required" | "auto";
+  /**
+   * Where a process-spawning tool runs: "sandbox" (isolated container) or
+   * "host" (the user's own account). Argument-based "benign command" allows
+   * never apply to host execution.
+   */
+  isolation?: "sandbox" | "host";
 }
 
 /** Human-in-the-loop policy attached to the tool itself. */

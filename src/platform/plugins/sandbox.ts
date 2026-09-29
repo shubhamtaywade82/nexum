@@ -22,6 +22,19 @@
  *     Tier 2 composes with Tier 1: the same `PluginSandboxPolicy` is enforced
  *     host-side on every bridged operation.
  *
+ *     A worker shares the host's OS privileges: the plugin module can still
+ *     import `node:fs` or `node:child_process`. For code you did not write
+ *     (marketplace plugins) use `transport: "process"`: the plugin runs in a
+ *     separate Node process under the permission model (`--permission`),
+ *     allowed to read only its own package directory — no writes, no child
+ *     processes, no workers, no native addons, and an empty environment.
+ *     Node's permission model does not cover the network, so before the
+ *     plugin module loads the bootstrap disables every network entry point
+ *     (net/tls/http2 connect and listen, dgram, dns, inspector); with
+ *     `process.binding` denied by the permission model and no addons or
+ *     child processes, the plugin has no route to a socket. Pass
+ *     `allowNetwork: true` to opt a plugin back in.
+ *
  * Both tiers are opt-in and non-breaking: registering a plugin directly with
  * `DefaultPluginHost` keeps today's unsandboxed behaviour.
  *
@@ -30,6 +43,9 @@
  */
 
 import { Worker } from "node:worker_threads";
+import { spawn, type ChildProcess } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { NexumPlugin, PluginContext, PluginLogger, PluginManifest } from "./types.js";
 import { matchesPattern } from "../../mcp/trust.js";
@@ -294,6 +310,20 @@ export interface SandboxResourceLimits {
 }
 
 export interface IsolatedPluginSandboxOptions {
+  /**
+   * "worker" (default): worker_threads, memory isolation only.
+   * "process": child Node process under `--permission`, see module doc.
+   */
+  transport?: "worker" | "process";
+  /**
+   * Process transport: the directory the plugin may read (default: the
+   * plugin file's directory). Nothing outside it is readable.
+   */
+  readRoot?: string;
+  /** Process transport: let the plugin open network connections (default false). */
+  allowNetwork?: boolean;
+  /** Called once when the worker/process has exited (cleanup hook). */
+  onExit?: () => void;
   /** Worker resource ceilings (defaults: 128 MB heap, 16 MB code range). */
   resourceLimits?: SandboxResourceLimits;
   /** Capabilities the isolated plugin may exercise (Tier 1, applied host-side). */
@@ -324,8 +354,50 @@ export type IsolatedPlugin = NexumPlugin & {
 // part of the compiled bundle so sandboxing works from dist/ and tsx alike.
 // It only receives a plugin file URL + performs a dynamic import; all host
 // interaction flows through the message bridge below.
-const WORKER_BOOTSTRAP = `
+const WORKER_PREAMBLE = `
 const { parentPort, workerData } = require("node:worker_threads");
+`;
+// Same bridge over the IPC channel of a child process.
+const PROCESS_PREAMBLE = `
+const workerData = JSON.parse(process.env.NEXUM_PLUGIN_DATA);
+const parentPort = {
+  postMessage: (msg) => process.send(msg),
+  on: (event, fn) => process.on(event, fn),
+};
+process.on("disconnect", () => process.exit(0));
+`;
+// Runs before the plugin module is imported. The permission model already
+// denies process.binding, addons, workers and child processes, so these
+// public entry points are the only way to a socket (or a DNS query).
+const NETWORK_LOCKDOWN = `
+(() => {
+  const deny = (what) => function () {
+    const err = new Error("network access is not allowed in the plugin sandbox (" + what + ")");
+    err.code = "ERR_ACCESS_DENIED";
+    throw err;
+  };
+  const net = require("node:net");
+  net.Socket.prototype.connect = deny("net.Socket.connect");
+  net.Server.prototype.listen = deny("net.Server.listen");
+  net.connect = net.createConnection = deny("net.connect");
+  require("node:tls").connect = deny("tls.connect");
+  require("node:http2").connect = deny("http2.connect");
+  const dgram = require("node:dgram");
+  dgram.createSocket = deny("dgram.createSocket");
+  for (const k of ["bind", "send", "connect"]) dgram.Socket.prototype[k] = deny("dgram." + k);
+  const dns = require("node:dns");
+  for (const target of [dns, dns.promises, dns.Resolver.prototype, dns.promises.Resolver.prototype]) {
+    for (const k of Object.keys(target)) {
+      if (typeof target[k] === "function" && /^(lookup|resolve|reverse)/.test(k)) target[k] = deny("dns." + k);
+    }
+  }
+  const inspector = require("node:inspector");
+  inspector.open = deny("inspector.open");
+  inspector.Session.prototype.connect = deny("inspector.Session");
+  inspector.Session.prototype.connectToMainThread = deny("inspector.Session");
+})();
+`;
+const BRIDGE_BOOTSTRAP = `
 const pending = new Map();
 let seq = 0;
 function callHost(op, payload) {
@@ -390,6 +462,14 @@ interface WorkerOutMessage {
   error?: string;
 }
 
+/** The worker/process behind an isolated plugin, behind one interface. */
+interface SandboxTransport {
+  send(msg: unknown): void;
+  on(event: "message", fn: (msg: WorkerOutMessage) => void): void;
+  off(event: "message", fn: (msg: WorkerOutMessage) => void): void;
+  terminate(): Promise<void>;
+}
+
 /** Default worker ceilings for untrusted code. */
 const DEFAULT_RESOURCE_LIMITS: Required<SandboxResourceLimits> = {
   maxOldGenerationSizeMb: 128,
@@ -406,7 +486,7 @@ const DEFAULT_RESOURCE_LIMITS: Required<SandboxResourceLimits> = {
  * the host side of the bridge.
  */
 export class IsolatedPluginSandbox {
-  private readonly worker: Worker;
+  private readonly worker: SandboxTransport;
   private readonly auditEntries: SandboxAuditEntry[] = [];
   private readonly policy: PluginSandboxPolicy;
   private readonly logger: PluginLogger;
@@ -427,7 +507,7 @@ export class IsolatedPluginSandbox {
 
   private constructor(
     private readonly opts: IsolatedPluginSandboxOptions,
-    pluginFileUrl: string,
+    pluginFile: string,
   ) {
     this.policy = opts.policy ?? {};
     this.logger = opts.logger ?? consoleLogger();
@@ -440,27 +520,29 @@ export class IsolatedPluginSandbox {
       this.readyResolve = resolve;
       this.readyReject = reject;
     });
-    this.worker = new Worker(WORKER_BOOTSTRAP, {
-      eval: true,
-      resourceLimits: { ...DEFAULT_RESOURCE_LIMITS, ...opts.resourceLimits },
-      workerData: { pluginFileUrl },
-    });
-    this.worker.on("message", (msg: WorkerOutMessage) => this.onMessage(msg));
-    this.worker.on("error", (err: Error) => {
-      this.failAll(`worker crashed: ${err.stack ?? err.message}`);
-    });
-    this.worker.on("exit", (code: number) => {
+    const onError = (err: Error): void => this.failAll(`sandbox crashed: ${err.stack ?? err.message}`);
+    const onExit = (detail: string): void => {
       this.exited = true;
-      this.failAll(`worker exited (code ${code})`);
-    });
+      this.failAll(`sandbox exited (${detail})`);
+      opts.onExit?.();
+    };
+    this.worker =
+      opts.transport === "process"
+        ? processTransport(pluginFile, opts, onError, onExit)
+        : workerTransport(pluginFile, opts, onError, onExit);
+    this.worker.on("message", (msg: WorkerOutMessage) => this.onMessage(msg));
   }
 
   /** Boot the worker and load a plugin module (absolute file path). */
   static async load(pluginFile: string, opts: IsolatedPluginSandboxOptions = {}): Promise<IsolatedPlugin> {
-    const url = pathToFileURL(pluginFile).href;
-    const sandbox = new IsolatedPluginSandbox(opts, url);
-    const manifest = await sandbox.ready;
-    return sandbox.asPlugin(manifest);
+    const sandbox = new IsolatedPluginSandbox(opts, pluginFile);
+    try {
+      const manifest = await sandbox.ready;
+      return sandbox.asPlugin(manifest);
+    } catch (err) {
+      await sandbox.terminateWorker();
+      throw err;
+    }
   }
 
   private asPlugin(manifest: PluginManifest): IsolatedPlugin {
@@ -511,7 +593,7 @@ export class IsolatedPluginSandbox {
 
   private onCall(id: number, op: BridgeCallOp, payload: { token?: string; tag?: string; value?: unknown }): void {
     const reply = (ok: boolean, value?: unknown, error?: string): void => {
-      this.worker.postMessage({ type: "result", id, ok, value, error });
+      this.worker.send({ type: "result", id, ok, value, error });
     };
     const deny = (target: string, reason: string): void => {
       this.auditEntries.push({
@@ -572,7 +654,7 @@ export class IsolatedPluginSandbox {
       try {
         // Validate transferability BEFORE acking — postMessage throws on
         // non-cloneable values (functions, class instances, sockets, …).
-        this.worker.postMessage({ type: "result", id, ok: true, value });
+        this.worker.send({ type: "result", id, ok: true, value });
         allow(token);
       } catch {
         this.auditEntries.push({
@@ -652,7 +734,7 @@ export class IsolatedPluginSandbox {
       this.worker.on("message", onMessage);
     });
 
-    this.worker.postMessage({ type: "lifecycle", phase });
+    this.worker.send({ type: "lifecycle", phase });
     try {
       await withTimeout(done, timeoutMs);
     } catch (err) {
@@ -682,6 +764,89 @@ export class IsolatedPluginSandbox {
     this.failAll("sandbox worker terminated");
     await this.worker.terminate().catch(() => undefined);
   }
+}
+
+function workerTransport(
+  pluginFile: string,
+  opts: IsolatedPluginSandboxOptions,
+  onError: (err: Error) => void,
+  onExit: (detail: string) => void,
+): SandboxTransport {
+  const worker = new Worker(WORKER_PREAMBLE + BRIDGE_BOOTSTRAP, {
+    eval: true,
+    resourceLimits: { ...DEFAULT_RESOURCE_LIMITS, ...opts.resourceLimits },
+    workerData: { pluginFileUrl: pathToFileURL(pluginFile).href },
+  });
+  worker.on("error", onError);
+  worker.on("exit", (code: number) => onExit(`code ${code}`));
+  return {
+    send: (msg) => worker.postMessage(msg),
+    on: (event, fn) => worker.on(event, fn),
+    off: (event, fn) => worker.off(event, fn),
+    terminate: async () => {
+      await worker.terminate();
+    },
+  };
+}
+
+const STDERR_TAIL_BYTES = 4096;
+
+function processTransport(
+  pluginFile: string,
+  opts: IsolatedPluginSandboxOptions,
+  onError: (err: Error) => void,
+  onExit: (detail: string) => void,
+): SandboxTransport {
+  // The permission model matches resolved paths (macOS /var → /private/var).
+  const readRoot = realpathSync(opts.readRoot ?? dirname(pluginFile));
+  const file = realpathSync(pluginFile);
+  const heapMb = opts.resourceLimits?.maxOldGenerationSizeMb ?? DEFAULT_RESOURCE_LIMITS.maxOldGenerationSizeMb;
+  const child: ChildProcess = spawn(
+    process.execPath,
+    [
+      "--permission",
+      `--allow-fs-read=${readRoot}`,
+      `--max-old-space-size=${heapMb}`,
+      "-e",
+      PROCESS_PREAMBLE + (opts.allowNetwork ? "" : NETWORK_LOCKDOWN) + BRIDGE_BOOTSTRAP,
+    ],
+    {
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+      serialization: "advanced",
+      // no inherited environment: no tokens, no NODE_OPTIONS
+      env: { NEXUM_PLUGIN_DATA: JSON.stringify({ pluginFileUrl: pathToFileURL(file).href }) },
+      cwd: readRoot,
+    },
+  );
+  let stderrTail = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_BYTES);
+  });
+  child.on("error", onError);
+  let exited = false;
+  const exitedPromise = new Promise<void>((resolve) => {
+    child.on("exit", (code, signal) => {
+      exited = true;
+      const tail = stderrTail.trim();
+      onExit(
+        `${signal ? `signal ${signal}` : `code ${code}`}${tail ? `: ${tail.split("\n").slice(-5).join(" | ")}` : ""}`,
+      );
+      resolve();
+    });
+  });
+  return {
+    send: (msg) => {
+      if (!child.connected) throw new Error("sandbox process is not connected");
+      child.send(msg as Parameters<ChildProcess["send"]>[0]);
+    },
+    on: (event, fn) => child.on(event, fn),
+    off: (event, fn) => child.off(event, fn),
+    terminate: async () => {
+      if (exited) return;
+      child.kill("SIGKILL");
+      await exitedPromise;
+    },
+  };
 }
 
 function consoleLogger(): PluginLogger {

@@ -104,7 +104,17 @@ Inside the worker, `ctx.provide/lookup/declareCapability` are async (they round-
 
 ### What Tier 2 does not do
 
-A worker isolate still runs Node: it can use `fs` and the network unless the host process itself is constrained (seccomp, containers, `--permission`). Use Tier 2 together with process-level confinement for hostile code; use it alone for fault isolation and capability discipline.
+A worker isolate still runs Node: it can use `fs`, `child_process` and the network. For code you did not write, use the process transport:
+
+```ts
+const plugin = await IsolatedPluginSandbox.load(file, {
+  transport: "process",
+  readRoot: pluginDir, // the only directory the plugin can read (default: the file's directory)
+  policy,
+});
+```
+
+The plugin then runs in a separate Node process started with `--permission --allow-fs-read=<readRoot>`: reads outside `readRoot`, all writes, child processes, workers, native addons and WASI fail with `ERR_ACCESS_DENIED`; the environment is empty. Node 22's permission model has no network switch, so the bootstrap also replaces every network entry point (`net`, `tls`, `http2`, `dgram`, `dns`, `inspector`) with one that throws `ERR_ACCESS_DENIED` before the plugin module loads; `allowNetwork: true` skips that. The bridge and policy are the same as with a worker. Marketplace plugins always use this transport (see [marketplace](/guide/marketplace)).
 
 ## Choosing a tier
 

@@ -1,5 +1,5 @@
 import { Tool } from "./tool.js";
-import { resolveWorkspacePath } from "./path-utils.js";
+import { agentWorkspaceGuard, guardPath } from "./path-utils.js";
 import { LspManager } from "../lsp/manager.js";
 import { uriToPath } from "../lsp/protocol.js";
 
@@ -29,9 +29,9 @@ abstract class LspTool extends Tool {
     return result;
   }
 
+  /** File contents go to the language server, so this is a read through the agent guard. */
   protected resolveFile(args: Record<string, unknown>): string {
-    const root = this.lsp.workspaceRoot;
-    return resolveWorkspacePath(root, args.path as string);
+    return guardPath(agentWorkspaceGuard(this.lsp.workspaceRoot), "read", args.path as string);
   }
 }
 

@@ -6,12 +6,17 @@
  * without network.
  */
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MarketplaceService, type MarketplaceEntry, type MarketplaceSource } from "../../src/marketplace/index.js";
+import {
+  ARTIFACT_FILE,
+  MarketplaceService,
+  type MarketplaceEntry,
+  type MarketplaceSource,
+} from "../../src/marketplace/index.js";
 import { generatePublisherKeyPair, signEntry, PublisherTrustStore } from "../../src/marketplace/trust.js";
+import { pluginArtifact, sha256 } from "./plugin-fixture.js";
 
 let dir: string;
 let root: string;
@@ -25,7 +30,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** Fake source: "downloads" by writing a deterministic artifact to disk. */
+/** Fake source: "downloads" by writing a real, deterministic plugin artifact. */
 class FakeSource implements MarketplaceSource {
   readonly id = "fake";
   downloads = 0;
@@ -40,7 +45,7 @@ class FakeSource implements MarketplaceSource {
 
   async download(entry: MarketplaceEntry, destPath: string): Promise<void> {
     this.downloads++;
-    writeFileSync(destPath, `artifact-bytes:${entry.id}:${entry.version}`);
+    writeFileSync(destPath, pluginArtifact(entry.id, entry.version));
   }
 }
 
@@ -54,21 +59,31 @@ function entryFor(source: FakeSource, overrides: Partial<MarketplaceEntry> = {})
     license: "MIT",
     ...overrides,
   };
-  const artifact = `artifact-bytes:${merged.id}:${merged.version}`;
   return {
     ...merged,
-    sha256: "sha256" in overrides ? overrides.sha256 : createHash("sha256").update(artifact).digest("hex"),
+    sha256: "sha256" in overrides ? overrides.sha256 : sha256(pluginArtifact(merged.id, merged.version)),
   };
 }
 
 describe("MarketplaceService install policy", () => {
-  it("default (warn) records verification for signed entries and still installs unsigned ones", async () => {
+  it("default (require) rejects unsigned entries before download", async () => {
+    const source = new FakeSource();
+    const service = new MarketplaceService({ rootDir: root, sources: [source] });
+    await expect(service.install(entryFor(source))).rejects.toThrow(/unsigned and policy requires signatures/);
+    expect(source.downloads).toBe(0);
+  });
+
+  it("warn mode records verification for signed entries and still installs unsigned ones", async () => {
     const source = new FakeSource();
     const keys = generatePublisherKeyPair();
     const store = PublisherTrustStore.inMemory([
       { keyId: keys.keyId, publicKey: keys.publicKeyBase64, publisher: "alice", trust: "verified" },
     ]);
-    const service = new MarketplaceService({ rootDir: root, sources: [source], installPolicy: { trustStore: store } });
+    const service = new MarketplaceService({
+      rootDir: root,
+      sources: [source],
+      installPolicy: { signatures: "warn", trustStore: store },
+    });
 
     const signedEntry = entryFor(source, {
       signature: signEntry(entryFor(source), keys.privateKeyPem),
@@ -85,13 +100,17 @@ describe("MarketplaceService install policy", () => {
     expect(service.isInstalled("unsigned-tool")).toBe(true);
   });
 
-  it("default (warn) REJECTS a tampered signature even in warn mode", async () => {
+  it("warn mode still REJECTS a tampered signature", async () => {
     const source = new FakeSource();
     const keys = generatePublisherKeyPair();
     const store = PublisherTrustStore.inMemory([
       { keyId: keys.keyId, publicKey: keys.publicKeyBase64, publisher: "alice", trust: "verified" },
     ]);
-    const service = new MarketplaceService({ rootDir: root, sources: [source], installPolicy: { trustStore: store } });
+    const service = new MarketplaceService({
+      rootDir: root,
+      sources: [source],
+      installPolicy: { signatures: "warn", trustStore: store },
+    });
 
     const goodEntry = entryFor(source);
     const tampered = entryFor(source, {
@@ -121,7 +140,36 @@ describe("MarketplaceService install policy", () => {
     // A community-signed entry passes "require" (integrity, not identity).
     const goodEntry = entryFor(source);
     const signed = await service.install(entryFor(source, { signature: signEntry(goodEntry, keys.privateKeyPem) }));
-    expect(signed.verification).toMatchObject({ status: "valid", trust: "community" });
+    expect(signed.verification).toMatchObject({ status: "valid", trust: "community", trustedKey: true });
+  });
+
+  it("require mode rejects a valid signature from a key that is not in the trust store", async () => {
+    const source = new FakeSource();
+    const stranger = generatePublisherKeyPair();
+    const service = new MarketplaceService({
+      rootDir: root,
+      sources: [source],
+      installPolicy: { signatures: "require", trustStore: PublisherTrustStore.inMemory() },
+    });
+    // Self-describing bundle: the embedded key makes the signature verify,
+    // but anyone can sign with their own key.
+    const signature = { ...signEntry(entryFor(source), stranger.privateKeyPem), publicKey: stranger.publicKeyBase64 };
+    await expect(service.install(entryFor(source, { signature }))).rejects.toThrow(/not in the trust store/);
+    expect(source.downloads).toBe(0);
+  });
+
+  it("require mode rejects signed entries without a sha256 (the signature would not cover the artifact)", async () => {
+    const source = new FakeSource();
+    const keys = generatePublisherKeyPair();
+    const store = PublisherTrustStore.inMemory([
+      { keyId: keys.keyId, publicKey: keys.publicKeyBase64, publisher: "alice", trust: "verified" },
+    ]);
+    const service = new MarketplaceService({ rootDir: root, sources: [source], installPolicy: { trustStore: store } });
+    const hashless = entryFor(source, { sha256: undefined });
+    await expect(service.install({ ...hashless, signature: signEntry(hashless, keys.privateKeyPem) })).rejects.toThrow(
+      /no sha256 artifact hash/,
+    );
+    expect(source.downloads).toBe(0);
   });
 
   it("require-verified mode rejects non-verified publishers", async () => {
@@ -183,7 +231,7 @@ describe("MarketplaceService install policy", () => {
     const service = new MarketplaceService({
       rootDir: root,
       sources: [source],
-      installPolicy: { requireSha256: true },
+      installPolicy: { signatures: "warn", requireSha256: true },
     });
     await expect(
       service.install(entryFor(source, { sha256: undefined, id: "hashless", version: "0.0.1" })),
@@ -213,7 +261,11 @@ describe("MarketplaceService install policy", () => {
   describe("verifyInstalled", () => {
     it("confirms the on-disk artifact still hashes to the recorded value", async () => {
       const source = new FakeSource();
-      const service = new MarketplaceService({ rootDir: root, sources: [source] });
+      const service = new MarketplaceService({
+        rootDir: root,
+        sources: [source],
+        installPolicy: { signatures: "warn" },
+      });
       await service.install(entryFor(source));
 
       expect(service.verifyInstalled("cool-tools")).toEqual({ ok: true });
@@ -221,10 +273,14 @@ describe("MarketplaceService install policy", () => {
 
     it("detects artifact tampering after install", async () => {
       const source = new FakeSource();
-      const service = new MarketplaceService({ rootDir: root, sources: [source] });
+      const service = new MarketplaceService({
+        rootDir: root,
+        sources: [source],
+        installPolicy: { signatures: "warn" },
+      });
       const record = await service.install(entryFor(source));
 
-      writeFileSync(join(record.path, "plugin.tar.gz"), "tampered-bytes");
+      writeFileSync(join(record.path, ARTIFACT_FILE), "tampered-bytes");
       const result = service.verifyInstalled("cool-tools");
       expect(result.ok).toBe(false);
       expect(result.reason).toContain("hash drift");
@@ -232,11 +288,15 @@ describe("MarketplaceService install policy", () => {
 
     it("detects a missing artifact and missing plugins", async () => {
       const source = new FakeSource();
-      const service = new MarketplaceService({ rootDir: root, sources: [source] });
+      const service = new MarketplaceService({
+        rootDir: root,
+        sources: [source],
+        installPolicy: { signatures: "warn" },
+      });
       expect(service.verifyInstalled("never-installed")).toEqual({ ok: false, reason: "not installed" });
 
       const record = await service.install(entryFor(source));
-      rmSync(join(record.path, "plugin.tar.gz"));
+      rmSync(join(record.path, ARTIFACT_FILE));
       const result = service.verifyInstalled("cool-tools");
       expect(result.ok).toBe(false);
       expect(result.reason).toContain("artifact missing");

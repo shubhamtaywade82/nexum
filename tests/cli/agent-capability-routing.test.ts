@@ -56,6 +56,42 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     jest.restoreAllMocks();
   });
 
+  it("reports provider token usage with onModelUsed when the response carries counts", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    const encoder = new TextEncoder();
+    const final = { message: { role: "assistant", content: "ok" }, done: true, prompt_eval_count: 12, eval_count: 5 };
+    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
+      let delivered = false;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => final,
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (delivered) return { done: true, value: undefined };
+              delivered = true;
+              return { done: false, value: encoder.encode(JSON.stringify(final) + "\n") };
+            },
+          }),
+        },
+      };
+    });
+    const onModelUsed = jest.fn();
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      events: { onModelUsed },
+    });
+
+    await agent.runUserMessage("please cleanup this file");
+
+    expect(onModelUsed).toHaveBeenCalledWith(
+      "local",
+      "test-model",
+      expect.objectContaining({ promptTokens: 12, completionTokens: 5 }),
+    );
+  });
+
   it("falls back to the primary provider without breaking the turn when 'quick' has no candidate anywhere (local unreachable, no cloud key)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
 

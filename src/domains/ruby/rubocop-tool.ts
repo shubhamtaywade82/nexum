@@ -1,8 +1,12 @@
-import { spawn } from "node:child_process";
 import { Tool } from "../../tools/tool.js";
+import { assertNotOption, runCommand, type CommandRunner } from "../../tools/command-runner.js";
 
 export class RunRubocopTool extends Tool {
-  constructor(private readonly root: string) {
+  /** `runner` executes RuboCop (the Docker sandbox when enabled); without one it runs on the host. */
+  constructor(
+    private readonly root: string,
+    private readonly runner?: CommandRunner,
+  ) {
     super();
   }
 
@@ -34,34 +38,36 @@ export class RunRubocopTool extends Tool {
     const target = args.path as string | undefined;
     const autoCorrect = args.autoCorrect === true;
 
+    try {
+      assertNotOption(target, "path");
+    } catch (e) {
+      return { error: "ArgumentError", message: (e as Error).message };
+    }
+
     const ruboCopArgs = ["exec", "rubocop", "--format", "simple"];
     if (autoCorrect) ruboCopArgs.push("--auto-correct");
     if (target) ruboCopArgs.push(target);
 
-    return new Promise((resolvePromise) => {
-      const child = spawn("bundle", ruboCopArgs, {
-        cwd: this.root,
-        timeout: 60_000,
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (c: Buffer) => (stdout += c.toString()));
-      child.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
-      child.on("close", (exitCode) => {
-        const offenseCount = parseRubocopOffenses(stdout, stderr);
-        resolvePromise({
-          command: `bundle exec rubocop${autoCorrect ? " --auto-correct" : ""}${target ? ` ${target}` : ""}`,
-          exitCode: exitCode ?? -1,
-          stdout,
-          stderr,
-          offenseCount,
-          corrected: autoCorrect ? offenseCount.corrected : 0,
-        });
-      });
-      child.on("error", (err) =>
-        resolvePromise({ exitCode: -1, stdout: "", stderr: err.message, offenseCount: 0, corrected: 0 }),
-      );
+    const outcome = await runCommand({
+      root: this.root,
+      bin: "bundle",
+      args: ruboCopArgs,
+      timeoutSec: 60,
+      hostTimeoutMs: 60_000,
+      runner: this.runner,
     });
+    if (outcome.exitCode === -1 && !outcome.stdout) {
+      return { exitCode: -1, stdout: "", stderr: outcome.stderr, offenseCount: 0, corrected: 0 };
+    }
+    const offenseCount = parseRubocopOffenses(outcome.stdout, outcome.stderr);
+    return {
+      command: `bundle exec rubocop${autoCorrect ? " --auto-correct" : ""}${target ? ` ${target}` : ""}`,
+      exitCode: outcome.exitCode,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      offenseCount,
+      corrected: autoCorrect ? offenseCount.corrected : 0,
+    };
   }
 }
 

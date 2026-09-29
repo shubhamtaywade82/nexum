@@ -45,6 +45,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/.bin/jest",
+    "test:docker": "NEXUM_DOCKER_TESTS=1 NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/.bin/jest tests/integration",
     "start": "node dist/ui/index.js",
     "dev": "tsx src/ui/index.ts",
     "dev:legacy": "tsx src/cli/tui.ts",

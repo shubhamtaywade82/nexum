@@ -348,30 +348,42 @@ export async function startTui(opts?: { config?: Partial<CliConfig> }): Promise<
             return;
           }
         } else if (field.type === "boolean") {
-          const answer = await new Promise<string>((resolve) => rl.question(chalk.green("[" + name + "] true/false: "), resolve));
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("[" + name + "] true/false: "), resolve),
+          );
           if (/^(true|false)$/i.test(answer.trim())) content[name] = answer.trim().toLowerCase() === "true";
           else if (required) {
             agent.resolveMcpElicitation({ id: request.id, action: "decline" });
             return;
           }
         } else if (field.type === "number" || field.type === "integer") {
-          const answer = await new Promise<string>((resolve) => rl.question(chalk.green("[" + name + "] number: "), resolve));
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("[" + name + "] number: "), resolve),
+          );
           const numeric = Number(answer.trim() || String(field.default ?? ""));
-          if (Number.isFinite(numeric) && (field.type !== "integer" || Number.isInteger(numeric))) content[name] = numeric;
+          if (Number.isFinite(numeric) && (field.type !== "integer" || Number.isInteger(numeric)))
+            content[name] = numeric;
           else if (required) {
             agent.resolveMcpElicitation({ id: request.id, action: "decline" });
             return;
           }
         } else if (field.type === "array") {
-          const answer = await new Promise<string>((resolve) => rl.question(chalk.green("[" + name + "] comma-separated choices: "), resolve));
-          const values = answer.split(",").map((value) => value.trim()).filter(Boolean);
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("[" + name + "] comma-separated choices: "), resolve),
+          );
+          const values = answer
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
           if (values.length > 0) content[name] = values;
           else if (required) {
             agent.resolveMcpElicitation({ id: request.id, action: "decline" });
             return;
           }
         } else {
-          const answer = await new Promise<string>((resolve) => rl.question(chalk.green("[" + name + "]" + suffix + ": "), resolve));
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("[" + name + "]" + suffix + ": "), resolve),
+          );
           if (answer.length > 0 || required) content[name] = answer;
         }
       }

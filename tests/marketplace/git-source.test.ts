@@ -109,7 +109,7 @@ describe("GitMarketplaceSource", () => {
   });
 
   describe("download", () => {
-    it("tars a subdirectory from the cloned repo", async () => {
+    it("tars a subdirectory from the cloned repo, deterministically", async () => {
       // Set up a plugin subdir with content.
       const pluginDir = join(remoteRepoDir, "my-plugin");
       mkdirSync(pluginDir);
@@ -138,11 +138,28 @@ describe("GitMarketplaceSource", () => {
       // Extract and verify contents.
       const extractDir = join(tmpDir, "extracted");
       mkdirSync(extractDir, { recursive: true });
-      const result = spawnSync("tar", ["-xzf", destPath, "-C", extractDir]);
+      const result = spawnSync("tar", ["-xf", destPath, "-C", extractDir]);
       expect(result.status).toBe(0);
       const { readFileSync } = await import("node:fs");
       const skillContent = readFileSync(join(extractDir, "SKILL.md"), "utf8");
       expect(skillContent).toContain("My Plugin");
+
+      // A second clone of the same commit hashes identically, so the
+      // publisher can sign the artifact's sha256.
+      const again = join(tmpDir, "again.tar");
+      await source.download(entry, again);
+      expect(readFileSync(again).equals(readFileSync(destPath))).toBe(true);
+    });
+
+    it("refuses a downloadUrl outside the repository and option-like git URLs", async () => {
+      spawnSync("git", ["commit", "--allow-empty", "-m", "init"], { cwd: remoteRepoDir });
+      const base = { id: "p", name: "P", version: "1.0.0", source: "test" };
+      await expect(source.download({ ...base, downloadUrl: "../../etc" }, join(tmpDir, "x"))).rejects.toThrow(
+        /must be a subdirectory/,
+      );
+      await expect(
+        source.download({ ...base, gitUrl: "--upload-pack=touch /tmp/nexum-git-pwned" }, join(tmpDir, "y")),
+      ).rejects.toThrow(/invalid git URL/);
     });
   });
 });

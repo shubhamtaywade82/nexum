@@ -315,6 +315,12 @@ Settings resolve in this order, each layer overriding the one before:
 2. `<workspace>/.nexum/config.json` — per-project overrides (legacy `.devagent/config.json` still read)
 3. environment variables (also read from `~/.nexum/.env`, `./.env`, `<workspace>/.env`)
 
+A workspace's own settings (layer 2 and the workspace/cwd `.env` files) are
+repository content, so they apply only once you trust the workspace: the UI
+asks on first run, or run `nexum trust` (`nexum trust status` shows what the
+workspace ships). Until then only harmless keys such as `model` and `theme`
+apply. See `SECURITY.md` §8.
+
 Every `NEXUM_*` variable above has a config-file equivalent using the camelCase
 key name (`NEXUM_MODEL` → `model`, `NEXUM_AUTO_APPROVE` → `autoApprove`, ...).
 Boolean env values accept `true`/`1` and `false`/`0`, and win over the file in both

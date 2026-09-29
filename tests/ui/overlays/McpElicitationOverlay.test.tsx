@@ -21,7 +21,9 @@ describe("McpElicitationOverlay", () => {
         }}
         width={100}
         rows={20}
-        onSubmit={(value) => { response = value; }}
+        onSubmit={(value) => {
+          response = value;
+        }}
         onCancel={() => {}}
       />,
     );
@@ -46,7 +48,9 @@ describe("McpElicitationOverlay", () => {
         width={100}
         rows={20}
         onSubmit={() => {}}
-        onCancel={() => { cancelled = true; }}
+        onCancel={() => {
+          cancelled = true;
+        }}
       />,
     );
     ui.stdin.write("\u001b");

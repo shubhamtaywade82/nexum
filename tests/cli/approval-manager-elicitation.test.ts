@@ -9,13 +9,15 @@ describe("ApprovalManager MCP elicitation", () => {
       hasClarificationListener: () => false,
       hasMcpElicitationListener: () => false,
     });
-    await expect(manager.requestMcpElicitation({
-      id: "e1",
-      serverId: "server",
-      mode: "form",
-      message: "Pick one",
-      requestedSchema: { type: "object", properties: { x: { type: "string" } } },
-    })).resolves.toMatchObject({ id: "e1", action: "decline" });
+    await expect(
+      manager.requestMcpElicitation({
+        id: "e1",
+        serverId: "server",
+        mode: "form",
+        message: "Pick one",
+        requestedSchema: { type: "object", properties: { x: { type: "string" } } },
+      }),
+    ).resolves.toMatchObject({ id: "e1", action: "decline" });
   });
 
   it("serializes concurrent requests and resolves the next after the first", async () => {
@@ -25,16 +27,24 @@ describe("ApprovalManager MCP elicitation", () => {
       hasApprovalListener: () => false,
       hasClarificationListener: () => false,
       hasMcpElicitationListener: () => true,
-      onMcpElicitationRequested: (request) => { seen.push(request.id); },
+      onMcpElicitationRequested: (request) => {
+        seen.push(request.id);
+      },
       mcpElicitationTimeoutMs: 1000,
     });
 
     const first = manager.requestMcpElicitation({
-      id: "e1", serverId: "server", mode: "form", message: "one",
+      id: "e1",
+      serverId: "server",
+      mode: "form",
+      message: "one",
       requestedSchema: { type: "object", properties: { x: { type: "string" } } },
     });
     const second = manager.requestMcpElicitation({
-      id: "e2", serverId: "server", mode: "form", message: "two",
+      id: "e2",
+      serverId: "server",
+      mode: "form",
+      message: "two",
       requestedSchema: { type: "object", properties: { y: { type: "string" } } },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -55,7 +65,9 @@ describe("ApprovalManager MCP elicitation", () => {
       hasApprovalListener: () => false,
       hasClarificationListener: () => false,
       hasMcpElicitationListener: () => true,
-      onMcpElicitationRequested: (request) => { captured = request.id; },
+      onMcpElicitationRequested: (request) => {
+        captured = request.id;
+      },
     });
 
     const pending = manager.requestMcpElicitation({

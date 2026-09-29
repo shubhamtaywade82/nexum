@@ -69,7 +69,11 @@ export class DestructiveShellRule implements PolicyRule {
     if (DESTRUCTIVE_SHELL_PATTERNS.some((p) => p.test(command))) {
       return confirm(request.tool.id, `destructive shell command: ${command}`, this.id);
     }
-    if (this.allowBenignFaces) return allow(request.tool.id, "shell command is non-destructive", this.id);
+    // "benign" is judged from the command text, which cannot bound what a command does on the
+    // host (`cat ~/.aws/credentials` is not destructive) — host shells fall through to confirmation.
+    if (this.allowBenignFaces && request.tool.execution.isolation !== "host") {
+      return allow(request.tool.id, "shell command is non-destructive", this.id);
+    }
     return null;
   }
 }

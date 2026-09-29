@@ -141,8 +141,25 @@ export class McpApprovalStore {
   private readonly file: string;
   private cache: Record<string, McpApprovalEntry> | null = null;
 
-  constructor(file: string) {
+  /**
+   * @param writeGuard wraps every write to the file (the CLI passes
+   *   workspace-trust's `preservingTrust`, since the file is trust-bearing)
+   */
+  constructor(
+    file: string,
+    private readonly writeGuard: (write: () => void) => void = (write) => write(),
+  ) {
     this.file = file;
+  }
+
+  private write(data: Record<string, McpApprovalEntry>): void {
+    this.writeGuard(() => {
+      mkdirSync(dirname(this.file), { recursive: true });
+      const tmp = `${this.file}.tmp`;
+      writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+      renameSync(tmp, this.file);
+    });
+    this.cache = data;
   }
 
   private load(): Record<string, McpApprovalEntry> {
@@ -169,11 +186,7 @@ export class McpApprovalStore {
   approve(server: string, fingerprint: string): void {
     const data = this.load();
     data[server] = { fingerprint, approvedAt: new Date().toISOString() };
-    mkdirSync(dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
-    renameSync(tmp, this.file);
-    this.cache = data;
+    this.write(data);
   }
 
   /** Drop an approval (e.g. after a fingerprint change or explicit revoke). */
@@ -181,11 +194,7 @@ export class McpApprovalStore {
     const data = this.load();
     if (!(server in data)) return false;
     delete data[server];
-    mkdirSync(dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
-    renameSync(tmp, this.file);
-    this.cache = data;
+    this.write(data);
     return true;
   }
 

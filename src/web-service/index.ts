@@ -27,6 +27,12 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { lookup as dnsLookup, type LookupAddress } from "node:dns";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { BlockList, isIP, type LookupFunction } from "node:net";
+import type { Readable } from "node:stream";
+import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 
 // ── Contracts ───────────────────────────────────────────────────────────────
 
@@ -179,11 +185,81 @@ export class WebService {
 
 // ── Built-in providers ──────────────────────────────────────────────────────
 
+function blockList(family: "ipv4" | "ipv6", subnets: ReadonlyArray<readonly [string, number]>): BlockList {
+  const list = new BlockList();
+  for (const [net, prefix] of subnets) list.addSubnet(net, prefix, family);
+  return list;
+}
+
+// Separate lists: BlockList also matches IPv4 input against IPv4-mapped IPv6 rules.
+const BLOCKED_V4 = blockList("ipv4", [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+]);
+const BLOCKED_V6 = blockList("ipv6", [
+  ["::", 128],
+  ["::1", 128],
+  ["::ffff:0:0", 96],
+  ["64:ff9b::", 96],
+  ["100::", 64],
+  ["2001:db8::", 32],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["ff00::", 8],
+]);
+
+/** True for loopback, private, link-local (incl. cloud metadata), CGNAT, multicast, reserved and IPv4-mapped addresses. */
+export function isBlockedAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) return BLOCKED_V4.check(address, "ipv4");
+  if (family === 6) return BLOCKED_V6.check(address, "ipv6");
+  return true;
+}
+
+export interface NodeFetchProviderOptions {
+  /** Allow loopback/private/link-local destinations (default false). Only for trusted local use. */
+  allowPrivateNetwork?: boolean;
+  /** Max decompressed response body in bytes (default 10 MiB). */
+  maxResponseBytes?: number;
+  /** Max redirects followed (default 5). Every hop is re-validated. */
+  maxRedirects?: number;
+}
+
+type RawResponse = { status: number; headers: Record<string, string>; stream: Readable };
+
 /**
- * NodeFetchProvider — uses Node.js built-in fetch (Node 22+).
+ * NodeFetchProvider — HTTP(S) client for agent web access with an SSRF and
+ * resource boundary:
+ *   - http/https only; every redirect hop re-validated
+ *   - destinations resolved and checked at connect time (the checked address
+ *     is the one connected to, so DNS rebinding cannot swap it)
+ *   - private/loopback/link-local/metadata ranges refused unless allowed
+ *   - decompressed body capped (bounds zip bombs); one deadline for the whole exchange
+ *   - Authorization/Cookie dropped on cross-origin redirects
  */
 export class NodeFetchProvider implements FetchProvider, HttpProvider {
   readonly id = "node-fetch";
+  private readonly allowPrivateNetwork: boolean;
+  private readonly maxResponseBytes: number;
+  private readonly maxRedirects: number;
+
+  constructor(opts: NodeFetchProviderOptions = {}) {
+    this.allowPrivateNetwork = opts.allowPrivateNetwork ?? false;
+    this.maxResponseBytes = opts.maxResponseBytes ?? 10 * 1024 * 1024;
+    this.maxRedirects = opts.maxRedirects ?? 5;
+  }
 
   async fetch(url: string, opts?: { headers?: Record<string, string>; timeoutMs?: number }): Promise<WebFetchResult> {
     return this.request("GET", url, opts);
@@ -195,32 +271,138 @@ export class NodeFetchProvider implements FetchProvider, HttpProvider {
     opts?: { headers?: Record<string, string>; body?: string; timeoutMs?: number },
   ): Promise<WebFetchResult> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 30000);
+    const timeoutMs = opts?.timeoutMs ?? 30000;
+    const timeout = setTimeout(() => controller.abort(new Error(`request timed out after ${timeoutMs}ms`)), timeoutMs);
     try {
-      const response = await fetch(url, {
-        method,
-        headers: opts?.headers,
-        body: opts?.body,
-        signal: controller.signal,
-        redirect: "follow",
-      });
-      const body = await response.text();
-      const headers: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        headers[key] = value;
-      });
-      return {
-        url,
-        status: response.status,
-        headers,
-        body,
-        contentType: response.headers.get("content-type") ?? "application/octet-stream",
-        finalUrl: response.url || url,
-      };
+      let current = new URL(url);
+      let currentMethod = method.toUpperCase();
+      let body = opts?.body;
+      let headers: Record<string, string> = { ...opts?.headers };
+      for (let hop = 0; ; hop++) {
+        this.assertAllowedUrl(current);
+        const res = await this.send(currentMethod, current, headers, body, controller.signal);
+        const location = res.headers["location"];
+        if ([301, 302, 303, 307, 308].includes(res.status) && location) {
+          res.stream.resume();
+          if (hop >= this.maxRedirects) throw new Error(`too many redirects (max ${this.maxRedirects})`);
+          const next = new URL(location, current);
+          if (res.status === 303 || ((res.status === 301 || res.status === 302) && currentMethod === "POST")) {
+            currentMethod = "GET";
+            body = undefined;
+          }
+          if (next.origin !== current.origin) headers = withoutCredentials(headers);
+          current = next;
+          continue;
+        }
+        const text = (await this.readBody(res, controller.signal)).toString("utf8");
+        return {
+          url,
+          status: res.status,
+          headers: res.headers,
+          body: text,
+          contentType: res.headers["content-type"] ?? "application/octet-stream",
+          finalUrl: current.href,
+        };
+      }
+    } catch (e) {
+      if (controller.signal.aborted && controller.signal.reason instanceof Error) throw controller.signal.reason;
+      throw e;
     } finally {
       clearTimeout(timeout);
     }
   }
+
+  private assertAllowedUrl(url: URL): void {
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error(`blocked URL scheme "${url.protocol}" (only http/https)`);
+    }
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (!this.allowPrivateNetwork && isIP(host) && isBlockedAddress(host)) {
+      throw new Error(`blocked destination ${host}: private, loopback or reserved address`);
+    }
+  }
+
+  private send(
+    method: string,
+    url: URL,
+    headers: Record<string, string>,
+    body: string | undefined,
+    signal: AbortSignal,
+  ): Promise<RawResponse> {
+    const lookup: LookupFunction = (hostname, options, callback) => {
+      dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+        if (err) return callback(err, "", 0);
+        const list = addresses as LookupAddress[];
+        const blocked = this.allowPrivateNetwork ? undefined : list.find((a) => isBlockedAddress(a.address));
+        if (blocked) {
+          const e = new Error(
+            `blocked destination ${hostname} (${blocked.address}): private, loopback or reserved address`,
+          );
+          return callback(e as NodeJS.ErrnoException, "", 0);
+        }
+        if (options.all) (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, list);
+        else callback(null, list[0].address, list[0].family);
+      });
+    };
+    const requestFn = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const hasEncoding = Object.keys(headers).some((k) => k.toLowerCase() === "accept-encoding");
+    return new Promise<RawResponse>((resolve, reject) => {
+      const req = requestFn(
+        url,
+        {
+          method,
+          headers: hasEncoding ? headers : { ...headers, "Accept-Encoding": "gzip, deflate, br" },
+          lookup,
+          signal,
+        },
+        (res) => {
+          const flat: Record<string, string> = {};
+          for (const [key, value] of Object.entries(res.headers)) {
+            if (value !== undefined) flat[key] = Array.isArray(value) ? value.join(", ") : value;
+          }
+          resolve({ status: res.statusCode ?? 0, headers: flat, stream: res });
+        },
+      );
+      req.on("error", reject);
+      req.end(body);
+    });
+  }
+
+  private readBody(res: RawResponse, signal: AbortSignal): Promise<Buffer> {
+    const encoding = (res.headers["content-encoding"] ?? "").trim().toLowerCase();
+    let stream: Readable = res.stream;
+    if (encoding === "gzip" || encoding === "x-gzip") stream = res.stream.pipe(createGunzip());
+    else if (encoding === "deflate") stream = res.stream.pipe(createInflate());
+    else if (encoding === "br") stream = res.stream.pipe(createBrotliDecompress());
+    const limit = this.maxResponseBytes;
+    return new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      const fail = (e: Error) => {
+        res.stream.destroy();
+        stream.destroy();
+        reject(e);
+      };
+      signal.addEventListener("abort", () => fail(signal.reason as Error), { once: true });
+      stream.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > limit) fail(new Error(`response body exceeds maxResponseBytes (${limit})`));
+        else chunks.push(chunk);
+      });
+      stream.on("error", (e) => fail(e));
+      res.stream.on("error", (e) => fail(e));
+      stream.on("end", () => resolve(Buffer.concat(chunks)));
+    });
+  }
+}
+
+function withoutCredentials(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    const lower = k.toLowerCase();
+    if (lower !== "authorization" && lower !== "cookie" && lower !== "proxy-authorization") out[k] = v;
+  }
+  return out;
 }
 
 /**

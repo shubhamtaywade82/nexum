@@ -6,13 +6,18 @@
  * files are temp .mjs modules, marketplace installs use a fake source.
  */
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSecurityCli, parseDuration, parseSubject } from "../../src/cli/security.js";
 import type { McpCliServerConfig } from "../../src/cli/config.js";
-import { MarketplaceService, type MarketplaceEntry, type MarketplaceSource } from "../../src/marketplace/index.js";
+import {
+  ARTIFACT_FILE,
+  MarketplaceService,
+  type MarketplaceEntry,
+  type MarketplaceSource,
+} from "../../src/marketplace/index.js";
+import { pluginArtifact, sha256 } from "../marketplace/plugin-fixture.js";
 import { generatePublisherKeyPair, signEntry, PublisherTrustStore } from "../../src/marketplace/trust.js";
 import { mcpServerFingerprint } from "../../src/mcp/trust.js";
 
@@ -184,7 +189,7 @@ class FakeSource implements MarketplaceSource {
   }
 
   async download(entry: MarketplaceEntry, destPath: string): Promise<void> {
-    writeFileSync(destPath, `artifact-bytes:${entry.id}:${entry.version}`);
+    writeFileSync(destPath, pluginArtifact(entry.id, entry.version));
   }
 }
 
@@ -207,7 +212,7 @@ async function installSigned(stateDir: string): Promise<void> {
     version: "1.4.2",
     source: "fake",
     author: "alice",
-    sha256: createHash("sha256").update("artifact-bytes:cool-tools:1.4.2").digest("hex"),
+    sha256: sha256(pluginArtifact("cool-tools", "1.4.2")),
   };
   await service.install({ ...full, signature: signEntry(full, keys.privateKeyPem), publisher: "alice" });
 }
@@ -231,7 +236,7 @@ describe("security CLI — plugins verify", () => {
     const index = JSON.parse(readFileSync(join(root, ".nexum", "plugins", "installed.json"), "utf8")) as {
       path: string;
     }[];
-    writeFileSync(join(index[0].path, "plugin.tar.gz"), "tampered-bytes");
+    writeFileSync(join(index[0].path, ARTIFACT_FILE), "tampered-bytes");
     const code = await runCli("plugins", "verify");
     expect(code).toBe(1);
     expect(out.some((l) => l.includes("FAIL"))).toBe(true);

@@ -26,6 +26,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createPublicKey } from "node:crypto";
 import { loadConfig, type McpCliServerConfig } from "./config.js";
+import { preservingTrust, WorkspaceTrustStore } from "./workspace-trust.js";
 import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
 import { IsolatedPluginSandbox, type PluginSandboxPolicy, type IsolatedPlugin } from "../platform/plugins/sandbox.js";
 import type { PluginContext, PluginHost, PluginLogger } from "../platform/plugins/types.js";
@@ -63,6 +64,8 @@ export interface SecurityCliOptions {
   mcpServers?: () => McpCliServerConfig[];
   /** Clock override for deterministic tests. */
   now?: () => Date;
+  /** Workspace trust record (default: ~/.nexum/trusted-workspaces.json). */
+  trustStore?: WorkspaceTrustStore;
 }
 
 interface Ctx {
@@ -73,6 +76,8 @@ interface Ctx {
   stateDir: string;
   mcpServers: () => McpCliServerConfig[];
   now: () => Date;
+  /** Wraps writes to trust-bearing workspace files (see workspace-trust.ts). */
+  trustedWrite: (write: () => void) => void;
 }
 
 const EXIT_OK = 0;
@@ -91,8 +96,9 @@ export async function runSecurityCli(area: string, argv: string[], opts: Securit
     cwd,
     root,
     stateDir: workspaceStateDir(root),
-    mcpServers: opts.mcpServers ?? (() => loadConfig().mcpServers ?? []),
+    mcpServers: opts.mcpServers ?? (() => loadConfig({ trustStore: opts.trustStore }).mcpServers ?? []),
     now: opts.now ?? (() => new Date()),
+    trustedWrite: (write) => preservingTrust(root, opts.trustStore ?? WorkspaceTrustStore.global(), write, cwd),
   };
 
   switch (area) {
@@ -414,7 +420,8 @@ async function runPluginsVerify(ids: string[], values: { json?: boolean }, ctx: 
     const unsigned = rows.filter((r) => r.signature === "unsigned").length;
     if (unsigned > 0) {
       ctx.out(
-        `note: ${unsigned} plugin(s) unsigned — install policy "warn" allows them (see docs/guide/marketplace.md)`,
+        `note: ${unsigned} plugin(s) unsigned — installed under an explicit "warn"/"off" policy; ` +
+          `the default ("require") refuses them (see docs/guide/marketplace.md)`,
       );
     }
     ctx.out(failures === 0 && !missing ? "all installed plugins verified" : "verification FAILED");
@@ -501,7 +508,9 @@ async function runMarketplaceKeys(
             })
             .toString("base64");
       const keyId = keyIdFromSpki(publicKeyBase64);
-      store.add({ keyId, publicKey: publicKeyBase64, publisher: values.publisher, trust: level, note: values.note });
+      ctx.trustedWrite(() =>
+        store.add({ keyId, publicKey: publicKeyBase64, publisher: values.publisher!, trust: level, note: values.note }),
+      );
       ctx.out(`added publisher key ${keyId} (${values.publisher}, ${level})`);
       return EXIT_OK;
     } catch (err) {
@@ -513,7 +522,11 @@ async function runMarketplaceKeys(
   if (sub === "remove") {
     const keyId = args[1];
     if (!keyId) return usageError(ctx.err, MARKETPLACE_USAGE);
-    if (!store.remove(keyId)) {
+    let removed = false;
+    ctx.trustedWrite(() => {
+      removed = store.remove(keyId);
+    });
+    if (!removed) {
       ctx.err(`no publisher key "${keyId}" in the trust store`);
       return EXIT_FAIL;
     }
@@ -541,7 +554,7 @@ async function runMcpCommand(argv: string[], ctx: Ctx): Promise<number> {
   if (positionals[0] !== "trust") return usageError(ctx.err, MCP_USAGE);
   const sub = positionals[1];
   const arg = positionals[2];
-  const store = new McpApprovalStore(join(ctx.stateDir, "mcp-trust.json"));
+  const store = new McpApprovalStore(join(ctx.stateDir, "mcp-trust.json"), ctx.trustedWrite);
 
   if (sub === "list") {
     const entries = store.list();

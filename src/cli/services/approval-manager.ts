@@ -134,18 +134,6 @@ export class ApprovalManager {
     return this.pendingMcpElicitations.size;
   }
 
-  resolveMcpElicitation(response: McpElicitationResponse): void {
-    const handler = this.pendingMcpElicitations.get(response.id);
-    if (handler) {
-      this.pendingMcpElicitations.delete(response.id);
-      handler(response);
-    }
-  }
-
-  pendingMcpElicitationCount(): number {
-    return this.pendingMcpElicitations.size;
-  }
-
   pendingApprovalCount(): number {
     return this.pendingApprovals.size;
   }

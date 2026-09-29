@@ -213,7 +213,7 @@ export function formatExperimentsText(records: ReturnType<ExperimentStore["listA
 
 /** Formats the loop health report (first-class evolution metrics). */
 export function formatHealthReport(report: ReturnType<EvolutionMetricsTracker["report"]>): string {
-  const pct = (v: number | null) => (v === null ? "n/a" : `${(v * 100).toFixed(1)}%`);
+  const pct = (v: number | null) => (v === null ? "n/a (not measured)" : `${(v * 100).toFixed(1)}%`);
   const lines: string[] = [
     "=== Evolution Health Report ===",
     `Versions tracked:        ${report.totalVersions}`,
@@ -223,11 +223,11 @@ export function formatHealthReport(report: ReturnType<EvolutionMetricsTracker["r
     `Retention rate:          ${pct(report.retentionRate)}`,
     `Regression rate:         ${pct(report.regressionRate)}`,
     `Rollback rate:           ${pct(report.rollbackRate)}`,
-    `Mean visible gain:       ${(report.meanVisibleGain * 100).toFixed(1)}%`,
-    `Mean held-out gain:      ${(report.meanHeldOutGain * 100).toFixed(1)}%`,
-    `Mean transfer gain:      ${(report.meanTransferGain * 100).toFixed(1)}%`,
-    `Executor sensitivity:    ${(report.meanExecutorSensitivity * 100).toFixed(1)}%`,
-    `Experience→improvement r: ${report.experienceImprovementCorrelation?.toFixed(2) ?? "n/a"}`,
+    `Mean visible gain:       ${pct(report.meanVisibleGain)}`,
+    `Mean held-out gain:      ${pct(report.meanHeldOutGain)}`,
+    `Mean transfer gain:      ${pct(report.meanTransferGain)}`,
+    `Executor sensitivity:    ${pct(report.meanExecutorSensitivity)}`,
+    `Experience→improvement r: ${report.experienceImprovementCorrelation?.toFixed(2) ?? "n/a (not measured)"}`,
     "",
     report.promotionPrecisionVerdict,
   ];
@@ -351,25 +351,35 @@ async function runBenchmarkSuites(engine: EvolutionEngine, root: string): Promis
  * Rebuilds the metrics tracker from persisted experiment records so that the
  * health report reflects the full history, not just the current process.
  */
+/**
+ * Rebuilds loop metrics from persisted experiments. Only quantities the record
+ * actually carries are reported; the rest stay null/"unknown":
+ *   - gains exist only when Stage B ran (its deltas are what the record stores)
+ *   - transfer gain and executor sensitivity are not persisted per experiment
+ *   - "genuinely better on held-out" needs a post-promotion re-evaluation the
+ *     store does not hold (Stage B "improved" is a promotion precondition, so
+ *     using it would make promotion precision 100% by construction)
+ */
 export function metricsFromExperimentStore(store: ExperimentStore): EvolutionMetricsTracker {
   const tracker = new EvolutionMetricsTracker();
   for (const r of store.listAll()) {
     const promoted = r.decision.result === "eligible";
     const accepted =
       r.lifecycle.state === "ACTIVE" || r.lifecycle.state === "REGRESSED" || r.lifecycle.state === "ROLLBACK";
+    const stageBRan = r.decision.stageB !== "not_run";
     tracker.record({
       versionId: r.candidate.harness,
       parentVersionId: r.parent.harness,
-      visibleGain: r.metrics.capability,
-      heldOutGain: r.metrics.generalization,
-      transferGain: r.metrics.generalization,
+      visibleGain: stageBRan ? r.metrics.capability : null,
+      heldOutGain: stageBRan ? r.metrics.generalization : null,
+      transferGain: null,
       promoted,
-      genuinelyBetterOnHeldOut: promoted ? r.decision.stageB === "improved" : "unknown",
+      genuinelyBetterOnHeldOut: "unknown",
       accepted,
       rolledBack: r.lifecycle.state === "ROLLBACK",
       retainedBySuccessor: "unknown",
       executorModels: [r.executor.primary, ...r.executor.transfer],
-      executorSensitivity: 0,
+      executorSensitivity: null,
     });
   }
   return tracker;

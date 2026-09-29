@@ -3,6 +3,10 @@
  * Fully deterministic: exec and fetch are injected fakes, no OS or network.
  */
 import { describe, it, expect, jest } from "@jest/globals";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   KeychainCredentialProvider,
   VaultCredentialProvider,
@@ -16,17 +20,21 @@ import {
 
 // ── KeychainCredentialProvider ──────────────────────────────────────────────
 
-function fakeExec(scripts: Record<string, ExecResult>): ExecFn & { calls: Array<[string, string[]]> } {
+function fakeExec(
+  scripts: Record<string, ExecResult>,
+): ExecFn & { calls: Array<[string, string[]]>; inputs: Array<string | undefined> } {
   const calls: Array<[string, string[]]> = [];
-  const fn = async (command: string, args: string[]): Promise<ExecResult> => {
+  const inputs: Array<string | undefined> = [];
+  const fn = async (command: string, args: string[], input?: string): Promise<ExecResult> => {
     calls.push([command, args]);
+    inputs.push(input);
     const key = `${command} ${args.join(" ")}`;
     for (const [pattern, result] of Object.entries(scripts)) {
       if (key.startsWith(pattern) || key === pattern) return result;
     }
     return { code: 1, stdout: "", notFound: false };
   };
-  return Object.assign(fn, { calls });
+  return Object.assign(fn, { calls, inputs });
 }
 
 const OK_STDOUT: ExecResult = { code: 0, stdout: "super-secret-value\n", notFound: false };
@@ -59,13 +67,42 @@ describe("KeychainCredentialProvider", () => {
     expect(exec.calls[0]).toEqual(["secret-tool", ["lookup", "service", "nexum-test", "account", "github-token"]]);
   });
 
-  it("linux: writes via secret-tool store (stdin-based backends aside)", async () => {
+  it("linux: writes via secret-tool store with the secret on stdin, never argv", async () => {
     const exec = fakeExec({ "secret-tool store": { code: 0, stdout: "", notFound: false } });
     const p = new KeychainCredentialProvider({ platform: "linux", exec });
-    await expect(p.set("k", "v")).resolves.toBeUndefined();
-    expect(exec.calls[0][0]).toBe("secret-tool");
-    expect(exec.calls[0][1]).toContain("store");
+    await expect(p.set("k", "s3cret-value")).resolves.toBeUndefined();
+    expect(exec.calls[0]).toEqual(["secret-tool", ["store", "--label=nexum", "service", "nexum", "account", "k"]]);
+    expect(exec.calls[0][1]).not.toContain("s3cret-value");
+    expect(exec.inputs[0]).toBe("s3cret-value");
   });
+
+  it("linux: the real executor delivers the secret to secret-tool's stdin and closes it", async () => {
+    const binDir = mkdtempSync(join(tmpdir(), "nexum-fake-secret-tool-"));
+    const captured = join(binDir, "stdin.txt");
+    const script = join(binDir, "secret-tool");
+    writeFileSync(script, `#!/bin/sh\ncat > "${captured}"\n`);
+    chmodSync(script, 0o755);
+    // Jest sandboxes process.env, so run the provider in a real child process with the fake binary on PATH.
+    const runner = join(binDir, "run.mts");
+    const moduleUrl = new URL("../../src/credentials/index.ts", import.meta.url).href;
+    writeFileSync(
+      runner,
+      `import { KeychainCredentialProvider } from ${JSON.stringify(moduleUrl)};\n` +
+        `await new KeychainCredentialProvider({ platform: "linux" }).set("k", "s3cret-value");\n`,
+    );
+    try {
+      const r = spawnSync(process.execPath, ["--import", "tsx", runner], {
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+      expect(r.stderr).toBe("");
+      expect(r.status).toBe(0);
+      expect(readFileSync(captured, "utf8")).toBe("s3cret-value");
+    } finally {
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("macOS: writes via security add-generic-password -U (update-or-add)", async () => {
     const exec = fakeExec({ "security add-generic-password": { code: 0, stdout: "", notFound: false } });

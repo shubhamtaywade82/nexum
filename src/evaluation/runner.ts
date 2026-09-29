@@ -81,7 +81,13 @@ export function observeExecution(input: {
         break;
       }
       case "model.answered":
-        modelCalls.push({ model: event.model, tier: event.tier, promptTokens: 0, completionTokens: 0 });
+        modelCalls.push({
+          model: event.model,
+          tier: event.tier,
+          promptTokens: event.promptTokens ?? 0,
+          completionTokens: event.completionTokens ?? 0,
+          ...(event.latencyMs !== undefined ? { latencyMs: event.latencyMs } : {}),
+        });
         break;
       case "execution.reasoning":
         reasoningTurns++;

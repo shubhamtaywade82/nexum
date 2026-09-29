@@ -23,12 +23,12 @@
 export interface VersionSwitchRecord {
   versionId: string;
   parentVersionId: string | null;
-  /** Metrics on the visible split at decision time. */
-  visibleGain: number;
-  /** Metrics on the held-out split at decision time. */
-  heldOutGain: number;
-  /** Cross-model transfer gain at decision time. */
-  transferGain: number;
+  /** Metrics on the visible split at decision time (null = not measured). */
+  visibleGain: number | null;
+  /** Metrics on the held-out split at decision time (null = not measured). */
+  heldOutGain: number | null;
+  /** Cross-model transfer gain at decision time (null = not measured). */
+  transferGain: number | null;
   /** Was this version promoted (eligible → delivered)? */
   promoted: boolean;
   /** Was this version later found genuinely better on held-out evaluation? */
@@ -40,8 +40,10 @@ export interface VersionSwitchRecord {
   /** Did the next version retain this version's gains? */
   retainedBySuccessor: boolean | "unknown";
   executorModels: string[];
-  /** Mean held-out delta spread across executors (executor sensitivity). */
-  executorSensitivity: number;
+  /** Held-out delta spread across executors; null unless ≥2 executors were evaluated. */
+  executorSensitivity: number | null;
+  /** Confidence of the prior experience that seeded this experiment (null/absent = none recorded). */
+  experienceConfidence?: number | null;
 }
 
 export interface EvolutionHealthReport {
@@ -53,12 +55,13 @@ export interface EvolutionHealthReport {
   retentionRate: number | null;
   regressionRate: number | null;
   rollbackRate: number | null;
-  meanVisibleGain: number;
-  meanHeldOutGain: number;
-  meanTransferGain: number;
-  /** Mean executor sensitivity across version switches. */
-  meanExecutorSensitivity: number;
-  /** Pearson correlation between experience-confidence and experiment success. */
+  /** Means over switches where the quantity was measured; null when none were. */
+  meanVisibleGain: number | null;
+  meanHeldOutGain: number | null;
+  meanTransferGain: number | null;
+  /** Mean executor sensitivity across version switches (null when never measured). */
+  meanExecutorSensitivity: number | null;
+  /** Pearson correlation between recorded experience confidence and promotion (null without ≥3 recorded). */
   experienceImprovementCorrelation: number | null;
   /** Human-readable interpretation of promotion precision. */
   promotionPrecisionVerdict: string;
@@ -91,7 +94,10 @@ export class EvolutionMetricsTracker {
     const regressed = accepted.filter((s) => s.retainedBySuccessor === false);
     const rolledBack = accepted.filter((s) => s.rolledBack);
 
-    const mean = (xs: number[]) => (xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+    const mean = (xs: Array<number | null | undefined>): number | null => {
+      const measured = xs.filter((x): x is number => typeof x === "number");
+      return measured.length > 0 ? measured.reduce((a, b) => a + b, 0) / measured.length : null;
+    };
 
     const promotionPrecision = decided.length > 0 ? genuinelyBetter.length / decided.length : null;
     const falsePromotionRate = decided.length > 0 ? falsePromotions.length / decided.length : null;
@@ -116,11 +122,13 @@ export class EvolutionMetricsTracker {
   /**
    * Pearson correlation between prior experience confidence (fed into the
    * experiment) and experiment outcome — answers "is stored experience
-   * predictive of improvement?".
+   * predictive of improvement?". Without explicit arrays, only switches that
+   * recorded an experienceConfidence participate.
    */
   experienceImprovementCorrelation(experienceConfidence?: number[], experimentOutcomes?: number[]): number | null {
-    const xs = experienceConfidence ?? this.switches.map((s) => s.heldOutGain);
-    const ys = experimentOutcomes ?? this.switches.map((s) => (s.promoted ? 1 : 0));
+    const withExperience = this.switches.filter((s) => typeof s.experienceConfidence === "number");
+    const xs = experienceConfidence ?? withExperience.map((s) => s.experienceConfidence as number);
+    const ys = experimentOutcomes ?? withExperience.map((s) => (s.promoted ? 1 : 0));
     if (xs.length !== ys.length || xs.length < 3) return null;
     return pearson(xs, ys);
   }

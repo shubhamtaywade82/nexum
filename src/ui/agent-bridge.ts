@@ -130,9 +130,12 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
   agent.on("onMcpElicitationRequested", (request) => {
     bus.publish({ type: "mcp.elicitation.requested", request });
   });
-  agent.on("onModelUsed", (tier: string, model: string) => {
-    bus.publish({ type: "model.answered", tier, model });
-  });
+  agent.on(
+    "onModelUsed",
+    (tier: string, model: string, usage?: { promptTokens: number; completionTokens: number; latencyMs: number }) => {
+      bus.publish({ type: "model.answered", tier, model, ...usage });
+    },
+  );
   agent.on("onPlanUpdate", (goal: string, steps: PlanStep[], status: "running" | "completed" | "failed") => {
     bus.publish({ type: "conversation.plan", goal, steps: toExecutionSteps(steps), status });
   });

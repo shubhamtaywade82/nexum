@@ -1,245 +1,333 @@
 # Nexum Security & Trust Model
 
-> **Status:** Developer Preview — this document describes the *intended* trust
-> model. Some surfaces are fully implemented; others are explicitly marked as
-> **incomplete** below. Treat any surface marked **INCOMPLETE** as not yet
-> safe to rely on for security guarantees.
+> **Status:** Developer Preview. This document describes what the code on
+> this branch actually enforces. Known gaps are listed in §12 — read
+> them before running Nexum on anything you cannot afford to lose.
 
-This document explains which execution surfaces in Nexum are trusted,
-sandboxed, networked, credential-bearing, or externally mutating — and what
-guarantees each surface provides (and does not).
+Nexum runs an LLM that chooses tool calls. Assume the model can be steered
+by anything it reads (prompt injection via files, web pages, issues, tool
+output). The boundaries below are designed so that a steered model is
+contained by **isolation** (what code can physically reach), not merely by
+**policy** (what the model is asked or allowed to request).
 
 ## 1. Trust Surfaces
 
-Nexum exposes several execution surfaces. Each has a distinct trust profile:
+| Surface                                | Runs where                   | Network              | Sees secrets              | Can mutate                       |
+| -------------------------------------- | ---------------------------- | -------------------- | ------------------------- | -------------------------------- |
+| `run_shell` (sandbox, default)         | Docker container             | none                 | no (masked)               | workspace (or write scope) only  |
+| Project/Ruby script runners            | same sandbox                 | none                 | no (masked)               | workspace (or write scope) only  |
+| `run_shell` / runners, sandbox **off** | **host**                     | yes                  | **yes**                   | **anything your user can**       |
+| Filesystem tools                       | host, via WorkspaceGuard     | no                   | no                        | workspace (or write scope) only  |
+| `search_code`, `sqlite_query`, LSP     | host, via WorkspaceGuard     | no                   | no                        | no                               |
+| `git`                                  | host                         | configured remotes   | uses your git credentials | repo + configured remotes        |
+| `github` (`gh`)                        | host                         | GitHub               | uses your `gh` token      | issues/PRs only (§6)             |
+| `docker` (**opt-in**)                  | host daemon                  | none by default      | no                        | agent-labelled containers/images |
+| Browser (Playwright)                   | host Chromium                | yes                  | no                        | remote sites                     |
+| Web fetch                              | host                         | public internet only | no                        | no                               |
+| Webhook ingress                        | host                         | inbound              | HMAC secrets              | triggers agent handlers          |
+| MCP servers                            | host subprocesses            | depends              | depends                   | depends (trusted code)           |
+| External-agent subagents               | host subprocesses            | yes                  | API key passed via env    | anything the agent CLI can       |
+| Trading tools                          | host                         | exchanges            | exchange keys             | **financial** (orders)           |
+| Workspace settings (`.nexum/`, `.env`) | configure Nexum itself       | —                    | —                         | apply only once trusted (§8)     |
+| Marketplace plugins (`activate`)       | Node process, `--permission` | none (§7)            | no (own files, empty env) | nothing on disk; bridge only     |
+| Plugins registered in code             | host process                 | yes                  | yes                       | anything (trusted code)          |
 
-| Surface                | Trust Level      | Network | Credentials | Mutates Host FS | Mutates External |
-| ---------------------- | ---------------- | ------- | ----------- | --------------- | ---------------- |
-| Host shell (no Docker) | **trusted host** | yes     | yes         | yes             | yes              |
-| Docker sandbox shell   | **sandboxed**    | no *    | no          | container only  | no *             |
-| Filesystem tools       | **trusted host** | no      | no          | yes             | no               |
-| Git tools              | **trusted host** | yes     | yes         | yes             | yes              |
-| GitHub tools           | **trusted host** | yes     | yes         | no              | yes              |
-| Browser (Playwright)    | **networked**    | yes     | no          | no              | yes              |
-| MCP servers            | **trusted host** | yes     | yes         | yes             | depends          |
-| Trading tools          | **trusted host** | yes     | yes         | no              | financial risk   |
-| Webhook ingress        | **trusted host** | no      | yes (HMAC)  | no              | no               |
-| Web service (fetch)    | **networked**    | yes     | no          | no              | no               |
-| Plugin marketplace     | **INCOMPLETE**   | yes     | no          | yes             | yes              |
-| Plugin runtime         | **INCOMPLETE**   | depends | depends     | depends         | depends          |
+## 2. Filesystem boundary (WorkspaceGuard)
 
-\* Docker sandbox uses `--network=none` by default and blocks host mounts.
+Every agent file tool — read, write, list, delete, mkdir, copy, move,
+patch, append, apply_patch/edit_file_lines, backup, watch — plus
+`search_code`, `sqlite_query` and LSP file access resolves paths through
+**one** `WorkspaceGuard` (`src/core/fs/workspace-guard.ts`), shared across
+packs by `registerBaseTools`. Per operation it enforces:
 
-## 2. What Each Surface Provides
+1. **Containment** — the real path (symlinks resolved) stays inside the
+   workspace; symlinked directories pointing outside are rejected.
+2. **Write scope** — when `writeScope` is set (config `writeScope` or
+   `NEXUM_WRITE_SCOPE`, relative to the workspace root), every mutation
+   must land inside it.
+3. **Secrets** — one list (`src/safety/path-policy.ts`): `.env*`,
+   `credentials.json`, `id_rsa`/`id_ed25519`/`id_ecdsa`, `*.pem`/`*.key`/
+   `*.p12`/`*.pfx`, `secret(s)/`, `.ssh/`, `.aws/`, `.gnupg/`. Mutations are
+   always refused; for agent tools, content-revealing operations (read,
+   copy source, search) are refused too. Judged on the requested **and**
+   the resolved path, so a symlink alias of a secret is the secret.
+4. **Hardlinks** — a multi-link file sharing a device+inode with a
+   workspace secret or with a file in `~/.ssh`, `~/.aws`, `~/.gnupg`,
+   `~/.kube`, `~/.docker`, `~/.azure`, gcloud, `.netrc`,
+   `.git-credentials`, `.npmrc`, `.pypirc` is treated as that secret. If the
+   workspace is too large to scan, any multi-link file is treated as a
+   possible secret (fail closed).
+5. **Git internals** — file tools never write under `.git/` (a planted
+   hook or `core.fsmonitor` would run on the host at the next git command).
+   **Nexum state** — nor under `.nexum/` or `.devagent/` (config, plugin
+   installs, publisher trust store, MCP approvals): an agent that could
+   write there could switch its own sandbox off or trust its own plugins.
+   Reading is allowed; `credentials.json` and `*.pem` there are secrets
+   (rule 3).
+6. **Destructive shapes** — the workspace root cannot be deleted or moved;
+   a directory holding protected files cannot be deleted.
+7. **Races** — reads open the file then re-resolve through the guard and
+   require the same inode; writes go through an exclusively created temp
+   file proven to sit at the approved location before any content is
+   written. Delete/move/mkdir re-validate immediately before the syscall
+   (narrowed, not closed — see §12).
 
-### 2.1 Host Shell (no Docker)
+`search_code` also passes ripgrep exclusion globs for secrets _after_ any
+caller glob (ripgrep lets later globs win) and drops matches from
+hardlink aliases.
 
-- **Who:** The user's own account on the host machine.
-- **What it can do:** Anything the user can do — read/write files, run
-  processes, make network calls, push git commits, place trades.
-- **Safety net:** `PolicyEngine` confirmation gates for destructive actions
-  (force-push, `rm -rf`, privileged docker, delete file). These are **UX
-  safety nets, not security boundaries**.
-- **Recommendation:** Run with Docker sandbox enabled (`sandbox: true` in
-  config) for any agent operating on code you don't fully trust.
+## 3. Shell sandbox (`run_shell`, script runners)
 
-### 2.2 Docker Sandbox Shell
+Default (`sandbox: true`). Each call runs `docker run` with:
 
-- **Who:** A containerized subprocess with no host network access.
-- **What it can do:** Read/write inside the container, run processes inside
-  the container, use CPU/memory up to the configured limits.
-- **What it cannot do:** Reach the host network, mount host paths, gain
-  privileges, persist beyond the run.
-- **Enforced by:** `--network=none`, `--pids-limit`, `--memory`, `--cpus`,
-  `--cap-drop=ALL`, `--security-opt=no-new-privileges`, and a hard wall-clock
-  timeout. `DestructiveShellRule` blocks `--privileged` and other escape
-  vectors at the policy layer.
-- **Recommendation:** This is the **default** sandbox for `run_shell` calls.
+- `--network=none`, `--memory`, `--cpus`, `--pids-limit=128`, hard timeout;
+- `--user <host uid>:<host gid>`, `--cap-drop=ALL`,
+  `--security-opt=no-new-privileges`, `--read-only` root filesystem with a
+  tmpfs `/tmp` and `HOME=/tmp`;
+- the workspace mounted read-write — or read-only with only the write scope
+  read-write when one is set;
+- `.git/hooks` and `.git/config` mounted read-only;
+- `.nexum/` (created first if missing, so the container cannot create it)
+  and `.devagent/` mounted read-only — where they really live, if symlinked;
+- every secret file masked with an empty read-only file
+  (`.nexum/sandbox-empty`, a workspace path Docker Desktop can always
+  share; `/dev/null` only if no state directory is usable) and every secret
+  directory with an empty tmpfs (same list as §2, including hardlink
+  aliases); the shell refuses to start if the secret scan exceeds 100k
+  entries.
 
-### 2.3 Filesystem Tools
+`run_tests` / `run_lint` / `run_format` / `run_build` and `run_rubocop` /
+`run_rspec` execute through the same sandbox (package scripts and Gemfiles
+are code the agent can edit). Paths starting with `-` are rejected (option
+injection).
 
-- **Who:** The host user.
-- **What it can do:** Read and write files inside the workspace root.
-- **What it cannot do:** Write outside the workspace root (path containment
-  via `WorkspaceGuard`); read sensitive files (`.env`, `id_rsa`, `*.pem`,
-  `*.key`, `secrets/` directories — blocked by `isSensitivePath()`).
-- **Recommendation:** Workspace containment is enforced; sensitive files
-  are redacted. Treat this as a workspace-scoped trusted surface.
+Verified against a real Docker 29 daemon on Linux, as root and as an
+unprivileged user, by `npm run test:docker` (§11). Not yet run on Docker
+Desktop (macOS/Windows) — see §11.
 
-### 2.4 Git / GitHub Tools
+### Sandbox disabled (`NEXUM_SANDBOX=0` / `sandbox: false`)
 
-- **Who:** The host user, with whatever GitHub credentials are configured.
-- **What it can do:** Run `git` commands in the workspace; call the GitHub
-  API (push, PR, issue) using the configured token.
-- **Safety net:** `GitPublishRule` blocks `git push --force` to `main`/`master`
-  by default. Force-push to other branches requires explicit confirmation.
-- **Recommendation:** Use a GitHub fine-grained PAT scoped to the specific
-  repo. Never use a global PAT for an autonomous agent.
+Commands run on the host with your privileges; nothing can be isolated.
+Nexum then: requires human confirmation for **every** `run_shell` and
+script-runner call (argument-based "benign command" allowances do not
+apply to host execution), and strips credential-looking variables
+(`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*CREDENTIAL*`, `*PRIVATE*`)
+from the child environment. An operator who also enables auto-approve
+has removed the last check.
 
-### 2.5 Browser (Playwright)
+## 4. `docker` tool (opt-in)
 
-- **Who:** A Chromium instance under Nexum's control.
-- **What it can do:** Navigate, click, type, screenshot, evaluate JS, make
-  any network request from inside the browser.
-- **Safety net:** Browser tools are gated by the PolicyEngine like any other
-  tool. Confirmation is required for high-risk actions.
-- **Recommendation:** Run in a separate Docker profile when browsing
-  untrusted URLs.
+Access to the Docker daemon is root-equivalent on the host, so the tool is
+**not mounted** unless `dockerTool: true` / `NEXUM_DOCKER_TOOL=1`. When on:
 
-### 2.6 MCP (Model Context Protocol) Servers
+- **Ownership:** everything it creates carries `nexum.agent=true`;
+  `stop`/`rm`/`logs`/`inspect`/`exec` accept only labelled targets;
+  `ps`/`images` are filtered to them.
+- **run/exec:** flag allowlist — named volumes or tmpfs only (no bind
+  mounts), no host/container network modes, devices, capabilities,
+  security-opt, `--env-file`, `--volumes-from`, or bare `-e NAME` (host env
+  pass-through).
+- **Egress:** containers join `nexum-agent`, an `--internal` network the
+  tool creates (agent containers reach each other by name; nothing reaches
+  out); an existing non-internal network of that name is refused. Builds
+  run with `--network=none`. `-p` is unavailable. `dockerEgress: true` /
+  `NEXUM_DOCKER_EGRESS=1` opts back into bridge networking with
+  loopback-only `-p`.
+- **build:** one local context inside the workspace containing no secrets
+  or secret aliases; Dockerfile inside the workspace; no `-o`, `--secret`,
+  `--ssh`, `--iidfile`, cache import/export; `--build-arg NAME=VALUE` only.
+- **Not offered:** `compose` (compose files can declare anything), `cp`.
 
-- **Who:** External processes spawned and controlled by Nexum.
-- **What they can do:** Whatever their tools do — read/write files, make
-  HTTP calls, run shell commands. MCP servers run as **trusted host**
-  subprocesses.
-- **Safety net:** `McpToolAdapter` extracts security metadata from each
-  MCP tool (risk, side effects, network requirements) and routes them
-  through the same `ToolGateway` policy pipeline as built-in tools.
-- **Recommendation:** Only configure MCP servers you trust. MCP servers
-  inherit host-level trust.
+## 5. `git` tool (host)
 
-### 2.7 Trading Tools
+Allowlisted subcommands; force/hard flags blocked; pushes to
+`main`/`master`/`develop`/`prod(uction)`/`release/*` blocked, including
+refspec destinations (`HEAD:main`). Options that turn git into a host
+escape are blocked, including git's unique-prefix abbreviations (`--out=`):
+`--upload-pack`, `--receive-pack`, `--exec` (run commands), `--output`
+(write anywhere), `--no-index`, `blame --contents`/`-S`/
+`--ignore-revs-file`, `commit -F`/`--file`/`-t`/`--template`,
+`--pathspec-from-file`, `-O`/`--orderfile` (read host files), `--repo`.
+`push`/`pull` only target remotes already configured (`git remote`). The
+parity posture asks before every push.
 
-- **Who:** The host user, with whatever exchange API credentials are
-  configured.
-- **What it can do:** Place real market orders if credentials permit;
-  stream real-time market data; run backtests.
-- **Safety net:** Trading tools have `risk: "critical"` and
-  `externalMutation: true` metadata. Paper trading is supported and is
-  the default.
-- **Recommendation:** **Never** configure live trading credentials for an
-  autonomous agent without explicit human-in-the-loop approval for every
-  order.
+## 6. `github` tool (host)
 
-### 2.8 Webhook Ingress
+`gh` runs with your GitHub token, so the tool allowlists verbs per
+subcommand instead of blocking a few:
 
-- **Who:** External systems (e.g. Binance WebSocket, GitHub webhooks).
-- **What it can do:** Receive events; route them through trusted rules to
-  agent sessions.
-- **Safety net:** Every incoming webhook is **HMAC-SHA256 verified** against
-  the endpoint's shared secret. Unverified events are recorded but never
-  reach handlers. Timestamp freshness window (5 min default) prevents replay
-  attacks.
-- **Recommendation:** Treat webhook endpoints as semi-public. Rotate
-  secrets regularly.
+- `pr` list/view/diff/checks/status/create/comment/edit/review/ready
+  (`review --approve` blocked); `issue` list/view/status/create/comment/
+  edit; `release` list/view; `repo` view; `run` list/view/rerun. Merge,
+  close, reopen, delete, lock, transfer, release create/upload/download,
+  repo create/fork/clone/edit/archive, secrets, variables, `auth`,
+  `extension`, `alias` and anything else are refused.
+- `gh api` is read-only: one endpoint path (no URL, no `graphql` — it is
+  always a POST), `--method` GET/HEAD only, headers limited to `Accept` and
+  `X-GitHub-Api-Version`, no `-f`/`-F`/`--field`/`--raw-field`/`--input`
+  (any of them turns the request into a write), no `--hostname`.
+- `--body-file`/`-F`/`--template`/`-T` must name a workspace file the guard
+  lets the agent read (never a secret, never outside the workspace, never
+  stdin).
 
-### 2.9 Web Service (fetch)
+## 7. Plugins and the marketplace
 
-- **Who:** Nexum itself, making outbound HTTP requests.
-- **What it can do:** Fetch arbitrary URLs, extract content from HTML.
-- **Safety net:** None at the network layer. Fetch is gated by the
-  PolicyEngine like any other tool.
-- **Recommendation:** Use with workspace guard + policy posture
-  `restricted` when running on untrusted prompts.
+**Install** (`MarketplaceService.install`): the signature policy runs
+before anything is downloaded. The default is `signatures: "require"`: the
+entry must be signed by a key **in the publisher trust store** (a signature
+that only verifies against a key embedded in the entry proves nothing about
+who signed it) and must carry a `sha256`, which the signature covers.
+`"require-verified"` additionally requires a `verified` publisher; `"warn"`
+and `"off"` must be configured explicitly. A present-but-invalid signature
+is refused in every mode except `"off"`. The artifact is then hashed and
+unpacked by a strict extractor (`src/marketplace/tar.ts`: regular files and
+directories only — symlinks, hardlinks, devices, absolute paths, `..`,
+duplicates, bad checksums and oversized archives are rejected) and its
+`package.json` validated: `nexum` object present, id and version equal to
+the signed entry, entry module a `.js`/`.mjs`/`.cjs` file inside the
+package, declared `nexum.permissions` well-formed. Catalog ids/versions
+cannot escape the cache directory; git sources clone with `--` before the
+URL and `protocol.ext.allow=never`, and pack the plugin directory into a
+deterministic tar so its sha256 can be signed.
 
-### 2.10 Plugin Marketplace — INCOMPLETE
+**Activation** (`MarketplaceService.activate`, never automatic): signature
+re-checked against the **current** trust store (removing a key revokes its
+plugins), artifact re-hashed against the record and the signed sha256,
+unpacked into a fresh private temp directory, then run in a separate Node
+process under the permission model: `--permission
+--allow-fs-read=<package dir>` (no reads elsewhere, no writes, no child
+processes, no workers, no native addons, no WASI), an empty environment,
+a heap cap and lifecycle timeouts. Node's permission model does not cover
+the network, so before the plugin module is imported the bootstrap
+replaces every public network entry point — `net` connect/listen (which
+`http`, `https`, `fetch` and `WebSocket` go through), `tls`, `http2`,
+`dgram`, all `dns` lookups and `inspector` — with functions that throw
+`ERR_ACCESS_DENIED`. The originals are not reachable from plugin code:
+`process.binding` is denied by the permission model, and there are no
+addons, child processes or workers to reach sockets any other way. The
+host can opt a plugin back in with `sandbox: { allowNetwork: true }`.
+The module's own manifest must match the
+installed id/version. It reaches the host only through the capability
+bridge, which enforces the plugin's `provide`/`lookup`/`declare` allowlist
+(default: what the package declared, shown on the install record; the host
+can pass a narrower policy) and only transfers structured-cloneable values.
 
-- **Status:** **INCOMPLETE.** The marketplace architecture is in place
-  (MarketplaceService, HttpMarketplaceSource, NpmMarketplaceSource,
-  GitMarketplaceSource, sha256 integrity verification) but the **trust
-  model is not yet fully implemented**.
-- **What's missing:**
-  - Publisher authenticity (no signature verification)
-  - Capability scoping (plugins can declare capabilities but they are
-    not enforced at install time)
-  - Sandbox isolation (installed plugins run with full host trust)
-  - Revocation (no mechanism to revoke a published plugin)
-  - Dependency trust (no analysis of plugin's transitive deps)
-- **Recommendation:** **Do not enable the marketplace in production
-  until the trust model is complete.** The marketplace is currently
-  suitable for development and trusted-internal use only.
+`DefaultPluginHost.register(plugin)` with an in-process plugin object is
+unchanged: that is your own code with full host trust. `IsolatedPluginSandbox`
+with the default `worker` transport isolates memory only.
 
-### 2.11 Plugin Runtime — INCOMPLETE
+## 8. Workspace trust
 
-- **Status:** **INCOMPLETE.** Plugins registered via `PluginHost.register()`
-  run with full host trust. There is no sandboxing layer between a plugin
-  and the host runtime.
-- **What's missing:**
-  - Plugin capability enforcement (plugins declare `provides` but the host
-    does not yet enforce that they only call capabilities they declared)
-  - Plugin resource quotas (CPU, memory, wall-clock)
-  - Plugin isolation (plugins share the host's event loop, filesystem,
-    and process)
-- **Recommendation:** Treat plugins as trusted code (like npm dependencies).
-  Only install plugins from publishers you trust.
+A repository can ship files that configure Nexum itself: `.nexum/config.json`
+(and legacy `.devagent/config.json`), `.nexum/mcp-trust.json`,
+`.nexum/publisher-trust.json`, and the workspace/cwd `.env`, which Nexum
+loads into its own process — where `PATH` or `NODE_OPTIONS` would decide
+what the next `git`, `gh`, `docker` or Node child actually runs. None of it
+applies until you trust that exact content (`src/cli/workspace-trust.ts`):
 
-## 3. Policy Engine
+- **Trust record** lives outside every workspace, in
+  `~/.nexum/trusted-workspaces.json` (mode 0600), keyed by the workspace's
+  real path and bound to a sha256 over the presence, contents and symlink
+  targets of those files. Any change — a `git pull`, a teammate's commit —
+  makes the workspace untrusted again (`direnv allow` semantics).
+- **Untrusted:** only settings that cannot run code, loosen isolation or
+  send the workspace anywhere apply (`model`, `theme`, `quickModel`, tool
+  selection, timeouts, `writeScope` — which can only narrow — and the
+  model-routing heuristics). Everything else, including unknown future keys,
+  is withheld: `sandbox`, `dockerTool`, `dockerEgress`, `autoApprove`,
+  `mcpServers`, `host`, `tier`, `apiKey(s)`, `systemPrompt`, `shellImage`.
+  Workspace `.env` files are not loaded, and workspace MCP approvals are
+  ignored (servers that need approval ask again).
+- **Deciding:** the interactive UI asks once, showing what would apply
+  (MCP commands in full, `.env` variable names — never values — with
+  `PATH`/`NODE_OPTIONS`/`LD_PRELOAD`/`NEXUM_*`-style names flagged). Every
+  other entry point (`rpc`, `doctor`, CI, piped input) never prompts: it
+  runs without the workspace settings and says so on stderr. `nexum trust`,
+  `nexum trust status`, `nexum trust revoke` manage it explicitly.
+- **Nexum's own writes** (saving config from the UI, `nexum mcp trust
+approve`, `nexum marketplace keys add`, runtime MCP approvals) re-stamp
+  trust only if the workspace was trusted, or had none of these files,
+  immediately before the write — they never launder somebody else's change.
+- The CLI no longer runs `dotenv/config` at startup; env files load through
+  the same gate.
 
-The `PolicyEngine` is the central authority for "may this agent run this
-tool?". It applies rules in order:
+## 9. Other surfaces
 
-1. **`DenyToolsRule`** — blocklist specific tool ids.
-2. **`DenyRiskAboveRule`** — block tools above a risk threshold.
-3. **`ModeRestrictionRule`** — restrict tools by execution mode.
-4. **`BudgetGuardRule`** — block tools when budget is exhausted.
-5. **`ConfirmationRule`** — require human approval for high-risk actions.
-6. **`ExecutionProfileRule`** — apply posture-specific restrictions.
+- **Web fetch** (`NodeFetchProvider`): destinations are validated at
+  connect time (no DNS-rebinding window); loopback, private, link-local
+  (incl. cloud metadata), CGNAT, multicast, reserved and IPv4-mapped ranges
+  are refused unless `allowPrivateNetwork`; http/https only; every redirect
+  hop re-validated; credentials dropped on cross-origin redirects;
+  decompressed body capped (default 10 MiB).
+- **Webhooks:** HMAC-SHA256 over `timestamp.rawBody`, freshness window
+  (default 5 min), replays of an accepted signature rejected per endpoint,
+  and handlers receive only the **signed** body. The event `type` is
+  caller-asserted and unsigned. The replay cache is in memory: a restart
+  re-opens the current window.
+- **Credentials:** env/file/OS keychain/Vault providers; scoped views
+  enforce names **and** tags (`declare(spec)`), `defaultScope` applies to
+  unscoped access. Linux keychain writes pass the secret on stdin.
+- **Browser:** a real Chromium on the host network. Treat as networked and
+  able to reach anything the host can.
+- **MCP servers, external-agent subagents, trading:** trusted host code.
+  External agents (`claude -p`, `codex exec`, configured binaries) run as
+  host processes with your account. The order-placing trading tool
+  (`paper_trade`) is marked financial and always requires confirmation;
+  market-data tools are read-only.
 
-The policy engine narrows capabilities; it never widens them. Children
-inherit the parent's policy posture (with possible further narrowing).
+## 10. Policy engine
 
-## 4. Capability Tags
+`RulePolicyEngine` evaluates rules in order and the **first decision
+wins**. Denials always run first — deny lists, risk ceilings, execution
+profile, `ModeRestrictionRule` (read-only agent modes), `BudgetGuardRule`
+— and only then a posture's own rules, so no product "allow" (such as
+parity's benign-shell allowance) can pre-empt a denial. The CLI agent uses
+the `parity` posture: `DestructiveShellRule`, `GitPublishRule`,
+`DeleteFileRule`, then `ConfirmationRule`. Financial side effects always
+require confirmation. `standard` and `restricted` postures confirm every
+high / medium-risk call. Policy is a UX and intent layer; the isolation in
+§2–§8 is what holds when the model is adversarial.
 
-Every tool declares:
+## 11. Verification
 
-- `risk`: `"read" | "low" | "medium" | "high" | "critical"`
-- `sideEffects`: filesystem, process, network, external mutations
-- `networkRequirements`: egress needed?
-- `idempotency`: safe to retry?
-- `reversibility`: can the effect be undone?
+```bash
+npm test                     # unit + contract suites (Docker not required)
+docker build -t nexum-sandbox:latest docker/nexum-sandbox/
+npm run test:docker          # real daemon: masking, git/.nexum RO, write scope, no network,
+                             # caps/no-new-privs, host uid, docker-tool egress & ownership
+```
 
-These tags drive policy decisions and UI surfacing (confirmation dialogs).
+`test:docker` has passed on Linux (native dockerd, root and non-root). It
+has **not** been run on Docker Desktop. Differences that matter there:
+Docker Desktop runs containers in a VM and shares host paths through its
+file-sharing layer, which maps ownership to the host user (so the uid
+assertion is skipped on hosts without POSIX uids); on Windows there is no
+host uid, so no `--user` is passed and the container runs as the image's
+user (root inside the container, all capabilities dropped,
+`no-new-privileges`).
 
-## 5. Confirmation Gates
+## 12. Known gaps
 
-`ApprovalBroker` classifies destructive actions and routes them through
-human-in-the-loop confirmation when listeners are attached. Without
-listeners, destructive actions are **blocked** by default (fail-safe).
+| Gap                                                                                                                                                                                                                                    | Impact                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Trusting a workspace trusts its settings completely, including its `.env` (`PATH`, `NODE_OPTIONS`) — that is what trust means. `AGENTS.md`/skills in the repo are always read as prompt content (prompt injection, not configuration). | Read the `nexum trust` summary before answering y.                                            |
+| Plugin network blocking is enforced inside the plugin's Node process (the permission model has no network switch in Node 22). It relies on the permission model keeping internal bindings out of reach.                                | Only trust publisher keys you have verified; for hostile code use a VM.                       |
+| `github` tool can still create/comment on/edit issues and PRs and re-run workflows with your token.                                                                                                                                    | Scope the `gh` token (fine-grained, single repo).                                             |
+| Delete/move/mkdir symlink race is narrowed, not closed (Node has no `openat2(RESOLVE_BENEATH)`).                                                                                                                                       | Requires a concurrent writer inside the workspace.                                            |
+| Sandbox masks secrets present when the command starts; the webhook replay cache and hardlink inode cache (10 s) are in memory.                                                                                                         | Restart re-opens the webhook window; a secret created mid-command is visible to that command. |
+| Browser has host network access.                                                                                                                                                                                                       | Do not browse untrusted sites with sensitive local services reachable.                        |
+| `test:docker` not yet run on Docker Desktop (macOS/Windows); see §11.                                                                                                                                                                  | Run it once there before relying on the sandbox on those hosts.                               |
+| Not a formal audit; no guarantee against prompt injection or malicious MCP servers/plugins.                                                                                                                                            | Run untrusted workloads on a disposable machine or VM.                                        |
 
-## 6. What This Is Not
-
-This trust model is **not**:
-
-- A formal security audit.
-- A guarantee against prompt injection.
-- A guarantee against malicious tool implementations.
-- A guarantee against supply-chain attacks via plugins or MCP servers.
-- A replacement for OS-level sandboxing (Docker, VMs) when running
-  untrusted code.
-
-## 7. Reporting Security Issues
-
-If you discover a security vulnerability in Nexum:
+## 13. Reporting security issues
 
 1. **Do not** open a public GitHub issue.
 2. Email `shubhamtaywade82@gmail.com` with details and a repro.
 3. Expect a response within 72 hours.
-4. Do not publish the vulnerability until a fix is released.
+4. Do not publish until a fix is released.
 
-## 8. Threat Model Summary
-
-| Threat                        | Mitigation                              | Status       |
-| ----------------------------- | --------------------------------------- | ------------ |
-| Prompt injection              | PolicyEngine + confirmation gates        | Partial      |
-| Malicious tool implementation | Tool risk tags + policy + sandbox       | Partial      |
-| Host filesystem escape        | WorkspaceGuard + path containment       | Implemented  |
-| Sensitive file read           | `isSensitivePath()` redaction            | Implemented  |
-| Privilege escalation (Docker) | `--cap-drop=ALL` + `no-new-privileges`   | Implemented  |
-| Network egress (sandbox)      | `--network=none`                        | Implemented  |
-| Resource exhaustion (sandbox) | `--pids-limit`, `--memory`, `--cpus`    | Implemented  |
-| Replay attack (webhooks)      | HMAC-SHA256 + timestamp window           | Implemented  |
-| Plugin supply chain           | sha256 integrity + (future: signatures)  | **INCOMPLETE** |
-| Plugin capability escalation  | (future: capability enforcement)        | **INCOMPLETE** |
-| Long-running runaway agent   | LoopDetector + budget limits            | Implemented  |
-| Crash recovery                | CheckpointStore + atomic writes         | Implemented  |
-
-## 9. Stability Tiers
-
-See [STABILITY.md](./STABILITY.md) for the public API stability tiers
-(stable, experimental, internal).
+See [STABILITY.md](./STABILITY.md) for API stability tiers.
 
 ---
 
-**Last updated:** 2026-09-16
-**Nexum version:** 2.0.0-alpha.1
-**Review cycle:** This document is reviewed with every minor release.
+**Last updated:** 2026-09-29 · **Nexum version:** 2.0.0-alpha.2 (plus unreleased changes on this branch)

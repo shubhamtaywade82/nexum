@@ -113,6 +113,8 @@ export class WebhookService {
   private readonly events: WebhookEvent[] = [];
   private readonly eventsLogFile?: string;
   private readonly inMemory: boolean;
+  /** Per-endpoint accepted signatures → expiry (ms). In-memory: a restart re-opens the current window. */
+  private readonly seenSignatures = new Map<WebhookId, Map<string, number>>();
 
   constructor(opts: WebhookServiceOptions = {}) {
     this.inMemory = opts.inMemory ?? false;
@@ -161,13 +163,16 @@ export class WebhookService {
 
   /**
    * Receive an incoming webhook request.
-   * Verifies signature + timestamp, then applies rules.
+   * Verifies signature + timestamp, rejects replays, then applies rules.
+   * The delivered payload is always parsed from the signed `rawBody`; the
+   * caller-supplied `payload` is only kept on rejected events for audit.
+   * `type` is NOT covered by the signature — it is caller-asserted routing.
    * Returns the recorded event (verified or not).
    */
   async receive(input: {
     endpointId: WebhookId;
     type: string;
-    payload: unknown;
+    payload?: unknown;
     rawBody: string;
     headers: Record<string, string>;
   }): Promise<WebhookEvent> {
@@ -202,13 +207,17 @@ export class WebhookService {
     const providedSig = input.headers[sigHeader] ?? input.headers[sigHeader.toLowerCase()];
     const providedTs = input.headers[tsHeader] ?? input.headers[tsHeader.toLowerCase()];
 
-    const verification = verifyRequest({
+    const maxAgeSeconds = endpoint.maxAgeSeconds ?? 300;
+    let verification = verifyRequest({
       secret: endpoint.secret,
       rawBody: input.rawBody,
       providedSig,
       providedTs,
-      maxAgeSeconds: endpoint.maxAgeSeconds ?? 300,
+      maxAgeSeconds,
     });
+    if (verification.ok && !this.acceptOnce(endpoint.id, providedSig!, Number(providedTs), maxAgeSeconds)) {
+      verification = { ok: false, error: "replayed request (signature already accepted)" };
+    }
 
     if (!verification.ok) {
       return this.recordEvent({
@@ -222,13 +231,15 @@ export class WebhookService {
       });
     }
 
+    const signedPayload = parseBody(input.rawBody);
+
     // Event type filter.
     if (endpoint.acceptedEventTypes && endpoint.acceptedEventTypes.length > 0) {
       if (!endpoint.acceptedEventTypes.includes(input.type)) {
         return this.recordEvent({
           endpointId: input.endpointId,
           type: input.type,
-          payload: input.payload,
+          payload: signedPayload,
           headers: sanitizeHeaders(input.headers),
           verified: true,
           delivered: false,
@@ -242,7 +253,7 @@ export class WebhookService {
       id: `wh_${randomId()}`,
       endpointId: input.endpointId,
       type: input.type,
-      payload: input.payload,
+      payload: signedPayload,
       headers: sanitizeHeaders(input.headers),
       receivedAt: new Date().toISOString(),
       verified: true,
@@ -305,6 +316,23 @@ export class WebhookService {
   }
 
   // ── internals ───────────────────────────────────────────────────────────
+
+  /** Record a verified signature; false if it was already accepted inside its freshness window. */
+  private acceptOnce(endpointId: WebhookId, signature: string, ts: number, maxAgeSeconds: number): boolean {
+    const now = Date.now();
+    let seen = this.seenSignatures.get(endpointId);
+    if (!seen) {
+      seen = new Map();
+      this.seenSignatures.set(endpointId, seen);
+    }
+    for (const [sig, expiresAt] of seen) {
+      if (expiresAt <= now) seen.delete(sig);
+    }
+    if (seen.has(signature)) return false;
+    // A timestamp is accepted up to maxAge either side of now, so the signature stays replayable until ts + maxAge.
+    seen.set(signature, (ts + maxAgeSeconds) * 1000);
+    return true;
+  }
 
   private recordEvent(partial: Omit<WebhookEvent, "id" | "receivedAt">): WebhookEvent {
     const event: WebhookEvent = {
@@ -374,6 +402,14 @@ function verifyRequest(input: {
   }
 
   return { ok: true };
+}
+
+function parseBody(rawBody: string): unknown {
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    return rawBody;
+  }
 }
 
 function sanitizeHeaders(headers: Record<string, string>): Record<string, string> {

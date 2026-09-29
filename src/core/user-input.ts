@@ -8,7 +8,10 @@ export type McpElicitationMode = "form" | "url";
 export type McpElicitationAction = "accept" | "decline" | "cancel";
 export type McpElicitationValue = string | number | boolean | string[];
 
-export interface McpElicitationOneOf { const: string; title: string; }
+export interface McpElicitationOneOf {
+  const: string;
+  title: string;
+}
 
 export interface McpElicitationFieldSchema {
   type: "string" | "number" | "integer" | "boolean" | "array";
@@ -76,7 +79,10 @@ export function validateMcpElicitationRequest(request: McpElicitationRequest): s
   return problems;
 }
 
-export function validateMcpElicitationForm(schema: McpElicitationFormSchema, content: Record<string, unknown>): string[] {
+export function validateMcpElicitationForm(
+  schema: McpElicitationFormSchema,
+  content: Record<string, unknown>,
+): string[] {
   const problems: string[] = [];
   const required = new Set(schema.required || []);
   for (const [name, field] of Object.entries(schema.properties || {})) {
@@ -104,8 +110,10 @@ export function validateMcpElicitationForm(schema: McpElicitationFormSchema, con
       if (typeof value !== "number" || !Number.isFinite(value)) problems.push('"' + name + '" must be a number');
       else {
         if (field.type === "integer" && !Number.isInteger(value)) problems.push('"' + name + '" must be an integer');
-        if (field.minimum !== undefined && value < field.minimum) problems.push('"' + name + '" must be >= ' + field.minimum);
-        if (field.maximum !== undefined && value > field.maximum) problems.push('"' + name + '" must be <= ' + field.maximum);
+        if (field.minimum !== undefined && value < field.minimum)
+          problems.push('"' + name + '" must be >= ' + field.minimum);
+        if (field.maximum !== undefined && value > field.maximum)
+          problems.push('"' + name + '" must be <= ' + field.maximum);
       }
     } else if (field.type === "boolean") {
       if (typeof value !== "boolean") problems.push('"' + name + '" must be a boolean');
