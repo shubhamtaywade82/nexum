@@ -189,6 +189,21 @@ describe("file tools cannot plant git hooks or config", () => {
   });
 });
 
+describe("policy: denials run before product allowances", () => {
+  it("read-only agent modes deny the shell even for commands parity considers benign", () => {
+    const manager = new AgentToolManager();
+    manager.registerBaseTools(root, undefined, { sandbox: true });
+    const tool = manager.kernelCatalog.definition("run_shell")!;
+    const decide = (command: string, mode?: string) =>
+      parityPosture().check({ tool, args: { command }, agentId: "devagent", runId: "r1", mode });
+    expect(decide("ls")).toMatchObject({ allowed: true });
+    for (const mode of ["ask", "review"]) {
+      expect(decide("ls", mode)).toMatchObject({ allowed: false, rule: "mode-restriction" });
+      expect(decide("echo x > notes.txt", mode)).toMatchObject({ allowed: false, rule: "mode-restriction" });
+    }
+  });
+});
+
 describe("host mode (sandbox disabled) requires confirmation", () => {
   it("the CLI's parity posture asks before ANY host shell command, but lets benign sandboxed ones through", () => {
     const decide = (sandbox: boolean, command: string) => {
