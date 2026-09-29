@@ -14,6 +14,7 @@ import { RunRSpecTool } from "../../src/domains/ruby/rspec-tool.js";
 import { shellQuote, type CommandRunner } from "../../src/tools/command-runner.js";
 import { WriteFileTool, SensitivePathError } from "../../src/tools/filesystem.js";
 import { AgentToolManager } from "../../src/cli/agent-tools.js";
+import { parityPosture } from "../../src/core/policy/postures.js";
 
 let root: string;
 
@@ -189,6 +190,19 @@ describe("file tools cannot plant git hooks or config", () => {
 });
 
 describe("host mode (sandbox disabled) requires confirmation", () => {
+  it("the CLI's parity posture asks before ANY host shell command, but lets benign sandboxed ones through", () => {
+    const decide = (sandbox: boolean, command: string) => {
+      const manager = new AgentToolManager();
+      manager.registerBaseTools(root, undefined, { sandbox });
+      const tool = manager.kernelCatalog.definition("run_shell")!;
+      return parityPosture().check({ tool, args: { command }, agentId: "devagent", runId: "r1" });
+    };
+    expect(decide(true, "ls")).toMatchObject({ allowed: true, requireConfirmation: false });
+    expect(decide(false, "ls")).toMatchObject({ allowed: true, requireConfirmation: true });
+    expect(decide(false, "cat ~/.aws/credentials")).toMatchObject({ requireConfirmation: true });
+    expect(decide(true, "rm -rf /workspace")).toMatchObject({ requireConfirmation: true });
+  });
+
   function policyOf(manager: AgentToolManager, id: string) {
     return manager.kernelCatalog.definition(id)?.policy.confirmation;
   }

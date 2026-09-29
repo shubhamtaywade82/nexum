@@ -27,15 +27,25 @@ const SHELL_SIDE_EFFECTS = { filesystem: true, process: true, network: true };
 /** Metadata for run_shell: on the host (sandbox disabled) every command needs a human's confirmation. */
 export function shellMetadata(sandboxed: boolean): LegacyToolMetadata {
   return sandboxed
-    ? { risk: "high", sideEffects: SHELL_SIDE_EFFECTS }
-    : { risk: "high", sideEffects: SHELL_SIDE_EFFECTS, policy: { confirmation: "required" } };
+    ? { risk: "high", sideEffects: SHELL_SIDE_EFFECTS, execution: { isolation: "sandbox" } }
+    : {
+        risk: "high",
+        sideEffects: SHELL_SIDE_EFFECTS,
+        policy: { confirmation: "required" },
+        execution: { isolation: "host" },
+      };
 }
 
 /** Metadata for script runners (package.json / bundle): host execution needs confirmation too. */
 export function scriptRunnerMetadata(sandboxed: boolean): LegacyToolMetadata {
   return sandboxed
     ? { risk: "medium" }
-    : { risk: "high", sideEffects: SHELL_SIDE_EFFECTS, policy: { confirmation: "required" } };
+    : {
+        risk: "high",
+        sideEffects: SHELL_SIDE_EFFECTS,
+        policy: { confirmation: "required" },
+        execution: { isolation: "host" },
+      };
 }
 
 export interface ProcessPackOptions {
