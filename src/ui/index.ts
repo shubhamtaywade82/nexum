@@ -1,11 +1,12 @@
 import "dotenv/config";
 import path from "node:path";
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import React from "react";
 import { render } from "ink";
 import { Agent } from "../cli/agent.js";
 import { formatCapability, startupWarnings } from "../cli/capabilities.js";
+import { checkSandboxImage } from "../cli/sandbox-image.js";
 import { loadConfig } from "../cli/config.js";
 import { EventBus } from "../runtime/events/bus.js";
 import { initialRuntimeState, Store } from "../runtime/store.js";
@@ -68,24 +69,6 @@ function currentBranch(workspaceRoot: string): string {
   } catch {
     return "";
   }
-}
-
-// One-time, non-blocking check — whether run_shell's Docker sandbox (see
-// tools/shell.ts's own lazy ensureDockerAvailable) is actually reachable and
-// the sandbox image is present locally, so the footer's Sandbox indicator
-// reflects reality instead of assuming it's always up.
-function checkDockerAvailable(image?: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const probe = spawn("docker", ["info"], { stdio: "ignore" });
-    probe.on("close", (code) => {
-      if (code !== 0) return resolve(false);
-      if (!image) return resolve(true);
-      const imgProbe = spawn("docker", ["image", "inspect", image], { stdio: "ignore" });
-      imgProbe.on("close", (imgCode) => resolve(imgCode === 0));
-      imgProbe.on("error", () => resolve(false));
-    });
-    probe.on("error", () => resolve(false));
-  });
 }
 
 // Debug-only: dump every raw stdin chunk (as JSON-escaped text) to
@@ -151,7 +134,7 @@ const cfg = loadConfig();
   if (cfg.sandbox === false) {
     bus.publish({ type: "sandbox.detected", available: false, enabled: false });
   } else {
-    const probe = checkDockerAvailable(cfg.shellImage ?? BRAND.sandboxImage);
+    const probe = checkSandboxImage(cfg.shellImage ?? BRAND.sandboxImage);
     probe.then((available) => bus.publish({ type: "sandbox.detected", available, enabled: true }));
     sandboxProbe = probe;
   }
@@ -218,6 +201,8 @@ const cfg = loadConfig();
     modelCapabilities: (models: string[]) => agent.modelCapabilities(models),
     runPlan: (goal: string) => agent.runPlan(goal),
     hasResumablePlan: () => agent.hasResumablePlan(),
+    getCapabilities: () => agent.getCapabilities(),
+    buildSandboxImage: () => agent.buildSandboxImage(),
     resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
     resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
     resolveMcpElicitation: (resp: McpElicitationResponse) => agent.resolveMcpElicitation(resp),

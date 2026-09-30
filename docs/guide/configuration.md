@@ -18,16 +18,17 @@ The interactive UI asks the first time it meets an untrusted workspace; other co
 
 ## Environment Variables
 
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `NEXUM_MODEL` | Default Ollama model | `qwen2.5-coder:14b` |
-| `NEXUM_HOST` | Ollama host endpoint | `http://localhost:11434` |
-| `NEXUM_TIER` | Execution tier (`local` or `cloud`) | `local` |
-| `OLLAMA_API_KEY` | Ollama Cloud API Key | `undefined` |
-| `OLLAMA_API_KEYS` | Comma-separated API Key rotation pool | `undefined` |
-| `NEXUM_SHELL_IMAGE` | Sandbox Docker image | `nexum-sandbox:latest` |
-| `NEXUM_TIMEOUT_MS` | LLM turn timeout in milliseconds | `120000` |
-| `NEXUM_TOOL_SELECTION_MODE` | Dynamic tool pruning mode (`heuristic`, `hybrid`, `all`) | `hybrid` |
+| Variable                    | Description                                                                 | Default                  |
+| :-------------------------- | :-------------------------------------------------------------------------- | :----------------------- |
+| `NEXUM_MODEL`               | Default Ollama model                                                        | `qwen2.5-coder:14b`      |
+| `NEXUM_HOST`                | Ollama host endpoint                                                        | `http://localhost:11434` |
+| `NEXUM_TIER`                | Execution tier (`local` or `cloud`)                                         | `local`                  |
+| `OLLAMA_API_KEY`            | Ollama Cloud API Key                                                        | `undefined`              |
+| `OLLAMA_API_KEYS`           | Comma-separated API Key rotation pool                                       | `undefined`              |
+| `NEXUM_SHELL_IMAGE`         | Sandbox Docker image                                                        | `nexum-sandbox:latest`   |
+| `NEXUM_TIMEOUT_MS`          | LLM turn timeout in milliseconds                                            | `120000`                 |
+| `NEXUM_TOOL_SELECTION_MODE` | Dynamic tool pruning mode (`heuristic`, `hybrid`, `all`)                    | `hybrid`                 |
+| `NEXUM_AUTO_PLAN`           | Route multi-step requests to the plan orchestrator (`ask`, `always`, `off`) | `ask`                    |
 
 ---
 

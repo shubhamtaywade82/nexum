@@ -83,6 +83,9 @@ export interface CliConfig {
    * commands) without prompting. Off by default; only for CI/benchmark runs
    * and throwaway containers. Enable with NEXUM_AUTO_APPROVE=true. */
   autoApprove?: boolean;
+  /** How a top-level multi-step request is handled: "ask" (default) offers to run it as a checkpointed
+   * plan and waits for approval, "always" plans without asking, "off" never routes. NEXUM_AUTO_PLAN. */
+  autoPlan?: "ask" | "always" | "off";
   /** Color theme for the TUI: one of the built-in THEME_ORDER names.
    * Set in .nexum/config.json ("theme") or NEXUM_THEME; defaults to "default". */
   theme?: ThemeName;
@@ -142,6 +145,7 @@ interface ConfigFile {
   enableAvailabilityCheck?: boolean;
   enableHeuristicGate?: boolean;
   autoApprove?: boolean;
+  autoPlan?: string;
   /** Ollama itself has no published per-token price (subscription/GPU-time
    * billing) — this only computes a cost estimate if you supply your own
    * real rate. Omit to leave cost tracking off (the honest default). */
@@ -303,6 +307,14 @@ export interface LoadConfigOptions {
   trustStore?: WorkspaceTrustStore;
 }
 
+/** "ask" | "always" | "off"; the older NEXUM_PLAN_HINT=0 still means "off". Unknown values fall back to "ask". */
+export function parseAutoPlan(value: string | undefined, legacyHint?: string): "ask" | "always" | "off" {
+  const v = value?.trim().toLowerCase();
+  if (v === "ask" || v === "always" || v === "off") return v;
+  if (legacyHint === "0") return "off";
+  return "ask";
+}
+
 export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
   const workspaceRoot = findWorkspaceRoot(process.cwd());
   const trust = workspaceTrustState(workspaceRoot, opts.trustStore ?? WorkspaceTrustStore.global());
@@ -424,6 +436,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     enableAvailabilityCheck: readEnvFlag("AVAIL_CHECK", file.enableAvailabilityCheck ?? true),
     enableHeuristicGate: readEnvFlag("HEURISTIC_GATE", file.enableHeuristicGate ?? true),
     autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? false),
+    autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
     mcpServers: file.mcpServers,
     workspaceTrust: {

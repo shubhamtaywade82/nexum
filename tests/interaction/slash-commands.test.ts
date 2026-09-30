@@ -117,3 +117,13 @@ describe("SlashCommandRegistry", () => {
     expect(registry.complete("ev").map((c) => c.name)).toContain("evolve");
   });
 });
+
+describe("/capabilities", () => {
+  it("shows by default, fixes on request, and rejects unknown actions", () => {
+    const cmd = builtinCommands().find("capabilities");
+    expect(cmd?.execute("")).toEqual({ kind: "capabilities", action: "show" });
+    expect(cmd?.execute("fix")).toEqual({ kind: "capabilities", action: "fix" });
+    expect(cmd?.execute("bogus")).toEqual({ kind: "error", text: "Usage: /capabilities [fix]" });
+    expect(builtinCommands().find("caps")?.name).toBe("capabilities");
+  });
+});

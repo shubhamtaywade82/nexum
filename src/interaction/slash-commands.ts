@@ -32,6 +32,7 @@ export type CommandEffect =
   | { kind: "learn"; rule: string }
   | { kind: "replay-session"; id?: string }
   | { kind: "doctor" }
+  | { kind: "capabilities"; action: "show" | "fix" }
   | { kind: "evolve"; action: "diagnose" | "history" | "rollback" | "benchmark"; target?: string }
   | { kind: "error"; text: string };
 
@@ -375,6 +376,20 @@ export function builtinCommands(): SlashCommandRegistry {
     description: "Run system diagnostics (Ollama, models, LSP servers, workspace)",
     category: "General",
     execute: () => ({ kind: "doctor" }),
+  });
+  registry.register({
+    name: "capabilities",
+    aliases: ["caps", "features"],
+    description:
+      "Show which features are active, on-demand, degraded or off: /capabilities [fix] (fix builds the sandbox image)",
+    category: "General",
+    execute: (args) => {
+      const action = args.trim().toLowerCase();
+      if (action === "fix") return { kind: "capabilities", action: "fix" };
+      if (action === "" || action === "show") return { kind: "capabilities", action: "show" };
+      return { kind: "error", text: "Usage: /capabilities [fix]" };
+    },
+    argValues: ["show", "fix"],
   });
   registry.register({
     name: "evolve",

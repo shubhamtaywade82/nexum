@@ -5,6 +5,7 @@ import { EventBus } from "../../runtime/events/bus.js";
 import { Store } from "../../runtime/store.js";
 import { CommandEffect } from "../../interaction/slash-commands.js";
 import { runDoctor } from "../../cli/doctor.js";
+import { formatCapability } from "../../cli/capabilities.js";
 import { WorkspaceManager } from "../../platform/workspace.js";
 import { workspaceStateDir } from "../../platform/paths.js";
 import { saveWorkspaceConfig } from "../../cli/config.js";
@@ -246,6 +247,46 @@ export function useCommandEffects(
                 text: `Doctor failed: ${err instanceof Error ? err.message : String(err)}`,
               });
             });
+          break;
+        }
+        case "capabilities": {
+          if (effect.action === "fix") {
+            bus.publish({ type: "notification", kind: "info", text: "Checking the sandbox image…" });
+            agent
+              ?.buildSandboxImage?.()
+              .then((r) => bus.publish({ type: "notification", kind: r.ok ? "success" : "error", text: r.message }))
+              .catch((err: unknown) =>
+                bus.publish({
+                  type: "notification",
+                  kind: "error",
+                  text: `Sandbox build failed: ${err instanceof Error ? err.message : String(err)}`,
+                }),
+              );
+            break;
+          }
+          agent
+            ?.getCapabilities?.()
+            .then((caps) => {
+              const mark = { active: "●", available: "◐", degraded: "▲", off: "○" } as const;
+              const rows = caps.map((c) => `• ${mark[c.state]} ${formatCapability(c)}`);
+              bus.publish({
+                type: "conversation.message",
+                role: "assistant",
+                text:
+                  "**Capabilities** (● active ◐ on demand ▲ degraded ○ off)\n\n" +
+                  rows.join("\n") +
+                  (caps.some((c) => c.id === "sandbox" && c.state === "degraded")
+                    ? "\n\nRun `/capabilities fix` to build the sandbox image."
+                    : ""),
+              });
+            })
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Capability check failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
           break;
         }
         case "evolve":
