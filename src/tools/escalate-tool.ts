@@ -29,7 +29,10 @@ export class EscalateTaskTool extends Tool {
     return {
       type: "object",
       properties: { reason: { type: "string", description: "Why this task needs a stronger model" } },
-      required: ["reason"],
+      // Not required: this is the escape hatch for a model too confused to fill in
+      // a schema correctly — call() already defaults a missing reason to
+      // "unspecified". Requiring it here would let strict validation reject the
+      // one call meant to catch exactly that failure mode before it ever runs.
     };
   }
 
