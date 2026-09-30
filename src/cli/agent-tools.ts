@@ -27,6 +27,7 @@ import {
   docsPack,
   filesystemPack,
   gitPack,
+  githubPack,
   lspPack,
   memoryPack,
   projectPack,
@@ -128,6 +129,7 @@ export class AgentToolManager {
     this.registerToolPack(shellPack(root, onOutput, { ...shellOpts, writeScope }));
     this.registerToolPack(searchPack(guard));
     this.registerToolPack(gitPack(root));
+    this.registerToolPack(githubPack(root));
     // Project scripts and bundle are code the agent can edit: run them in the same sandbox as run_shell.
     const runner = new ShellTool({ workspaceRoot: root, ...shellOpts, writeScope });
     this.registerToolPack(projectPack(root, runner));

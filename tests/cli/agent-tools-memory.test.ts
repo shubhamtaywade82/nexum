@@ -34,6 +34,14 @@ describe("AgentToolManager intelligence wiring", () => {
     expect(existsSync(join(dir, ".nexum", "memory.db"))).toBe(true);
   });
 
+  it("registerBaseTools mounts the git and github packs (github was previously never registered)", () => {
+    const manager = new AgentToolManager();
+    manager.registerBaseTools(dir);
+    expect(manager.mountedPacks.has("git")).toBe(true);
+    expect(manager.mountedPacks.has("github")).toBe(true);
+    expect(manager.kernelCatalog.get("github")).toBeDefined();
+  });
+
   it("reuses the same semantic memory instance on repeat calls", () => {
     const manager = new AgentToolManager();
     manager.registerIntelligenceTools(dir);
