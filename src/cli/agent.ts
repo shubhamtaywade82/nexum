@@ -1,6 +1,7 @@
 import { CliConfig, loadConfig, type McpCliServerConfig } from "./config.js";
 import { WorkspaceManager } from "../platform/workspace.js";
 import { BRAND } from "../platform/brand.js";
+import { readEnv } from "../platform/environment.js";
 import { collectCapabilities, type FeatureStatus } from "./capabilities.js";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
@@ -11,6 +12,7 @@ import { ExecutionManager } from "./services/execution-manager.js";
 import { CheckpointStore } from "../runtime/checkpoint.js";
 import { SessionStore, SessionMeta } from "../runtime/session.js";
 import { LoopDetector } from "../orchestration/loop-detector.js";
+import { assessComplexity } from "../orchestration/complexity.js";
 import { PlanStep, Planner } from "../orchestration/types.js";
 import { generatePlan, replanSteps } from "../ui/plan-generator.js";
 import { SkillMeta } from "../skills/types.js";
@@ -176,6 +178,8 @@ export class Agent {
 
   readonly workspaceRoot: string;
   private readonly mcpServerConfigs: McpCliServerConfig[];
+  /** >0 while a plan is executing, so its steps (which re-enter runUserMessage) never trigger the /plan hint. */
+  private planDepth = 0;
   private readonly capabilityConfig: {
     sandbox: boolean;
     image: string;
@@ -475,6 +479,18 @@ export class Agent {
     this.listeners.get(event)?.forEach((h) => h(...args));
   }
 
+  /** Suggest /plan (never start it) for a top-level request that looks like several dependent steps.
+   * Silenced inside a running plan and with NEXUM_PLAN_HINT=0. */
+  private suggestPlanIfMultiStep(userMessage: string): void {
+    if (this.planDepth > 0 || readEnv("PLAN_HINT") === "0") return;
+    const assessment = assessComplexity(userMessage);
+    if (!assessment.multiStep) return;
+    this.emit(
+      "onStatus",
+      `this looks multi-step (${assessment.signals.join(", ")}): /plan <goal> runs it as a checkpointed plan with parallel steps and resume`,
+    );
+  }
+
   async runUserMessage(userMessage: string, _priority?: PlanStep["priority"]): Promise<string> {
     const clarificationReq = this.intentResolver.checkAmbiguity(userMessage, this.projectInfo);
     if (
@@ -485,6 +501,8 @@ export class Agent {
       userMessage = this.intentResolver.refinePrompt(userMessage, resp, clarificationReq.options);
       this.emit("onStatus", `refined intent: "${userMessage}"`);
     }
+
+    this.suggestPlanIfMultiStep(userMessage);
 
     const learnings = this.learning.getLearnings();
     const activatedSkills = this.learning.resolveForPrompt(userMessage);
@@ -917,7 +935,12 @@ export class Agent {
     // Delegated to the ExecutionManager service (review item 1): the plan's
     // concurrency gate comes from the runtime's GateRegistry, the run-scope
     // abort signal cancels cooperatively, and the checkpoint is kept for resume.
-    return this.execution.runPlannedTask(steps, planner);
+    this.planDepth++;
+    try {
+      return await this.execution.runPlannedTask(steps, planner);
+    } finally {
+      this.planDepth--;
+    }
   }
 
   /**
@@ -926,7 +949,12 @@ export class Agent {
    * reset to "pending" — the process died mid-step, so its outcome is unknown.
    */
   async resumePlannedTask(planner: Planner): Promise<PlanStep[] | null> {
-    return this.execution.resumePlannedTask(planner);
+    this.planDepth++;
+    try {
+      return await this.execution.resumePlannedTask(planner);
+    } finally {
+      this.planDepth--;
+    }
   }
 
   hasResumablePlan(): boolean {
