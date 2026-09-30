@@ -1,5 +1,7 @@
 import { CliConfig, loadConfig, type McpCliServerConfig } from "./config.js";
 import { WorkspaceManager } from "../platform/workspace.js";
+import { BRAND } from "../platform/brand.js";
+import { collectCapabilities, type FeatureStatus } from "./capabilities.js";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
 import { ModelStack } from "./services/model-stack.js";
@@ -174,6 +176,12 @@ export class Agent {
 
   readonly workspaceRoot: string;
   private readonly mcpServerConfigs: McpCliServerConfig[];
+  private readonly capabilityConfig: {
+    sandbox: boolean;
+    image: string;
+    localWorker: boolean;
+    dockerTool: boolean;
+  };
   /** P2 trust tier: built from config when any server sets trust/tools/maxRisk. */
   private readonly mcpTrust?: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
@@ -198,6 +206,12 @@ export class Agent {
     const cfg = { ...loadConfig(), ...(opts.config ?? {}) };
     this.workspaceRoot = cfg.workspaceRoot;
     this.mcpServerConfigs = cfg.mcpServers ?? [];
+    this.capabilityConfig = {
+      sandbox: cfg.sandbox !== false,
+      image: cfg.shellImage ?? BRAND.sandboxImage,
+      localWorker: !!cfg.enableLocalWorker,
+      dockerTool: !!cfg.dockerTool,
+    };
     this.autoApproveFlag = cfg.autoApprove ?? false;
 
     this.events = opts.events ?? {};
@@ -1148,6 +1162,25 @@ export class Agent {
     await this.tools.registerMcpServer(command, args, {
       ...opts,
       elicitation: opts.elicitation ?? { request: (request) => this.requestMcpElicitation(request) },
+    });
+  }
+
+  /** Offline snapshot of which features are usable, degraded or off, limited to what this workspace needs.
+   * `sandboxImageReady` comes from the caller's Docker probe (undefined = not probed yet). */
+  async getCapabilities(sandboxImageReady?: boolean): Promise<FeatureStatus[]> {
+    return collectCapabilities({
+      workspaceRoot: this.workspaceRoot,
+      sandbox: {
+        enabled: this.capabilityConfig.sandbox,
+        image: this.capabilityConfig.image,
+        imageReady: sandboxImageReady,
+      },
+      railsIndexEnabled: this.railsIndex.enabled,
+      lspProviders: this.lspManager.registry.allProviders(),
+      docsCached: this.docs.listSources().map((s) => s.slug),
+      mcpServersConfigured: this.mcpServerConfigs.length,
+      localWorkerEnabled: this.capabilityConfig.localWorker,
+      dockerToolEnabled: this.capabilityConfig.dockerTool,
     });
   }
 

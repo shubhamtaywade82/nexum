@@ -5,6 +5,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import React from "react";
 import { render } from "ink";
 import { Agent } from "../cli/agent.js";
+import { formatCapability, startupWarnings } from "../cli/capabilities.js";
 import { loadConfig } from "../cli/config.js";
 import { EventBus } from "../runtime/events/bus.js";
 import { initialRuntimeState, Store } from "../runtime/store.js";
@@ -146,15 +147,27 @@ const cfg = loadConfig();
   store.attach(bus);
   const detectedProject = detectProjectInfo(cfg.workspaceRoot);
   bus.publish({ type: "project.detected", info: detectedProject });
+  let sandboxProbe: Promise<boolean | undefined> = Promise.resolve(undefined);
   if (cfg.sandbox === false) {
     bus.publish({ type: "sandbox.detected", available: false, enabled: false });
   } else {
-    checkDockerAvailable(cfg.shellImage ?? BRAND.sandboxImage).then((available) =>
-      bus.publish({ type: "sandbox.detected", available, enabled: true }),
-    );
+    const probe = checkDockerAvailable(cfg.shellImage ?? BRAND.sandboxImage);
+    probe.then((available) => bus.publish({ type: "sandbox.detected", available, enabled: true }));
+    sandboxProbe = probe;
   }
 
   const agent = new Agent({ config: cfg });
+  // One startup line per registered-but-broken feature, with the fix. Silent
+  // degradation (missing sandbox image, LSP binary, gh CLI) otherwise looks
+  // like the agent simply not using a tool.
+  sandboxProbe
+    .then((ready) => agent.getCapabilities(ready))
+    .then((caps) => {
+      for (const c of startupWarnings(caps)) {
+        bus.publish({ type: "logs.appended", level: "warn", source: "capabilities", message: formatCapability(c) });
+      }
+    })
+    .catch(() => {});
   // Start the plugin host + all P0-P2 services before the first user
   // message so plugins can contribute tools, models, and context.
   // Failure here is non-fatal: the agent still works with whatever
