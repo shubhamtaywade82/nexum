@@ -29,7 +29,7 @@
 
 import { DecisionError } from "./errors.js";
 import type { DecisionGateway } from "./decision-gateway.js";
-import type { DecisionPolicy } from "./decision-policy.js";
+import { applyDecisionPolicy, type DecisionPolicy } from "./decision-policy.js";
 import type { DecisionRequest, DecisionResult } from "./types.js";
 
 /** A single decision event captured for telemetry/replay. */
@@ -166,25 +166,12 @@ export class RecordingDecisionGateway implements DecisionGateway {
 
   /** Applies the policy to the result to derive the selected domains/tiers. */
   private deriveSelected(result: DecisionResult): string[] {
-    // Local import to avoid a top-level cycle: applyDecisionPolicy is
-    // already exported from the decision index, but the wrapper is a
-    // telemetry component so it takes a pre-applied selected list when
-    // the caller supplies it (Wave 7 wiring). For now we derive it here
-    // from the policy using the same logic.
-    const eligible: Array<{ id: string; prob: number }> = [];
-    for (const decision of result.decisions) {
-      if (decision.probabilities && Object.keys(decision.probabilities).length > 0) {
-        for (const [id, prob] of Object.entries(decision.probabilities)) {
-          if (typeof prob === "number" && Number.isFinite(prob) && prob >= this.policy.minimumProbability) {
-            eligible.push({ id, prob });
-          }
-        }
-      } else if (decision.selected) {
-        eligible.push({ id: decision.selected, prob: 1 });
-      }
-    }
-    eligible.sort((a, b) => b.prob - a.prob);
-    return eligible.slice(0, Math.max(0, this.policy.maxDomains)).map((e) => e.id);
+    // Reuse the canonical policy implementation rather than duplicating
+    // the threshold + sort + truncate logic here. The policy module has no
+    // import cycle with this telemetry module (it imports only from
+    // ./types.js), so calling it directly is safe and keeps a single
+    // source of truth for what "policy applied" means across the runtime.
+    return applyDecisionPolicy(result, this.policy);
   }
 
   /** Telemetry must never break the runtime — swallow recorder errors. */

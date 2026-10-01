@@ -29,6 +29,8 @@ The interactive UI asks the first time it meets an untrusted workspace; other co
 | `NEXUM_TIMEOUT_MS`          | LLM turn timeout in milliseconds                                            | `120000`                 |
 | `NEXUM_TOOL_SELECTION_MODE` | Dynamic tool pruning mode (`heuristic`, `hybrid`, `all`)                    | `hybrid`                 |
 | `NEXUM_AUTO_PLAN`           | Route multi-step requests to the plan orchestrator (`ask`, `always`, `off`) | `ask`                    |
+| `NEXUM_DECISION`            | Enable the bounded Decision Plane (System One). `true` / `false`. Auto-disabled in a cloud tier. | `false` |
+| `NEXUM_DECISION_MODEL`      | Dedicated decision model (independent of the primary generation model).    | `mpuig/system-one-minicpm5-2b-q8` |
 
 ---
 
@@ -42,6 +44,8 @@ Created automatically in your project root via `/init`:
   "tier": "local",
   "host": "http://localhost:11434",
   "skills": ["refactoring", "clean-code"],
+  "enableDecision": false,
+  "decisionModel": "mpuig/system-one-minicpm5-2b-q8",
   "mcpServers": [
     {
       "name": "sqlite",
@@ -51,6 +55,8 @@ Created automatically in your project root via `/init`:
   ]
 }
 ```
+
+The Decision Plane is **off by default**; setting `enableDecision: true` enables the bounded System One subsystem (local-only — auto-disabled in a cloud tier). The `decisionModel` is independent of the primary generation `model`. See `docs/guide/decision-plane.md` for the full guide.
 
 ---
 
