@@ -1,4 +1,8 @@
-import { applyDecisionPolicy, defaultDecisionPolicy, DecisionPolicy } from "../../../src/models/decision/decision-policy.js";
+import {
+  applyDecisionPolicy,
+  defaultDecisionPolicy,
+  DecisionPolicy,
+} from "../../../src/models/decision/decision-policy.js";
 import type { DecisionResult } from "../../../src/models/decision/types.js";
 
 function choiceResult(probabilities: Record<string, number>, model = "m"): DecisionResult {
@@ -51,9 +55,7 @@ describe("applyDecisionPolicy", () => {
       id: "d1",
       model: "m",
       mode: "choice",
-      decisions: [
-        { questionId: "domain", selected: "filesystem", probabilities: { filesystem: 0.2 } },
-      ],
+      decisions: [{ questionId: "domain", selected: "filesystem", probabilities: { filesystem: 0.2 } }],
       latencyMs: 1,
     };
     // Both `selected` and probabilities present: probability wins as evidence,

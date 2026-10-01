@@ -142,7 +142,8 @@ function isStringNonEmpty(s: unknown): s is string {
 export function validateDecisionQuestion(q: DecisionQuestion): void {
   if (!q || typeof q !== "object") throw new DecisionProtocolError("question must be an object");
   if (!isStringNonEmpty(q.id)) throw new DecisionProtocolError("question id must be a non-empty string");
-  if (!isStringNonEmpty(q.prompt)) throw new DecisionProtocolError(`question "${q.id}" prompt must be a non-empty string`);
+  if (!isStringNonEmpty(q.prompt))
+    throw new DecisionProtocolError(`question "${q.id}" prompt must be a non-empty string`);
   if (q.choices !== undefined) {
     if (!Array.isArray(q.choices)) {
       throw new DecisionProtocolError(`question "${q.id}" choices must be an array if present`);
@@ -172,7 +173,8 @@ export function validateDecisionQuestion(q: DecisionQuestion): void {
  */
 export function validateDecisionRequest(req: DecisionRequest): void {
   if (!req || typeof req !== "object") throw new DecisionProtocolError("decision request must be an object");
-  if (!isStringNonEmpty(req.model)) throw new DecisionProtocolError("decision request model must be a non-empty string");
+  if (!isStringNonEmpty(req.model))
+    throw new DecisionProtocolError("decision request model must be a non-empty string");
   if (req.mode !== "choice" && req.mode !== "score" && req.mode !== "noul") {
     throw new DecisionProtocolError(`decision request mode "${String(req.mode)}" is not one of choice|score|noul`);
   }
@@ -189,9 +191,7 @@ export function validateDecisionRequest(req: DecisionRequest): void {
   // precise message is the only way they'll know which knob to turn.
   const contextBytes = Buffer.byteLength(req.context, "utf8");
   if (contextBytes > SYSTEM_ONE_MAX_REQUEST_BYTES) {
-    throw new DecisionProtocolError(
-      `decision context is ${contextBytes} bytes, exceeds the System One 64 KiB limit`,
-    );
+    throw new DecisionProtocolError(`decision context is ${contextBytes} bytes, exceeds the System One 64 KiB limit`);
   }
 
   // Then the conservative full-request bound: the gateway may compact/travel

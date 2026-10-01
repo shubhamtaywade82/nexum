@@ -27,10 +27,7 @@ export {
 
 export type { DecisionGateway } from "./decision-gateway.js";
 
-export {
-  defaultDecisionPolicy,
-  applyDecisionPolicy,
-} from "./decision-policy.js";
+export { defaultDecisionPolicy, applyDecisionPolicy } from "./decision-policy.js";
 export type { DecisionPolicy } from "./decision-policy.js";
 
 export {
@@ -44,6 +41,5 @@ export {
 export { FakeDecisionGateway } from "./fake-gateway.js";
 export type { FakeDecisionAnswer, FakeDecisionGatewayOptions } from "./fake-gateway.js";
 
-// The System One adapter (SystemOneDecisionGateway) is added in Wave 2 once
-// the SDK adapter seam (SystemOneClient) and its test surface are landed.
-// Re-exported from this module at that time.
+export { SystemOneDecisionGateway, SYSTEM_ONE_ENGINE } from "./system-one-gateway.js";
+export type { SystemOneClient, SystemOneEnvironment, SystemOneGatewayOptions } from "./system-one-gateway.js";

@@ -20,11 +20,7 @@ import { AgentRuntimeError } from "../errors.js";
  * specific recovery strategy match on a subclass.
  */
 export class DecisionError extends AgentRuntimeError {
-  constructor(
-    message: string,
-    code: string = "DECISION_ERROR",
-    cause?: unknown,
-  ) {
+  constructor(message: string, code: string = "DECISION_ERROR", cause?: unknown) {
     super(message, code, cause);
   }
 }
