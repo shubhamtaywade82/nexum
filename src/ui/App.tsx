@@ -71,6 +71,8 @@ export interface ShellAgent {
   getTools?(): ToolInfo[];
   runPlan?(goal: string): Promise<unknown>;
   hasResumablePlan?(): boolean;
+  getCapabilities?(): Promise<Array<import("../cli/capabilities.js").FeatureStatus>>;
+  buildSandboxImage?(): Promise<{ ok: boolean; message: string }>;
   resolveApproval?(id: string, approved: boolean): void;
   resolveClarification?(response: ClarificationResponse): void;
   resolveMcpElicitation?(response: McpElicitationResponse): void;

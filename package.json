@@ -188,6 +188,7 @@
   "files": [
     "dist/",
     "bin/",
+    "docker/nexum-sandbox/",
     "README.md",
     "LICENSE"
   ],

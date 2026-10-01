@@ -6,6 +6,8 @@ import type { LspServerState } from "../lsp/protocol.js";
 import { activeLegacyEnvVariables } from "../platform/environment.js";
 import { WorkspaceManager } from "../platform/workspace.js";
 import { BRAND } from "../platform/brand.js";
+import { discoverWorkspace } from "../domains/rails/index.js";
+import { collectCapabilities, formatCapability } from "./capabilities.js";
 
 export type DoctorReport = {
   ok: boolean;
@@ -59,6 +61,31 @@ function checkLsp(lines: string[], root: string): void {
   }
 }
 
+async function checkCapabilities(lines: string[], config: ReturnType<typeof loadConfig>): Promise<void> {
+  try {
+    const lsp = new LspManager({ workspaceRoot: config.workspaceRoot });
+    const caps = await collectCapabilities({
+      workspaceRoot: config.workspaceRoot,
+      sandbox: {
+        enabled: config.sandbox !== false,
+        image: config.shellImage ?? BRAND.sandboxImage,
+        imageReady: undefined,
+      },
+      railsIndexEnabled: discoverWorkspace(config.workspaceRoot).isRails,
+      lspProviders: lsp.registry.allProviders(),
+      docsCached: [],
+      mcpServersConfigured: (config.mcpServers ?? []).length,
+      localWorkerEnabled: !!config.enableLocalWorker,
+      dockerToolEnabled: !!config.dockerTool,
+    });
+    lines.push("capabilities (relevant to this workspace):");
+    // Sandbox and docs state come from the daemon / store, which doctor reports separately above.
+    for (const c of caps.filter((c) => c.id !== "sandbox" && c.id !== "docs")) lines.push(`  - ${formatCapability(c)}`);
+  } catch (err) {
+    lines.push(`capabilities: check failed (${err instanceof Error ? err.message : String(err)})`);
+  }
+}
+
 export async function runDoctor(): Promise<DoctorReport> {
   const lines: string[] = [];
   const config = loadConfig();
@@ -83,6 +110,7 @@ export async function runDoctor(): Promise<DoctorReport> {
   checkDocker(lines, config.shellImage ?? BRAND.sandboxImage);
   checkGitHub(lines);
   checkLsp(lines, config.workspaceRoot);
+  await checkCapabilities(lines, config);
 
   return { ok: true, lines };
 }

@@ -117,7 +117,7 @@ describe("SearchDocsTool", () => {
     store.close();
   });
 
-  it("lazy-auto-fetches missing workspace-scoped sources alongside already-ingested ones", async () => {
+  it("fetches only the workspace source the query names, not every missing one", async () => {
     const dir = await mkdtemp(join(tmpdir(), "docs-tool-"));
     await writeFile(
       join(dir, "package.json"),
@@ -126,16 +126,32 @@ describe("SearchDocsTool", () => {
     const store = await seededStore(dir); // react is seeded; javascript/html/css are not
     const tool = new SearchDocsTool(store, dir);
 
-    // "css" is the one word distinguishing this section's mock body from the
-    // near-identical "stub content for X" boilerplate the other lazily-
-    // fetched sources share — a shared-boilerplate word would now (correctly)
-    // OR-match all of them instead of picking out just this one.
     const result = await tool.call({ query: "css" });
 
     expect(result.scope).toBe("workspace");
-    expect(result.sources).toEqual(expect.arrayContaining(["react", "javascript", "html", "css"]));
+    expect(result.fetched).toEqual(["css"]);
+    expect(result.sources).toEqual(["react", "css", "node"]);
     expect(result.results).toEqual([expect.objectContaining({ source: "css" })]);
     expect(store.hasSource("css")).toBe(true);
+    expect(store.hasSource("javascript")).toBe(false);
+    expect(store.hasSource("html")).toBe(false);
+
+    store.close();
+  });
+
+  it("does no network work when cached workspace sources already answer the query", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "docs-tool-"));
+    await writeFile(join(dir, "package.json"), JSON.stringify({ dependencies: { react: "^18.0.0" } }));
+    const store = await seededStore(dir);
+    const fetchMock = mockDevDocsFetch();
+    (globalThis as any).fetch = fetchMock;
+    const tool = new SearchDocsTool(store, dir);
+
+    const result = await tool.call({ query: "side effect" });
+
+    expect(result.results).toEqual([expect.objectContaining({ source: "react" })]);
+    expect(result.fetched).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
 
     store.close();
   });

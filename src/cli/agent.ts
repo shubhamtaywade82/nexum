@@ -1,5 +1,9 @@
 import { CliConfig, loadConfig, type McpCliServerConfig } from "./config.js";
 import { WorkspaceManager } from "../platform/workspace.js";
+import { BRAND } from "../platform/brand.js";
+import { collectCapabilities, type FeatureStatus } from "./capabilities.js";
+import { buildSandboxImage, checkSandboxImage } from "./sandbox-image.js";
+import { summarizePlan } from "../orchestration/plan-summary.js";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
 import { ModelStack } from "./services/model-stack.js";
@@ -9,6 +13,7 @@ import { ExecutionManager } from "./services/execution-manager.js";
 import { CheckpointStore } from "../runtime/checkpoint.js";
 import { SessionStore, SessionMeta } from "../runtime/session.js";
 import { LoopDetector } from "../orchestration/loop-detector.js";
+import { assessComplexity } from "../orchestration/complexity.js";
 import { PlanStep, Planner } from "../orchestration/types.js";
 import { generatePlan, replanSteps } from "../ui/plan-generator.js";
 import { SkillMeta } from "../skills/types.js";
@@ -174,6 +179,17 @@ export class Agent {
 
   readonly workspaceRoot: string;
   private readonly mcpServerConfigs: McpCliServerConfig[];
+  /** >0 while a plan is executing, so its steps (which re-enter runUserMessage) never trigger the /plan hint. */
+  private planDepth = 0;
+  /** Times the user declined the "run as a plan?" offer this session; after two the offer stops. */
+  private planDeclines = 0;
+  private readonly capabilityConfig: {
+    sandbox: boolean;
+    image: string;
+    localWorker: boolean;
+    dockerTool: boolean;
+    autoPlan: "ask" | "always" | "off";
+  };
   /** P2 trust tier: built from config when any server sets trust/tools/maxRisk. */
   private readonly mcpTrust?: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
@@ -198,6 +214,13 @@ export class Agent {
     const cfg = { ...loadConfig(), ...(opts.config ?? {}) };
     this.workspaceRoot = cfg.workspaceRoot;
     this.mcpServerConfigs = cfg.mcpServers ?? [];
+    this.capabilityConfig = {
+      sandbox: cfg.sandbox !== false,
+      image: cfg.shellImage ?? BRAND.sandboxImage,
+      localWorker: !!cfg.enableLocalWorker,
+      dockerTool: !!cfg.dockerTool,
+      autoPlan: cfg.autoPlan ?? "ask",
+    };
     this.autoApproveFlag = cfg.autoApprove ?? false;
 
     this.events = opts.events ?? {};
@@ -461,6 +484,57 @@ export class Agent {
     this.listeners.get(event)?.forEach((h) => h(...args));
   }
 
+  /**
+   * Route a top-level request that looks like several dependent steps to the orchestrator
+   * (checkpointed, dependency-ordered, parallel, resumable) instead of one long chat turn.
+   * autoPlan "ask" (default) needs approval, "always" does not, "off" never routes. Never applies
+   * inside a running plan. Returns the plan summary, or null to continue as a normal turn.
+   */
+  private async routeMultiStep(userMessage: string): Promise<string | null> {
+    if (this.planDepth > 0 || this.capabilityConfig.autoPlan === "off") return null;
+    const assessment = assessComplexity(userMessage);
+    if (!assessment.multiStep) return null;
+
+    const why = assessment.signals.join(", ");
+    if (this.capabilityConfig.autoPlan === "ask") {
+      const declinedTwice = this.planDeclines >= 2;
+      const approved =
+        !declinedTwice &&
+        (await this.requestApproval(
+          "Run as a plan?",
+          `This looks multi-step (${why}). Plan mode checkpoints each step, runs independent steps in parallel and can resume after a crash.`,
+        ));
+      if (!approved) {
+        if (!declinedTwice) this.planDeclines++;
+        this.emit("onStatus", `this looks multi-step (${why}): /plan <goal> runs it as a checkpointed plan`);
+        return null;
+      }
+    }
+
+    this.emit("onStatus", `running as a plan (${why})`);
+    let steps: PlanStep[];
+    try {
+      steps = await this.runPlan(userMessage);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!this.hasResumablePlan()) {
+        // Plan generation failed before any step ran: nothing to undo, answer as a normal turn.
+        this.emit("onStatus", `plan could not be generated (${message}); continuing as a normal turn`);
+        return null;
+      }
+      const failure = `Plan failed: ${message}. Run /plan to resume the checkpointed plan.`;
+      this.conversation.pushUserMessage(userMessage);
+      this.conversation.pushAssistantMessage(failure);
+      this.sessions.save(this.conversation.getMessages());
+      return failure;
+    }
+    const summary = summarizePlan(steps);
+    this.conversation.pushUserMessage(userMessage);
+    this.conversation.pushAssistantMessage(summary);
+    this.sessions.save(this.conversation.getMessages());
+    return summary;
+  }
+
   async runUserMessage(userMessage: string, _priority?: PlanStep["priority"]): Promise<string> {
     const clarificationReq = this.intentResolver.checkAmbiguity(userMessage, this.projectInfo);
     if (
@@ -471,6 +545,9 @@ export class Agent {
       userMessage = this.intentResolver.refinePrompt(userMessage, resp, clarificationReq.options);
       this.emit("onStatus", `refined intent: "${userMessage}"`);
     }
+
+    const planned = await this.routeMultiStep(userMessage);
+    if (planned !== null) return planned;
 
     const learnings = this.learning.getLearnings();
     const activatedSkills = this.learning.resolveForPrompt(userMessage);
@@ -903,7 +980,12 @@ export class Agent {
     // Delegated to the ExecutionManager service (review item 1): the plan's
     // concurrency gate comes from the runtime's GateRegistry, the run-scope
     // abort signal cancels cooperatively, and the checkpoint is kept for resume.
-    return this.execution.runPlannedTask(steps, planner);
+    this.planDepth++;
+    try {
+      return await this.execution.runPlannedTask(steps, planner);
+    } finally {
+      this.planDepth--;
+    }
   }
 
   /**
@@ -912,7 +994,12 @@ export class Agent {
    * reset to "pending" — the process died mid-step, so its outcome is unknown.
    */
   async resumePlannedTask(planner: Planner): Promise<PlanStep[] | null> {
-    return this.execution.resumePlannedTask(planner);
+    this.planDepth++;
+    try {
+      return await this.execution.resumePlannedTask(planner);
+    } finally {
+      this.planDepth--;
+    }
   }
 
   hasResumablePlan(): boolean {
@@ -1149,6 +1236,42 @@ export class Agent {
       ...opts,
       elicitation: opts.elicitation ?? { request: (request) => this.requestMcpElicitation(request) },
     });
+  }
+
+  /** Offline snapshot of which features are usable, degraded or off, limited to what this workspace needs.
+   * `sandboxImageReady` comes from the caller's Docker probe (undefined = not probed yet). */
+  async getCapabilities(sandboxImageReady?: boolean): Promise<FeatureStatus[]> {
+    if (sandboxImageReady === undefined && this.capabilityConfig.sandbox) {
+      sandboxImageReady = await checkSandboxImage(this.capabilityConfig.image);
+    }
+    return collectCapabilities({
+      workspaceRoot: this.workspaceRoot,
+      sandbox: {
+        enabled: this.capabilityConfig.sandbox,
+        image: this.capabilityConfig.image,
+        imageReady: sandboxImageReady,
+      },
+      railsIndexEnabled: this.railsIndex.enabled,
+      lspProviders: this.lspManager.registry.allProviders(),
+      docsCached: this.docs.listSources().map((s) => s.slug),
+      mcpServersConfigured: this.mcpServerConfigs.length,
+      localWorkerEnabled: this.capabilityConfig.localWorker,
+      dockerToolEnabled: this.capabilityConfig.dockerTool,
+    });
+  }
+
+  /** Builds the default sandbox image after the user approves. Never runs unattended. */
+  async buildSandboxImage(): Promise<{ ok: boolean; message: string }> {
+    const { image, sandbox } = this.capabilityConfig;
+    if (!sandbox) return { ok: false, message: "sandbox is disabled; nothing to build" };
+    if (await checkSandboxImage(image)) return { ok: true, message: `${image} is already available` };
+    const approved = await this.requestApproval(
+      "Build sandbox image?",
+      `Runs \`docker build\` for ${image} from the shipped Dockerfile. It downloads a base image and packages (network access, a few minutes).`,
+    );
+    if (!approved) return { ok: false, message: "sandbox image build declined" };
+    this.emit("onStatus", `building sandbox image ${image}…`);
+    return buildSandboxImage(image);
   }
 
   /** Connects every MCP server listed in config.mcpServers, one at a time

@@ -1,10 +1,12 @@
 import "dotenv/config";
 import path from "node:path";
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import React from "react";
 import { render } from "ink";
 import { Agent } from "../cli/agent.js";
+import { formatCapability, startupWarnings } from "../cli/capabilities.js";
+import { checkSandboxImage } from "../cli/sandbox-image.js";
 import { loadConfig } from "../cli/config.js";
 import { EventBus } from "../runtime/events/bus.js";
 import { initialRuntimeState, Store } from "../runtime/store.js";
@@ -69,24 +71,6 @@ function currentBranch(workspaceRoot: string): string {
   }
 }
 
-// One-time, non-blocking check — whether run_shell's Docker sandbox (see
-// tools/shell.ts's own lazy ensureDockerAvailable) is actually reachable and
-// the sandbox image is present locally, so the footer's Sandbox indicator
-// reflects reality instead of assuming it's always up.
-function checkDockerAvailable(image?: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const probe = spawn("docker", ["info"], { stdio: "ignore" });
-    probe.on("close", (code) => {
-      if (code !== 0) return resolve(false);
-      if (!image) return resolve(true);
-      const imgProbe = spawn("docker", ["image", "inspect", image], { stdio: "ignore" });
-      imgProbe.on("close", (imgCode) => resolve(imgCode === 0));
-      imgProbe.on("error", () => resolve(false));
-    });
-    probe.on("error", () => resolve(false));
-  });
-}
-
 // Debug-only: dump every raw stdin chunk (as JSON-escaped text) to
 // .nexum/paste-debug.log when NEXUM_DEBUG_STDIN=1, registered before
 // anything else touches stdin so it sees genuinely raw terminal bytes.
@@ -146,15 +130,27 @@ const cfg = loadConfig();
   store.attach(bus);
   const detectedProject = detectProjectInfo(cfg.workspaceRoot);
   bus.publish({ type: "project.detected", info: detectedProject });
+  let sandboxProbe: Promise<boolean | undefined> = Promise.resolve(undefined);
   if (cfg.sandbox === false) {
     bus.publish({ type: "sandbox.detected", available: false, enabled: false });
   } else {
-    checkDockerAvailable(cfg.shellImage ?? BRAND.sandboxImage).then((available) =>
-      bus.publish({ type: "sandbox.detected", available, enabled: true }),
-    );
+    const probe = checkSandboxImage(cfg.shellImage ?? BRAND.sandboxImage);
+    probe.then((available) => bus.publish({ type: "sandbox.detected", available, enabled: true }));
+    sandboxProbe = probe;
   }
 
   const agent = new Agent({ config: cfg });
+  // One startup line per registered-but-broken feature, with the fix. Silent
+  // degradation (missing sandbox image, LSP binary, gh CLI) otherwise looks
+  // like the agent simply not using a tool.
+  sandboxProbe
+    .then((ready) => agent.getCapabilities(ready))
+    .then((caps) => {
+      for (const c of startupWarnings(caps)) {
+        bus.publish({ type: "logs.appended", level: "warn", source: "capabilities", message: formatCapability(c) });
+      }
+    })
+    .catch(() => {});
   // Start the plugin host + all P0-P2 services before the first user
   // message so plugins can contribute tools, models, and context.
   // Failure here is non-fatal: the agent still works with whatever
@@ -205,6 +201,8 @@ const cfg = loadConfig();
     modelCapabilities: (models: string[]) => agent.modelCapabilities(models),
     runPlan: (goal: string) => agent.runPlan(goal),
     hasResumablePlan: () => agent.hasResumablePlan(),
+    getCapabilities: () => agent.getCapabilities(),
+    buildSandboxImage: () => agent.buildSandboxImage(),
     resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
     resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
     resolveMcpElicitation: (resp: McpElicitationResponse) => agent.resolveMcpElicitation(resp),
