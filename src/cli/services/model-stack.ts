@@ -23,8 +23,87 @@ import { LocalWorker } from "../../models/local-worker.js";
 import { Verifier } from "../../models/verification/verifier.js";
 import { SelfConsistency } from "../../models/verification/self-consistency.js";
 import { ModelCapabilityRegistry } from "../../models/profiles/model-capability-registry.js";
+import {
+  DecisionGateway,
+  DecisionUnavailableError,
+  SystemOneDecisionGateway,
+  type SystemOneClient,
+  type SystemOneEnvironment,
+} from "../../models/decision/index.js";
 
 export type StatusEmitter = (message: string) => void;
+
+/** Optional ModelStack overrides — currently only the Decision Plane DI seam. */
+export interface ModelStackOptions {
+  /**
+   * Inject a custom {@link DecisionGateway}. When supplied, this is used in
+   * place of the auto-built System One gateway. The primary purpose is test
+   * injection (FakeDecisionGateway) — production callers should let the
+   * stack build its own gateway from the CliConfig.
+   *
+   * If `cfg.enableDecision` is false, this is ignored — the Decision Plane
+   * stays fully disabled. If `cfg.tier` is `cloud`, the injected gateway is
+   * honored (because the caller explicitly knows what they're doing — e.g.
+   * an integration test against a local fake that ignores the cloud tier).
+   */
+  decisionGateway?: DecisionGateway;
+}
+
+/**
+ * Stub {@link SystemOneClient} used by the auto-built gateway until the
+ * upstream SDK re-exports `NativeApi.systemOne` (or `OllamaClient.systemOne`)
+ * from its public entrypoint. Calling `systemOne` throws a typed
+ * {@link DecisionUnavailableError} so the caller's policy can fall back to a
+ * deterministic path — never to Provider.chat.
+ *
+ * Once the upstream export lands, this class is replaced by a one-line
+ * adapter that calls `OllamaClient.systemOne(...)` directly. See the Wave 8
+ * final report's "Upstream export gap" section.
+ */
+class PendingSystemOneClient implements SystemOneClient {
+  systemOne(_request: Record<string, unknown>): Promise<unknown> {
+    return Promise.reject(
+      new DecisionUnavailableError(
+        "System One SDK adapter is not yet wired — upstream export of NativeApi.systemOne / OllamaClient.systemOne is pending in @nemesis-oss/ollama-sdk. " +
+          "Configure a real SystemOneClient via dependency injection or wait for the SDK export to land.",
+      ),
+    );
+  }
+}
+
+/**
+ * Local-tier environment for the auto-built System One gateway. Reads the
+ * Ollama server version lazily via the local Provider (so the gateway
+ * construction stays cheap — version probes happen on the first `decide()`
+ * call, not at stack construction time).
+ */
+class LocalSystemOneEnvironment implements SystemOneEnvironment {
+  readonly tier = "local" as const;
+  private readonly provider: Provider;
+  private cached: string | undefined | null = null;
+
+  constructor(provider: Provider) {
+    this.provider = provider;
+  }
+
+  async getVersion(): Promise<string | undefined> {
+    if (this.cached !== null) return this.cached === undefined ? undefined : this.cached;
+    try {
+      const raw = (await this.provider.availableModels()) as { version?: unknown };
+      // Local Ollama's /api/tags does NOT include a version field today;
+      // when that changes (or when the SDK exposes /api/version through
+      // the Provider), this will start returning a value without code
+      // changes here. Until then, "unknown" lets the gateway proceed.
+      const v = (raw as { version?: unknown }).version;
+      this.cached = typeof v === "string" ? v : undefined;
+    } catch {
+      // Local Ollama unreachable — let the gateway try anyway and surface
+      // the real transport error if the user actually calls decide().
+      this.cached = undefined;
+    }
+    return this.cached === undefined ? undefined : this.cached;
+  }
+}
 
 export class ModelStack {
   readonly provider: Provider;
@@ -39,13 +118,27 @@ export class ModelStack {
   readonly availabilityChecker: ModelAvailabilityChecker | undefined;
   readonly keyManager: KeyManager | undefined;
 
+  /**
+   * The Decision Plane gateway, or undefined when the plane is disabled.
+   * Disabled by default; enabled via `cfg.enableDecision=true`. Auto-
+   * disabled when `cfg.tier === 'cloud'` (System One is local-only). Tests
+   * inject a fake via {@link ModelStackOptions.decisionGateway}.
+   */
+  readonly decisionGateway: DecisionGateway | undefined;
+  /**
+   * The dedicated decision model, independent of the primary generation
+   * `model`. Used by decision consumers (Wave 4+) when they build
+   * DecisionRequests that target this model.
+   */
+  readonly decisionModel: string | undefined;
+
   private readonly cfg: CliConfig;
   private readonly emitStatus: StatusEmitter;
   private catalogRefreshed: Promise<void> | null = null;
   private catalogRefreshedAt = 0;
   private static readonly CATALOG_TTL_MS = 60_000;
 
-  constructor(cfg: CliConfig, emitStatus: StatusEmitter) {
+  constructor(cfg: CliConfig, emitStatus: StatusEmitter, opts: ModelStackOptions = {}) {
     this.cfg = cfg;
     this.emitStatus = emitStatus;
 
@@ -128,6 +221,34 @@ export class ModelStack {
       this.availabilityChecker
         .refreshAll()
         .catch((e: Error) => this.emitStatus(`[Availability] refresh error: ${e.message}`));
+    }
+
+    // ── Decision Plane (System One) ───────────────────────────────────────────
+    //
+    // System One is local-only by contract (see `contracts/overlays/systemone.yaml`
+    // in the upstream SDK). When the runtime tier is `cloud` the stack never
+    // builds a gateway — System One must NOT silently route to Provider.chat on
+    // the cloud tier. The cloud-tier auto-disable also avoids constructing a
+    // PendingSystemOneClient whose only role would be to refuse on first call.
+    //
+    // When enabled and local, the stack builds a SystemOneDecisionGateway
+    // around a PendingSystemOneClient today. Once the upstream SDK re-exports
+    // NativeApi.systemOne / OllamaClient.systemOne, the PendingSystemOneClient
+    // is replaced with a one-line adapter (see the Wave 8 final report).
+    this.decisionModel = cfg.decisionModel;
+    if (cfg.enableDecision && cfg.tier === "local") {
+      this.decisionGateway =
+        opts.decisionGateway ??
+        new SystemOneDecisionGateway({
+          client: new PendingSystemOneClient(),
+          environment: new LocalSystemOneEnvironment(localProvider),
+        });
+    } else {
+      // Disabled by config OR auto-disabled in a cloud tier. An explicit
+      // injection still wins ONLY when the plane is enabled — otherwise the
+      // caller is asking for both "disabled" and "use this gateway", which is
+      // a contradiction; the disabled flag wins and the gateway is dropped.
+      this.decisionGateway = cfg.enableDecision ? opts.decisionGateway : undefined;
     }
   }
 

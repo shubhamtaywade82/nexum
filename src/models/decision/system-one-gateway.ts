@@ -38,8 +38,9 @@
  */
 
 import type { DecisionGateway } from "./decision-gateway.js";
-import { DecisionProtocolError, DecisionTransportError, DecisionUnavailableError } from "./errors.js";
-import { DecisionAnswer, DecisionRequest, DecisionResult, validateDecisionRequest } from "./types.js";
+import { DecisionError, DecisionProtocolError, DecisionTransportError, DecisionUnavailableError } from "./errors.js";
+import type { DecisionAnswer, DecisionRequest, DecisionResult } from "./types.js";
+import { validateDecisionRequest } from "./types.js";
 
 /**
  * Nexum-owned seam for the upstream System One call. Mirrors the SDK's
@@ -174,7 +175,7 @@ export class SystemOneDecisionGateway implements DecisionGateway {
         ...(request.signal ? { signal: request.signal } : {}),
       });
     } catch (err) {
-      throw toTransportError(err);
+      throw mapSystemOneError(err);
     }
     const latencyMs = Math.max(0, Date.now() - started);
 
@@ -195,8 +196,14 @@ export class SystemOneDecisionGateway implements DecisionGateway {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function toTransportError(err: unknown): DecisionTransportError {
-  if (err instanceof DecisionTransportError) return err;
+function mapSystemOneError(err: unknown): Error {
+  // Preserve any typed DecisionError raised inside the client seam — the
+  // PendingSystemOneClient, the eventual OllamaSystemOneClientAdapter, and
+  // any caller-injected test fake all surface typed decision errors here,
+  // and we must NOT rewrap them as generic transport failures. Only true
+  // transport-layer errors (network, abort) get wrapped as
+  // DecisionTransportError.
+  if (err instanceof DecisionError) return err;
   const message = err instanceof Error ? err.message : String(err);
   return new DecisionTransportError(`System One transport failure: ${message}`, err);
 }
