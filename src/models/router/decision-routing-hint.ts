@@ -77,7 +77,10 @@ export interface DecisionRoutingHintResolverOptions {
 }
 
 const ROUTING_QUESTION_ID = "tier";
-const DEFAULT_DECISION_MODEL = "mpuig/system-one-minicpm5-2b-q8";
+// `tev1` is the actual published System One model on Ollama
+// (https://ollama.com/library/tev1). `tev1:0.8b` is the smaller-memory
+// alternative. tunable via NEXUM_DECISION_MODEL.
+const DEFAULT_DECISION_MODEL = "tev1";
 
 export class DecisionRoutingHintResolver {
   private readonly heuristicRouter: HeuristicRouter;

@@ -83,12 +83,25 @@ export interface DecisionRequest {
    * small — do NOT dump the repository, the full conversation, large tool
    * descriptions, or source files here. This is a bounded-decision context,
    * not a generative prompt.
+   *
+   * Mapped to tev1's `state` field on the wire (see
+   * `SystemOneDecisionGateway`). tev1 runs with ~2,000 tokens of context; the
+   * longest training example is ~1,500 tokens. Keep this short.
    */
   context: string;
   questions: DecisionQuestion[];
   /** Abort signal propagated to the upstream SDK call. */
   signal?: AbortSignal;
   metadata?: DecisionMetadata;
+  /**
+   * Optional pass-through to tev1's `keep_alive` field. Controls how long
+   * the model stays loaded after this request (e.g. "5m", "30s", "-1" for
+   * infinite). Set this when batching multiple `decide()` calls in a tight
+   * loop to avoid re-loading the 4B model between calls. The gateway does
+   * NOT interpret the value — it forwards the string verbatim. See
+   * https://ollama.com/library/tev1 for the format.
+   */
+  keepAlive?: string;
 }
 
 /**
@@ -99,11 +112,21 @@ export interface DecisionAnswer {
   questionId: string;
   /** Selected choice id (must appear in the question's `choices`). */
   selected?: string;
-  /** Numeric score (0..1) — populated for `score` mode. */
+  /** Numeric score — populated for `score` mode (the level), and for `noul`
+   *  mode without choices (the probability the answer is true, 0..1). */
   score?: number;
   /** Per-choice probability mass — populated for `choice`/`noul` modes
    *  when the underlying System One response includes them. */
   probabilities?: Record<string, number>;
+  /**
+   * Model-reported probability concentration (0..1), preserved from tev1's
+   * `confidence` field. This is NOT a calibrated correctness probability —
+   * it measures how concentrated the probability distribution is, not how
+   * likely the selected answer is to be right. Policy consumers should use
+   * `probabilities` and `score` as evidence, never `confidence` as a
+   * correctness signal. Preserved on `raw` for replay/telemetry as well.
+   */
+  confidence?: number;
   /** The raw wire payload for this question, preserved for telemetry/replay. */
   raw?: unknown;
 }
@@ -183,6 +206,12 @@ export function validateDecisionRequest(req: DecisionRequest): void {
   }
   if (!Array.isArray(req.questions) || req.questions.length === 0) {
     throw new DecisionProtocolError("decision request must contain at least one question");
+  }
+  // keepAlive is an opaque string pass-through to tev1's `keep_alive` field.
+  // The gateway does not interpret it (it forwards the string verbatim), so
+  // the only validation here is type: it must be a string if present.
+  if (req.keepAlive !== undefined && typeof req.keepAlive !== "string") {
+    throw new DecisionProtocolError("decision request keepAlive must be a string if present");
   }
   for (const q of req.questions) validateDecisionQuestion(q);
 

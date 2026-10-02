@@ -160,8 +160,11 @@ export interface DecisionToolSelectorOptions {
   heuristicThreshold?: number;
 }
 
-/** Default decision model surfaced by the selector if a caller forgets. */
-const DEFAULT_DECISION_MODEL = "mpuig/system-one-minicpm5-2b-q8";
+/** Default decision model surfaced by the selector if a caller forgets.
+ * `tev1` is the 4B System One model from Together AI, published at
+ * https://ollama.com/library/tev1. `tev1:0.8b` is the smaller-memory
+ * alternative. */
+const DEFAULT_DECISION_MODEL = "tev1";
 
 const DEFAULT_MAX_ACTIVE_TOOLS = 8;
 

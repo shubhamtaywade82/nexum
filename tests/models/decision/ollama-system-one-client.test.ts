@@ -58,7 +58,7 @@ describe("OllamaSystemOneClient", () => {
     });
     const adapter = new OllamaSystemOneClient(client);
 
-    const request = { model: "mpuig/system-one-minicpm5-2b-q8", mode: "noul", context: "x", questions: [] };
+    const request = { model: "tev1", mode: "noul", context: "x", questions: [] };
     const result = await adapter.systemOne(request);
 
     expect(received).toHaveLength(1);

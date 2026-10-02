@@ -11,7 +11,7 @@ import type { DecisionRequest, DecisionResult } from "../../../src/models/decisi
 function choiceRequest(overrides: Partial<DecisionRequest> = {}): DecisionRequest {
   return {
     id: "d1",
-    model: "mpuig/system-one-minicpm5-2b-q8",
+    model: "tev1",
     mode: "choice",
     context: "User asked: 'read config.json and patch a typo'.",
     questions: [
@@ -39,7 +39,7 @@ describe("FakeDecisionGateway", () => {
 
     const result = await fake.decide(choiceRequest());
 
-    expect(result.model).toBe("mpuig/system-one-minicpm5-2b-q8");
+    expect(result.model).toBe("tev1");
     expect(result.decisions).toHaveLength(1);
     expect(result.decisions[0].questionId).toBe("domain");
     expect(result.decisions[0].selected).toBe("filesystem");

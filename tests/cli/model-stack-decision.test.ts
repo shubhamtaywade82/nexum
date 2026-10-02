@@ -15,7 +15,7 @@ function baseCfg(overrides: Partial<CliConfig> = {}): CliConfig {
     tier: "local",
     enableAvailabilityCheck: false,
     enableDecision: true,
-    decisionModel: "mpuig/system-one-minicpm5-2b-q8",
+    decisionModel: "tev1",
     workspaceTrust: { status: "trusted", trusted: true, withheldKeys: [], skippedEnvFiles: [] },
     ...overrides,
   } as CliConfig;
@@ -58,12 +58,9 @@ describe("ModelStack — Decision Plane integration", () => {
   });
 
   it("keeps the primary generation model independent of the decision model", () => {
-    const stack = new ModelStack(
-      baseCfg({ model: "qwen3.5:4b", decisionModel: "mpuig/system-one-minicpm5-2b-q8" }),
-      () => {},
-    );
+    const stack = new ModelStack(baseCfg({ model: "qwen3.5:4b", decisionModel: "tev1" }), () => {});
     expect(stack.currentModel).toBe("qwen3.5:4b");
-    expect(stack.decisionModel).toBe("mpuig/system-one-minicpm5-2b-q8");
+    expect(stack.decisionModel).toBe("tev1");
   });
 
   it("surfaces a typed DecisionError (transport failure) when decide() is called against an unreachable local Ollama — never a silent chat fallback", async () => {
@@ -76,7 +73,7 @@ describe("ModelStack — Decision Plane integration", () => {
     const stack = new ModelStack(baseCfg(), () => {});
     const req: DecisionRequest = {
       id: "d1",
-      model: "mpuig/system-one-minicpm5-2b-q8",
+      model: "tev1",
       mode: "choice",
       context: "User asked to read a file.",
       questions: [
@@ -135,7 +132,7 @@ describe("ModelStack — Decision Plane integration", () => {
 
     const decisionP = stack.decisionGateway!.decide({
       id: "d",
-      model: "mpuig/system-one-minicpm5-2b-q8",
+      model: "tev1",
       mode: "choice",
       context: "x",
       questions: [{ id: "domain", prompt: "x", choices: [{ id: "fs", description: "fs" }] }],
@@ -152,7 +149,7 @@ describe("ModelStack — Decision Plane integration", () => {
     releaseGate();
     const decisionResult = await decisionP;
 
-    expect(decisionResult.model).toBe("mpuig/system-one-minicpm5-2b-q8");
+    expect(decisionResult.model).toBe("tev1");
     // The chat call saw the primary model (not the decision model).
     expect(chatCalledModel).toBe("qwen3.5:4b");
     // Critical invariant: the decision model never replaced the primary

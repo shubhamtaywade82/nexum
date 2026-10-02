@@ -43,7 +43,7 @@ const DOMAINS: Array<{ id: string; description: string }> = [
 function domainRequest(id: string, context: string): DecisionEvaluationFixture["request"] {
   return {
     id,
-    model: "mpuig/system-one-minicpm5-2b-q8",
+    model: "tev1",
     mode: "noul",
     context,
     questions: [
@@ -142,7 +142,7 @@ export const TASK_COMPLEXITY_FIXTURES: DecisionEvaluationFixture[] = [
     description: "a single-step request is 'local'-capable",
     request: {
       id: "complexity-simple",
-      model: "mpuig/system-one-minicpm5-2b-q8",
+      model: "tev1",
       mode: "noul",
       context: "Add a single 'name' field to the user schema.",
       questions: [
@@ -164,7 +164,7 @@ export const TASK_COMPLEXITY_FIXTURES: DecisionEvaluationFixture[] = [
     description: "a debug + refactor request needs the stronger model",
     request: {
       id: "complexity-hard",
-      model: "mpuig/system-one-minicpm5-2b-q8",
+      model: "tev1",
       mode: "noul",
       context: "Debug a race condition in the worker pool, then refactor it to be lock-free.",
       questions: [
@@ -193,7 +193,7 @@ export const VERIFICATION_FIXTURES: DecisionEvaluationFixture[] = [
     description: "a clean draft does not need the expensive critic",
     request: {
       id: "verification-acceptable",
-      model: "mpuig/system-one-minicpm5-2b-q8",
+      model: "tev1",
       mode: "noul",
       context: "Task goal: Add a null check.\nDraft answer: Added `if (user == null) return;` before the field access.",
       questions: [
@@ -215,7 +215,7 @@ export const VERIFICATION_FIXTURES: DecisionEvaluationFixture[] = [
     description: "a draft with a TODO marker needs the expensive critic",
     request: {
       id: "verification-escalate",
-      model: "mpuig/system-one-minicpm5-2b-q8",
+      model: "tev1",
       mode: "noul",
       context:
         "Task goal: Fix the bug.\nDraft answer: I added a TODO here because I wasn't sure how to handle the null case.",

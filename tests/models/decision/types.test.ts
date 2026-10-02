@@ -74,7 +74,7 @@ describe("Decision contracts — validateDecisionQuestion", () => {
 describe("Decision contracts — validateDecisionRequest", () => {
   const validChoice = (mode: DecisionMode): DecisionRequest => ({
     id: "d1",
-    model: "mpuig/system-one-minicpm5-2b-q8",
+    model: "tev1",
     mode,
     context: "User asked: 'read the file config.json and patch a typo'. Tools available include filesystem and shell.",
     questions: [
@@ -108,6 +108,36 @@ describe("Decision contracts — validateDecisionRequest", () => {
       { id: "domain", prompt: "which domain?", choices: [{ id: "fs", description: "filesystem" }] },
       { id: "complexity", prompt: "single-step or multi-step?" },
     ];
+    expect(() => validateDecisionRequest(req)).not.toThrow();
+  });
+
+  it("accepts an optional keepAlive string (tev1 keep_alive pass-through)", () => {
+    const req = validChoice("choice");
+    req.keepAlive = "5m";
+    expect(() => validateDecisionRequest(req)).not.toThrow();
+  });
+
+  it("accepts keepAlive = '-1' (tev1's 'infinite' load duration)", () => {
+    const req = validChoice("choice");
+    req.keepAlive = "-1";
+    expect(() => validateDecisionRequest(req)).not.toThrow();
+  });
+
+  it("rejects keepAlive when it is not a string (number is invalid)", () => {
+    const req = validChoice("choice");
+    (req as { keepAlive?: unknown }).keepAlive = 5;
+    expect(() => validateDecisionRequest(req)).toThrow(/keepAlive/i);
+  });
+
+  it("rejects keepAlive when it is an object", () => {
+    const req = validChoice("choice");
+    (req as { keepAlive?: unknown }).keepAlive = { duration: "5m" };
+    expect(() => validateDecisionRequest(req)).toThrow(/keepAlive/i);
+  });
+
+  it("accepts an empty keepAlive string (pass-through, the gateway does not interpret it)", () => {
+    const req = validChoice("choice");
+    req.keepAlive = "";
     expect(() => validateDecisionRequest(req)).not.toThrow();
   });
 
