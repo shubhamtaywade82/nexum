@@ -104,6 +104,22 @@ export interface CliConfig {
     /** Workspace .env files not loaded because the workspace is not trusted. */
     skippedEnvFiles: string[];
   };
+
+  // ── Decision Plane (System One) ───────────────────────────────────────────
+  /** Enable the bounded Decision Plane (System One). Off by default — System
+   * One is an optimization/decision aid, never a mandatory runtime
+   * dependency. Enable with NEXUM_DECISION=true. When the runtime tier is
+   * `cloud`, the decision plane stays disabled automatically (System One is
+   * local-only — see contracts/overlays/systemone.yaml in the upstream SDK). */
+  enableDecision?: boolean;
+  /** Dedicated model used for bounded decisions (classification/scoring/
+   * gating/routing). Independent of the primary generation `model` — the
+   * primary model handles reasoning/coding/generation; the decision model
+   * handles small bounded decisions. Default: `tev1` (the 4B System One
+   * model from Together AI, published at https://ollama.com/library/tev1;
+   * NOT claimed to be universally best — `tev1:0.8b` is the smaller-memory
+   * alternative; tunable via NEXUM_DECISION_MODEL). */
+  decisionModel?: string;
 }
 
 /** One config-listed MCP server. Listing a server is consent to connect it:
@@ -151,6 +167,8 @@ interface ConfigFile {
    * real rate. Omit to leave cost tracking off (the honest default). */
   pricing?: { inputPerMillion: number; outputPerMillion: number };
   mcpServers?: McpCliServerConfig[];
+  enableDecision?: boolean;
+  decisionModel?: string;
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are a focused coding assistant operating in a local workspace. \
@@ -439,6 +457,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
     mcpServers: file.mcpServers,
+    // Decision Plane (System One): off by default; auto-disabled in a cloud
+    // tier (System One is local-only — the gateway itself enforces this
+    // too, but disabling at config time means no adapter is even built).
+    enableDecision: readEnvFlag("DECISION", file.enableDecision ?? false),
+    decisionModel: readEnv("DECISION_MODEL") || file.decisionModel || "tev1",
     workspaceTrust: {
       status: trust.status,
       trusted: trust.trusted,
