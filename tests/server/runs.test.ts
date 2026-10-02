@@ -20,10 +20,9 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
   it("POST /sessions/:id/runs returns 201 Created immediately and completes in background", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
 
-    const { status, body } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Inspect project status" },
-    );
+    const { status, body } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Inspect project status",
+    });
 
     expect(status).toBe(201);
     expect(body.run).toBeDefined();
@@ -37,10 +36,9 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
 
   it("GET /runs/:id retrieves run metadata", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Task metadata check" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Task metadata check",
+    });
 
     const { status, body: fetched } = await harness.getJson<NexumRun>(`/runs/${created.run.id}`);
     expect(status).toBe(200);
@@ -52,10 +50,9 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
 
   it("GET /runs/:id/events streams SSE events with monotonic seq id", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Stream test" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Stream test",
+    });
 
     const sub = subscribeToEvents(harness.baseUrl, created.run.id);
     const terminal = await sub.waitForTerminal();
@@ -74,10 +71,9 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
 
   it("replays past events via Last-Event-ID with zero loss", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Replay test" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Replay test",
+    });
 
     await harness.waitForRun(created.run.id);
 
@@ -92,10 +88,9 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
 
   it("allows multiple independent clients to subscribe to the same run", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Multi-client test" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Multi-client test",
+    });
 
     // Client A and Client B attach simultaneously
     const subA = subscribeToEvents(harness.baseUrl, created.run.id);

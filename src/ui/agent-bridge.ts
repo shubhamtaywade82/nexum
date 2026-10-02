@@ -25,10 +25,21 @@ import type { ShellAgent } from "./App.js";
 // PlanStep tracks a fine-grained ASL (analyzing/planning/implementing/
 // testing/reviewing/...); the TUI only renders the coarse 5-state model.
 const STEP_STATUS_MAP: Record<StepStatus, ExecutionStep["status"]> = {
-  pending: "pending", running: "running", completed: "completed", failed: "failed",
-  analyzing: "running", planning: "running", implementing: "running", testing: "running",
-  reviewing: "running", blocked: "failed", rejected: "failed", paused: "failed",
-  cancelled: "failed", rolledback: "failed", skipped: "skipped",
+  pending: "pending",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  analyzing: "running",
+  planning: "running",
+  implementing: "running",
+  testing: "running",
+  reviewing: "running",
+  blocked: "failed",
+  rejected: "failed",
+  paused: "failed",
+  cancelled: "failed",
+  rolledback: "failed",
+  skipped: "skipped",
 };
 
 function toExecutionSteps(steps: PlanStep[]): ExecutionStep[] {
@@ -95,7 +106,12 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
     bus.publish({ type: "logs.appended", level: "error", source: "agent", message: error.message });
   });
   agent.on("onShellOutput", (stream: "stdout" | "stderr", chunk: string) => {
-    bus.publish({ type: "logs.appended", level: stream === "stderr" ? "warn" : "debug", source: "shell", message: chunk });
+    bus.publish({
+      type: "logs.appended",
+      level: stream === "stderr" ? "warn" : "debug",
+      source: "shell",
+      message: chunk,
+    });
   });
   agent.on("onMemorySummary", (summary: string) => {
     bus.publish({ type: "memory.updated", summary });
@@ -112,19 +128,31 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
     bus.publish({ type: "lsp.changed", servers });
   });
   agent.on("onApprovalRequested", (request: ApprovalRequest) => bus.publish({ type: "approval.requested", request }));
-  agent.on("onClarificationRequested", (request: ClarificationRequest) => bus.publish({ type: "clarification.requested", request }));
+  agent.on("onClarificationRequested", (request: ClarificationRequest) =>
+    bus.publish({ type: "clarification.requested", request }),
+  );
   agent.on("onMcpElicitationRequested", (request) => bus.publish({ type: "mcp.elicitation.requested", request }));
-  agent.on("onModelUsed", (tier: string, model: string, usage?: { promptTokens: number; completionTokens: number; latencyMs: number }) => {
-    bus.publish({ type: "model.answered", tier, model, ...usage });
-  });
+  agent.on(
+    "onModelUsed",
+    (tier: string, model: string, usage?: { promptTokens: number; completionTokens: number; latencyMs: number }) => {
+      bus.publish({ type: "model.answered", tier, model, ...usage });
+    },
+  );
   agent.on("onPlanUpdate", (goal: string, steps: PlanStep[], status: "running" | "completed" | "failed") => {
     bus.publish({ type: "conversation.plan", goal, steps: toExecutionSteps(steps), status });
   });
   agent.on("onMissionStarted", (goal: string) => bus.publish({ type: "mission.started", goal }));
-  agent.on("onMissionPhase", (id: MissionPhaseId, status: MissionPhase["status"]) => bus.publish({ type: "mission.phase", id, status }));
+  agent.on("onMissionPhase", (id: MissionPhaseId, status: MissionPhase["status"]) =>
+    bus.publish({ type: "mission.phase", id, status }),
+  );
   agent.on("onMissionStep", (step: PlanStep) => bus.publish({ type: "mission.step", step }));
   agent.on("onUsage", (info: { promptTokens: number; completionTokens: number; latencyMs: number }) => {
-    bus.publish({ type: "context.changed", used: info.promptTokens + info.completionTokens, limit: 0, latencyMs: info.latencyMs });
+    bus.publish({
+      type: "context.changed",
+      used: info.promptTokens + info.completionTokens,
+      limit: 0,
+      latencyMs: info.latencyMs,
+    });
     bus.publish({ type: "usage.changed", promptTokens: info.promptTokens, completionTokens: info.completionTokens });
   });
 }
@@ -138,7 +166,14 @@ function dispatchToolEvent(bus: EventBus, ev: NexumRunEvent): boolean {
   }
   if (ev.type === "tool.completed") {
     bus.publish({ type: "tool.completed", id: ev.callId, result: ev.result });
-    bus.publish({ type: "conversation.tool_call", id: ev.callId, name: ev.name, args: {}, status: "completed", result: JSON.stringify(ev.result) });
+    bus.publish({
+      type: "conversation.tool_call",
+      id: ev.callId,
+      name: ev.name,
+      args: {},
+      status: "completed",
+      result: JSON.stringify(ev.result),
+    });
     bus.publish({ type: "logs.appended", level: "info", source: "tool", message: `${ev.name} completed` });
     return true;
   }
@@ -147,7 +182,17 @@ function dispatchToolEvent(bus: EventBus, ev: NexumRunEvent): boolean {
 
 function dispatchInteractionEvent(bus: EventBus, ev: NexumRunEvent): boolean {
   if (ev.type === "run.approval.required") {
-    bus.publish({ type: "approval.requested", request: { id: ev.interactionId, title: ev.title, summary: ev.summary, filesChanged: 0, additions: 0, deletions: 0 } });
+    bus.publish({
+      type: "approval.requested",
+      request: {
+        id: ev.interactionId,
+        title: ev.title,
+        summary: ev.summary,
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+      },
+    });
     return true;
   }
   if (ev.type === "run.approval.resolved") {
@@ -155,7 +200,10 @@ function dispatchInteractionEvent(bus: EventBus, ev: NexumRunEvent): boolean {
     return true;
   }
   if (ev.type === "run.clarification.required") {
-    bus.publish({ type: "clarification.requested", request: { id: ev.interactionId, prompt: ev.question, question: ev.question, options: ev.options } });
+    bus.publish({
+      type: "clarification.requested",
+      request: { id: ev.interactionId, prompt: ev.question, question: ev.question, options: ev.options },
+    });
     return true;
   }
   if (ev.type === "run.clarification.resolved") {
@@ -167,7 +215,10 @@ function dispatchInteractionEvent(bus: EventBus, ev: NexumRunEvent): boolean {
 
 function dispatchMcpElicitation(bus: EventBus, ev: NexumRunEvent): boolean {
   if (ev.type === "run.mcp_elicitation.required") {
-    bus.publish({ type: "mcp.elicitation.requested", request: { id: ev.interactionId, serverId: ev.serverName, mode: "form", message: ev.prompt } });
+    bus.publish({
+      type: "mcp.elicitation.requested",
+      request: { id: ev.interactionId, serverId: ev.serverName, mode: "form", message: ev.prompt },
+    });
     return true;
   }
   if (ev.type === "run.mcp_elicitation.resolved") {
@@ -187,7 +238,11 @@ function dispatchLifecycleEvent(bus: EventBus, ev: NexumRunEvent): boolean {
     return true;
   }
   if (ev.type === "plan.updated") {
-    const steps = ev.steps.map((s) => ({ id: s.id, description: s.text, status: s.done ? ("completed" as const) : ("running" as const) }));
+    const steps = ev.steps.map((s) => ({
+      id: s.id,
+      description: s.text,
+      status: s.done ? ("completed" as const) : ("running" as const),
+    }));
     bus.publish({ type: "conversation.plan", goal: ev.goal, steps, status: ev.status });
     return true;
   }
@@ -292,4 +347,3 @@ export function createRemoteAgentBridge(
     },
   };
 }
-

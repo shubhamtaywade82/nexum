@@ -34,10 +34,9 @@ describe("Unified Remote Interaction Protocol (Wave 9)", () => {
       return `Executed with approval: ${goal}`;
     });
 
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Deploy production build" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Deploy production build",
+    });
     const runId = created.run.id;
 
     const sub = subscribeToEvents(harness.baseUrl, runId);
@@ -67,10 +66,9 @@ describe("Unified Remote Interaction Protocol (Wave 9)", () => {
 
   it("handles clarification resolution over HTTP API", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Choose deployment strategy" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Choose deployment strategy",
+    });
     const runId = created.run.id;
 
     const sub = subscribeToEvents(harness.baseUrl, runId);
@@ -95,10 +93,9 @@ describe("Unified Remote Interaction Protocol (Wave 9)", () => {
 
   it("handles MCP elicitation resolution over HTTP API", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Query external database" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Query external database",
+    });
     const runId = created.run.id;
 
     const sub = subscribeToEvents(harness.baseUrl, runId);

@@ -2,10 +2,7 @@ import { createRedisClient } from "../../src/infrastructure/redis/client.js";
 import { RedisEventBus } from "../../src/infrastructure/redis/pubsub.js";
 import type { Redis } from "ioredis";
 
-export const DEFAULT_TEST_REDIS_URL =
-  process.env.TEST_REDIS_URL ??
-  process.env.REDIS_URL ??
-  "redis://127.0.0.1:6379";
+export const DEFAULT_TEST_REDIS_URL = process.env.TEST_REDIS_URL ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 
 export class RedisHarness {
   private pubClient: Redis | null = null;

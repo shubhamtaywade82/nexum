@@ -34,12 +34,7 @@ describe("Claude-Code-like CLI (Wave 14)", () => {
   }
 
   it("handles multi-turn chat and slash commands (/help, /status, /exit)", async () => {
-    const { io, outputs } = createMockIo([
-      "/help",
-      "/status",
-      "Hello agent, please calculate 2+2",
-      "/exit",
-    ]);
+    const { io, outputs } = createMockIo(["/help", "/status", "Hello agent, please calculate 2+2", "/exit"]);
 
     await runChatCli([], client, io);
 

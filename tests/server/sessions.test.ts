@@ -17,10 +17,9 @@ describe("Canonical PostgreSQL Sessions (Wave 2 & 3)", () => {
   });
 
   it("POST /sessions creates a durable session in PostgreSQL", async () => {
-    const { status, body } = await harness.postJson<{ id: string; createdAt: string }>(
-      "/sessions",
-      { title: "Test Auth Bug" },
-    );
+    const { status, body } = await harness.postJson<{ id: string; createdAt: string }>("/sessions", {
+      title: "Test Auth Bug",
+    });
     expect(status).toBe(201);
     expect(body.id).toBeDefined();
 

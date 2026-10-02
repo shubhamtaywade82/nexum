@@ -1,9 +1,4 @@
-import type {
-  NexumCapabilities,
-  NexumRun,
-  RunEventEnvelope,
-  ResolveInteractionRequest,
-} from "../../protocol/types.js";
+import type { NexumCapabilities, NexumRun, RunEventEnvelope, ResolveInteractionRequest } from "../../protocol/types.js";
 
 export interface NexumClientOptions {
   baseUrl?: string;
@@ -83,23 +78,16 @@ export class NexumClient {
     return this.request<SessionDetail>(`/sessions/${encodeURIComponent(id)}`);
   }
 
-  async createRun(
-    sessionId: string,
-    goal: string,
-    opts: CreateRunOptions = {},
-  ): Promise<NexumRun> {
+  async createRun(sessionId: string, goal: string, opts: CreateRunOptions = {}): Promise<NexumRun> {
     const headers: Record<string, string> = {};
     if (opts.idempotencyKey) {
       headers["Idempotency-Key"] = opts.idempotencyKey;
     }
-    const res = await this.request<{ run: NexumRun }>(
-      `/sessions/${encodeURIComponent(sessionId)}/runs`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ goal }),
-      },
-    );
+    const res = await this.request<{ run: NexumRun }>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ goal }),
+    });
     return res.run;
   }
 
@@ -127,10 +115,7 @@ export class NexumClient {
     );
   }
 
-  async *streamEvents(
-    runId: string,
-    opts: StreamEventsOptions = {},
-  ): AsyncIterable<RunEventEnvelope> {
+  async *streamEvents(runId: string, opts: StreamEventsOptions = {}): AsyncIterable<RunEventEnvelope> {
     const headers: Record<string, string> = { Accept: "text/event-stream" };
     if (this.token) {
       headers.Authorization = `Bearer ${this.token}`;
@@ -139,10 +124,10 @@ export class NexumClient {
       headers["Last-Event-ID"] = String(opts.afterSeq);
     }
 
-    const res = await this.fetchFn(
-      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/events?stream=1`,
-      { headers, signal: opts.signal },
-    );
+    const res = await this.fetchFn(`${this.baseUrl}/runs/${encodeURIComponent(runId)}/events?stream=1`, {
+      headers,
+      signal: opts.signal,
+    });
     if (!res.ok || !res.body) {
       throw new Error(`SSE stream failed: ${res.status} ${res.statusText}`);
     }

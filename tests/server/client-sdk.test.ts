@@ -106,8 +106,12 @@ describe("Assistant Client SDK (Wave 13)", () => {
       const bridge = createRemoteAgentBridge(client, bus);
       await bridge.runUserMessage("TUI remote run test");
 
-      expect(events.some((e) => e.type === "conversation.chunk" && (e as { role?: string }).role === "assistant")).toBe(true);
-      expect(events.some((e) => e.type === "status.changed" && (e as { status?: string }).status === "completed")).toBe(true);
+      expect(events.some((e) => e.type === "conversation.chunk" && (e as { role?: string }).role === "assistant")).toBe(
+        true,
+      );
+      expect(events.some((e) => e.type === "status.changed" && (e as { status?: string }).status === "completed")).toBe(
+        true,
+      );
       await new Promise((r) => setTimeout(r, 50));
     });
 
@@ -176,7 +180,11 @@ describe("Assistant Client SDK (Wave 13)", () => {
         while ((boundary = buffer.indexOf("\n\n")) !== -1) {
           const raw = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
-          const dataLine = raw.split("\n").find((l) => l.startsWith("data:"))?.replace(/^data:\s*/, "").trim();
+          const dataLine = raw
+            .split("\n")
+            .find((l) => l.startsWith("data:"))
+            ?.replace(/^data:\s*/, "")
+            .trim();
           if (dataLine) {
             const parsed = JSON.parse(dataLine);
             events.push(parsed.type);
@@ -195,4 +203,3 @@ describe("Assistant Client SDK (Wave 13)", () => {
     });
   });
 });
-

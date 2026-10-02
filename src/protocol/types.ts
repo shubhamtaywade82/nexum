@@ -38,13 +38,7 @@ export interface NexumSessionMeta {
   firstUserLine: string;
 }
 
-export type NexumRunStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "interrupted";
+export type NexumRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
 export type WaitingOn = "approval" | "clarification" | "elicitation";
 
@@ -123,10 +117,7 @@ export interface McpElicitationInteraction {
   resolvedAt?: number;
 }
 
-export type NexumInteraction =
-  | ApprovalInteraction
-  | ClarificationInteraction
-  | McpElicitationInteraction;
+export type NexumInteraction = ApprovalInteraction | ClarificationInteraction | McpElicitationInteraction;
 
 export const ResolveInteractionRequestSchema = z.object({
   approved: z.boolean().optional(),

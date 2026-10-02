@@ -69,11 +69,7 @@ async function promptApproval(
   await client.resolveInteraction(runId, interactionId, { approved });
 }
 
-async function handleStreamEvent(
-  envelope: RunEventEnvelope,
-  client: NexumClient,
-  io: ChatIo,
-): Promise<void> {
+async function handleStreamEvent(envelope: RunEventEnvelope, client: NexumClient, io: ChatIo): Promise<void> {
   const { payload } = envelope;
   if (payload.type === "thought") {
     io.write(`💭 ${payload.text}\n`);
@@ -91,12 +87,7 @@ async function handleStreamEvent(
   }
 }
 
-export async function executeChatTurn(
-  sessionId: string,
-  goal: string,
-  client: NexumClient,
-  io: ChatIo,
-): Promise<void> {
+export async function executeChatTurn(sessionId: string, goal: string, client: NexumClient, io: ChatIo): Promise<void> {
   const run = await client.createRun(sessionId, goal);
   for await (const event of client.streamEvents(run.id)) {
     await handleStreamEvent(event, client, io);
@@ -107,11 +98,7 @@ export async function executeChatTurn(
   await new Promise((r) => setTimeout(r, 25));
 }
 
-export async function runChatCli(
-  args: string[],
-  injectedClient?: NexumClient,
-  injectedIo?: ChatIo,
-): Promise<void> {
+export async function runChatCli(args: string[], injectedClient?: NexumClient, injectedIo?: ChatIo): Promise<void> {
   const { sessionId: optSessionId, serverUrl } = parseChatArgs(args);
   const client = injectedClient ?? new NexumClient({ baseUrl: serverUrl });
   const io = injectedIo ?? createStdioChat();

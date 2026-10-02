@@ -141,36 +141,36 @@ const cfg = loadConfig();
     sandboxProbe = probe;
   }
 
-function buildLocalShellAgent(agent: Agent): ShellAgent {
-  return {
-    runUserMessage: (message: string) => agent.runUserMessage(message),
-    setModel: (model: string) => agent.setModel(model),
-    setTier: (tier: "local" | "cloud") => agent.setTier(tier),
-    resetContext: () => agent.resetContext(),
-    resumeSession: () => agent.resumeSession(),
-    resumeSessionById: (id: string) => agent.resumeSessionById(id),
-    hasResumableSession: () => agent.hasResumableSession(),
-    listSessions: () => agent.listSessions(),
-    getTools: () =>
-      agent
-        .getRegistry()
-        .getTools()
-        .map((t) => ({ name: t.name, description: t.description, category: agent.getRegistry().categoryOf(t.name) })),
-    listModels: () => agent.listModels(),
-    modelAvailability: (models: string[]) => agent.modelAvailability(models),
-    modelCapabilities: (models: string[]) => agent.modelCapabilities(models),
-    runPlan: (goal: string) => agent.runPlan(goal),
-    hasResumablePlan: () => agent.hasResumablePlan(),
-    getCapabilities: () => agent.getCapabilities(),
-    buildSandboxImage: () => agent.buildSandboxImage(),
-    resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
-    resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
-    resolveMcpElicitation: (resp: McpElicitationResponse) => agent.resolveMcpElicitation(resp),
-    validateModel: () => agent.validateModel(),
-    getSkillsRegistry: () => agent.getSkillsRegistry(),
-    pinSkill: (id: string | null) => agent.pinSkill(id),
-  };
-}
+  function buildLocalShellAgent(agent: Agent): ShellAgent {
+    return {
+      runUserMessage: (message: string) => agent.runUserMessage(message),
+      setModel: (model: string) => agent.setModel(model),
+      setTier: (tier: "local" | "cloud") => agent.setTier(tier),
+      resetContext: () => agent.resetContext(),
+      resumeSession: () => agent.resumeSession(),
+      resumeSessionById: (id: string) => agent.resumeSessionById(id),
+      hasResumableSession: () => agent.hasResumableSession(),
+      listSessions: () => agent.listSessions(),
+      getTools: () =>
+        agent
+          .getRegistry()
+          .getTools()
+          .map((t) => ({ name: t.name, description: t.description, category: agent.getRegistry().categoryOf(t.name) })),
+      listModels: () => agent.listModels(),
+      modelAvailability: (models: string[]) => agent.modelAvailability(models),
+      modelCapabilities: (models: string[]) => agent.modelCapabilities(models),
+      runPlan: (goal: string) => agent.runPlan(goal),
+      hasResumablePlan: () => agent.hasResumablePlan(),
+      getCapabilities: () => agent.getCapabilities(),
+      buildSandboxImage: () => agent.buildSandboxImage(),
+      resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
+      resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
+      resolveMcpElicitation: (resp: McpElicitationResponse) => agent.resolveMcpElicitation(resp),
+      validateModel: () => agent.validateModel(),
+      getSkillsRegistry: () => agent.getSkillsRegistry(),
+      pinSkill: (id: string | null) => agent.pinSkill(id),
+    };
+  }
 
   const serverIndex = args.indexOf("--server");
   const serverUrl =
@@ -178,7 +178,7 @@ function buildLocalShellAgent(agent: Agent): ShellAgent {
     (serverIndex !== -1
       ? args[serverIndex + 1]?.startsWith("-")
         ? "http://127.0.0.1:3777"
-        : args[serverIndex + 1] ?? "http://127.0.0.1:3777"
+        : (args[serverIndex + 1] ?? "http://127.0.0.1:3777")
       : undefined);
 
   let shellAgent: ShellAgent;

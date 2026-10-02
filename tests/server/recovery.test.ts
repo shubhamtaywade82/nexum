@@ -57,10 +57,9 @@ describe("Recovery, Reconciliation & Graceful Shutdown (Wave 10)", () => {
       return `Finished: ${goal}`;
     });
 
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Perform migration" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Perform migration",
+    });
 
     // Stop server with 2000ms grace period (active run finishes in ~60ms)
     await harness.stopServer(2000);
@@ -85,10 +84,9 @@ describe("Recovery, Reconciliation & Graceful Shutdown (Wave 10)", () => {
       return "done";
     });
 
-    const { body: created } = await harness.postJson<{ run: NexumRun }>(
-      `/sessions/${sess.id}/runs`,
-      { goal: "Long hanging job" },
-    );
+    const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
+      goal: "Long hanging job",
+    });
 
     // Stop server with short grace period
     const start = Date.now();
