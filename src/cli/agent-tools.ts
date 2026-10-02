@@ -23,6 +23,7 @@ import {
   agentCorePack,
   browserPack,
   databasePack,
+  generalPack,
   dockerPack,
   docsPack,
   filesystemPack,
@@ -137,6 +138,7 @@ export class AgentToolManager {
     // Docker daemon access is root-equivalent on the host: opt-in only.
     if (opts.dockerTool) this.registerToolPack(dockerPack(root, { egress: opts.dockerEgress ?? false }));
     this.registerToolPack(databasePack(guard));
+    this.registerToolPack(generalPack());
     // Default-on intelligence layer (semantic memory; RAG joins in the same
     // seam): every product agent gets durable semantic memory unless the
     // operator opts out via NEXUM_SEMANTIC_MEMORY=0.

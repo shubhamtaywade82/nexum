@@ -15,6 +15,7 @@
  *   DatabasePack     sqlite queries
  *   AgentCorePack    escalate / delegate / ask-user
  *   MemoryPack       semantic long-term memory (save / recall)
+ *   GeneralPack      calculator / weather / Wikipedia lookup
  *
  * Legacy compat factories (shellPack, dockerPack, projectPack, cryptoPack,
  * gitGithubPack) remain exported.
@@ -37,6 +38,7 @@ export { tradingPack, cryptoPack, type TradingPackOptions } from "./trading-pack
 export { rubyPack } from "./ruby-pack.js";
 export { railsPack } from "./rails-pack.js";
 export { databasePack } from "./database-pack.js";
+export { generalPack } from "./general-pack.js";
 export { agentCorePack } from "./agent-core-pack.js";
 export { memoryPack } from "./memory-pack.js";
 export { ragPack } from "./rag-pack.js";
