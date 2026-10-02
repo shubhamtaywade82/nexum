@@ -187,7 +187,7 @@ function getIdempotencyKey(req: IncomingMessage): string | undefined {
 }
 
 async function handleReady(res: ServerResponse, db: Database, eventBus: RedisEventBus): Promise<void> {
-  let postgresOk = false;
+  let postgresOk: boolean;
   try {
     await db.execute(sql`SELECT 1`);
     postgresOk = true;
@@ -297,7 +297,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
       try {
         const body = (await readJsonBody(req)) as { title?: string };
         if (body && typeof body.title === "string") title = body.title;
-      } catch {}
+      } catch {
+        // Optional session title; ignore parse failure
+      }
       const id = randomUUID();
       const row = await ctx.repos.sessions.create(id, ctx.workspaceRoot, title);
       const resBody = { id: row.id, createdAt: row.createdAt };

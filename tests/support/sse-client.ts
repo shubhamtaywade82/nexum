@@ -30,7 +30,7 @@ export function subscribeToEvents<T = Record<string, unknown>>(
 
   const terminalTypes = ["run.completed", "run.failed", "run.cancelled", "run.interrupted"];
 
-  const readPromise = (async () => {
+  void (async () => {
     try {
       const res = await fetch(url.toString(), {
         headers,

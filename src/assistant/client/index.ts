@@ -186,7 +186,9 @@ export class NexumClient {
       try {
         const parsed = JSON.parse(errorText);
         if (parsed.message) errorMessage = parsed.message;
-      } catch {}
+      } catch {
+        // Non-JSON error body; preserve status text
+      }
       throw new Error(errorMessage);
     }
     return res.json() as Promise<T>;

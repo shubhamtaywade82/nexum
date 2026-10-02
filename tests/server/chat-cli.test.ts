@@ -76,16 +76,6 @@ describe("Claude-Code-like CLI (Wave 14)", () => {
     // Fake agent requests approval
     harness.setRunHandler(async (goal: string, agent) => {
       agent.emit("onThinking", "Evaluating safety...");
-      // Simulate approval required event
-      const event = {
-        type: "run.approval.required" as const,
-        runId: "run_appr_turn",
-        interactionId: "appr_mock_1",
-        title: "Deploy database migration",
-        summary: "Will run DROP TABLE test",
-        ts: Date.now(),
-      };
-      // Emitted into the stream:
       agent.emit("onThinking", "Approval requested");
       return `Deployed with approval: ${goal}`;
     });
