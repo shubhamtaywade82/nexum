@@ -139,15 +139,17 @@ The gateway never catches a `DecisionError` and converts it into a chat turn —
 
 ---
 
-## SDK adapter seam (upstream export gap)
+## SDK adapter seam
 
-The upstream `@nemesis-oss/ollama-sdk` PR #26 exposes System One only through generated internals:
+The upstream `@nemesis-oss/ollama-sdk@1.7.0+` exposes the System One operation through the public `./generated/api` subpath declared in its `exports` map:
 
-- `src/generated/api/native-api.ts` — `class NativeApi { systemOne(request): Promise<unknown> }`
-- `src/generated/api/operations.ts` — `systemOneOp` (OperationDefinition)
-- `src/generated/api/index.ts` — re-exports `systemOneOp as systemOne`
+- `NativeApi` class — generated API class for the native domain; `systemOne(request): Promise<unknown>` is its System One method
+- `systemOneOp` (re-exported as `systemOne`) — the `OperationDefinition` constant that `NativeApi.systemOne` passes to `OllamaRuntime.invoke`
+- `OllamaRuntime` — the runtime that owns transport, retry, streaming, telemetry, and error handling; reachable through the public `OllamaClient.runtime` getter
 
-None of these are re-exported from the SDK's public entrypoint `src/index.ts`. Per the integration contract, Nexum does **NOT** deep-import generated internals. Instead, `SystemOneDecisionGateway` depends on a small Nexum-owned seam:
+Nexum does **NOT** depend on `NativeApi.systemOne` directly, because that method does not accept an `AbortSignal` and Nexum's Decision Plane contract preserves the caller's signal end-to-end. Instead, the production adapter `OllamaSystemOneClient` (in `src/models/decision/ollama-system-one-client.ts`) calls `OllamaClient.runtime.invoke({ operation: systemOneOp, body, signal })` directly — using only SDK public surface — which gives us native abort support without a `Promise.race` workaround.
+
+`SystemOneDecisionGateway` itself does NOT depend on any SDK type. It depends on a small Nexum-owned seam:
 
 ```ts
 // src/models/decision/system-one-gateway.ts
@@ -156,37 +158,9 @@ export interface SystemOneClient {
 }
 ```
 
-Today, `ModelStack` builds the gateway around a `PendingSystemOneClient` that throws `DecisionUnavailableError` on first call — the honest fallback that surfaces the upstream gap. Tests inject a `FakeDecisionGateway` (or any custom `SystemOneClient`) through `ModelStackOptions.decisionGateway`.
+`OllamaSystemOneClient` is the only implementor of that seam in production. Tests inject a `FakeSystemOneClient` (or any custom `SystemOneClient`) through `ModelStackOptions.decisionGateway`, so decision-plane logic is fully tested without touching the network.
 
-### Required upstream SDK change
-
-Request that `@nemesis-oss/ollama-sdk` add, to `src/index.ts`:
-
-```ts
-export { NativeApi } from './generated/api/native-api.js';
-export { systemOneOp as systemOneOperation } from './generated/api/operations.js';
-```
-
-—or, preferably, a higher-level facade:
-
-```ts
-// on OllamaClient
-systemOne(request: Record<string, unknown>): Promise<unknown>;
-```
-
-Once either lands, the Nexum adapter becomes a one-line change:
-
-```ts
-// src/cli/services/model-stack.ts
-class OllamaSystemOneClient implements SystemOneClient {
-  constructor(private readonly ollama: OllamaClient) {}
-  systemOne(req: Record<string, unknown>, opts?: { signal?: AbortSignal }) {
-    return this.ollama.systemOne(req, opts);
-  }
-}
-```
-
-…and the `PendingSystemOneClient` is removed. No Nexum caller changes — the boundary was designed for exactly this swap.
+`Provider.getOllamaClient()` (public accessor in `src/models/adapters/provider.ts`) is how the `ModelStack` reaches the same cached `OllamaClient` that the chat path uses. `LocalSystemOneEnvironment` uses the same accessor with the SDK's `version` operation to probe the local Ollama server's version on the first `decide()` call — the result is cached for the stack's lifetime.
 
 ---
 
@@ -288,7 +262,7 @@ Construction rules:
 
 - `cfg.enableDecision === false` → `decisionGateway === undefined` (disabled, never built)
 - `cfg.tier === "cloud"` → `decisionGateway === undefined` (auto-disabled; System One is local-only)
-- `cfg.enableDecision === true && cfg.tier === "local"` → built around `PendingSystemOneClient` today; replaced by `OllamaSystemOneClient` once the SDK export lands
+- `cfg.enableDecision === true && cfg.tier === "local"` → built around `OllamaSystemOneClient` (calls `OllamaClient.runtime.invoke` with the SDK's `systemOneOp`); the local Ollama version is probed lazily on the first `decide()` call via the SDK's `version` operation and cached for the stack's lifetime
 - An explicitly-injected `decisionGateway` wins **only when the plane is enabled** — `enableDecision=false` always wins so a caller cannot accidentally enable a disabled plane
 
 The primary generation `model` (e.g. `qwen3.5:4b`) and the `decisionModel` (e.g. `mpuig/system-one-minicpm5-2b-q8`) are kept strictly independent. Concurrent `provider.chat()` and `decisionGateway.decide()` calls do not mutate shared model state — the decision gateway receives its own model in the `DecisionRequest`, the `Provider` is untouched.

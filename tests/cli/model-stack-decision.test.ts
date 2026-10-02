@@ -1,6 +1,6 @@
 import { ModelStack } from "../../src/cli/services/model-stack.js";
 import { FakeDecisionGateway } from "../../src/models/decision/fake-gateway.js";
-import { DecisionError, DecisionUnavailableError, type DecisionGateway } from "../../src/models/decision/index.js";
+import { DecisionError, DecisionTransportError, type DecisionGateway } from "../../src/models/decision/index.js";
 import type { DecisionRequest } from "../../src/models/decision/types.js";
 import type { CliConfig } from "../../src/cli/config.js";
 
@@ -66,11 +66,13 @@ describe("ModelStack — Decision Plane integration", () => {
     expect(stack.decisionModel).toBe("mpuig/system-one-minicpm5-2b-q8");
   });
 
-  it("reports a typed DecisionUnavailableError when decide() is called on the auto-built gateway (SDK adapter pending upstream export)", async () => {
-    // The auto-built gateway is the honest fallback: it exists so downstream
-    // callers can wire against a non-undefined decisionGateway today, but
-    // calling it surfaces the upstream export gap as a typed decision error
-    // — never a silent chat fallback.
+  it("surfaces a typed DecisionError (transport failure) when decide() is called against an unreachable local Ollama — never a silent chat fallback", async () => {
+    // With the real OllamaSystemOneClient adapter wired (SDK 1.7.0+ exports
+    // the System One operation via its public `./generated/api` subpath),
+    // the auto-built gateway actually attempts the SDK call. When the local
+    // Ollama is unreachable (the test environment mocks fetch to reject),
+    // the SDK throws a transport error and the gateway surfaces it as a
+    // typed DecisionError — never a silent Provider.chat fallback.
     const stack = new ModelStack(baseCfg(), () => {});
     const req: DecisionRequest = {
       id: "d1",
@@ -86,7 +88,7 @@ describe("ModelStack — Decision Plane integration", () => {
       ],
     };
     await expect(stack.decisionGateway!.decide(req)).rejects.toBeInstanceOf(DecisionError);
-    await expect(stack.decisionGateway!.decide(req)).rejects.toBeInstanceOf(DecisionUnavailableError);
+    await expect(stack.decisionGateway!.decide(req)).rejects.toBeInstanceOf(DecisionTransportError);
   });
 
   it("does not mutate shared model state when an injected decisionGateway runs concurrently with a generation call", async () => {

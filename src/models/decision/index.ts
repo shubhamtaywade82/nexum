@@ -44,6 +44,8 @@ export type { FakeDecisionAnswer, FakeDecisionGatewayOptions } from "./fake-gate
 export { SystemOneDecisionGateway, SYSTEM_ONE_ENGINE } from "./system-one-gateway.js";
 export type { SystemOneClient, SystemOneEnvironment, SystemOneGatewayOptions } from "./system-one-gateway.js";
 
+export { OllamaSystemOneClient } from "./ollama-system-one-client.js";
+
 // ── Wave 7: telemetry + replay + evaluation ───────────────────────────────
 export type { DecisionEvent, DecisionEventRecorder } from "./telemetry.js";
 export { InMemoryDecisionEventRecorder, RecordingDecisionGateway } from "./telemetry.js";

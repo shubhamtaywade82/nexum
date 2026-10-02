@@ -259,6 +259,20 @@ export class Provider {
     return this.client;
   }
 
+  /**
+   * Public accessor for the cached {@link OllamaClient}. Used by the Decision
+   * Plane adapter ({@link OllamaSystemOneClient}) to reach the SDK's public
+   * `runtime.invoke` for the System One operation, and by
+   * {@link LocalSystemOneEnvironment} to probe the local Ollama server's
+   * version via the SDK's `version` operation. The returned client is the
+   * same instance used by {@link chat} — its endpoint circuit-breaker state
+   * persists across calls. Returns a fresh client (and re-caches it) if the
+   * tier/host has changed since the last call.
+   */
+  getOllamaClient(): OllamaClient {
+    return this.buildClient();
+  }
+
   async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResponse> {
     if (this.tier === "cloud" && this.apiKeys.length === 0) {
       throw new ProviderError("missing apiKey for cloud chat");

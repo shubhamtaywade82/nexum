@@ -23,13 +23,9 @@ import { LocalWorker } from "../../models/local-worker.js";
 import { Verifier } from "../../models/verification/verifier.js";
 import { SelfConsistency } from "../../models/verification/self-consistency.js";
 import { ModelCapabilityRegistry } from "../../models/profiles/model-capability-registry.js";
-import {
-  DecisionGateway,
-  DecisionUnavailableError,
-  SystemOneDecisionGateway,
-  type SystemOneClient,
-  type SystemOneEnvironment,
-} from "../../models/decision/index.js";
+import { DecisionGateway, SystemOneDecisionGateway, type SystemOneEnvironment } from "../../models/decision/index.js";
+import { OllamaSystemOneClient } from "../../models/decision/ollama-system-one-client.js";
+import { version as versionOperation } from "@nemesis-oss/ollama-sdk/generated/api";
 
 export type StatusEmitter = (message: string) => void;
 
@@ -50,32 +46,13 @@ export interface ModelStackOptions {
 }
 
 /**
- * Stub {@link SystemOneClient} used by the auto-built gateway until the
- * upstream SDK re-exports `NativeApi.systemOne` (or `OllamaClient.systemOne`)
- * from its public entrypoint. Calling `systemOne` throws a typed
- * {@link DecisionUnavailableError} so the caller's policy can fall back to a
- * deterministic path — never to Provider.chat.
- *
- * Once the upstream export lands, this class is replaced by a one-line
- * adapter that calls `OllamaClient.systemOne(...)` directly. See the Wave 8
- * final report's "Upstream export gap" section.
- */
-class PendingSystemOneClient implements SystemOneClient {
-  systemOne(_request: Record<string, unknown>): Promise<unknown> {
-    return Promise.reject(
-      new DecisionUnavailableError(
-        "System One SDK adapter is not yet wired — upstream export of NativeApi.systemOne / OllamaClient.systemOne is pending in @nemesis-oss/ollama-sdk. " +
-          "Configure a real SystemOneClient via dependency injection or wait for the SDK export to land.",
-      ),
-    );
-  }
-}
-
-/**
- * Local-tier environment for the auto-built System One gateway. Reads the
- * Ollama server version lazily via the local Provider (so the gateway
- * construction stays cheap — version probes happen on the first `decide()`
- * call, not at stack construction time).
+ * Local-tier environment for the auto-built System One gateway. Probes the
+ * local Ollama server's version lazily via the SDK's `version` operation
+ * (declared in the SDK's public `./generated/api` subpath) on the first
+ * `decide()` call — gateway construction stays cheap. The result is cached
+ * for the lifetime of the stack: Ollama versions don't change without a
+ * server restart, and the gateway only uses the version to enforce the
+ * `minVersion: 0.35.0` contract.
  */
 class LocalSystemOneEnvironment implements SystemOneEnvironment {
   readonly tier = "local" as const;
@@ -89,12 +66,15 @@ class LocalSystemOneEnvironment implements SystemOneEnvironment {
   async getVersion(): Promise<string | undefined> {
     if (this.cached !== null) return this.cached === undefined ? undefined : this.cached;
     try {
-      const raw = (await this.provider.availableModels()) as { version?: unknown };
-      // Local Ollama's /api/tags does NOT include a version field today;
-      // when that changes (or when the SDK exposes /api/version through
-      // the Provider), this will start returning a value without code
-      // changes here. Until then, "unknown" lets the gateway proceed.
-      const v = (raw as { version?: unknown }).version;
+      // Use the SDK's public `version` operation via the same `runtime.invoke`
+      // seam the Decision Plane adapter uses for `systemOne`. The response
+      // shape is `{ version?: string }` per the SDK's `VersionResponse`.
+      const client = this.provider.getOllamaClient();
+      const res = (await client.runtime.invoke({
+        operation: versionOperation,
+        body: undefined,
+      })) as { version?: unknown };
+      const v = res.version;
       this.cached = typeof v === "string" ? v : undefined;
     } catch {
       // Local Ollama unreachable — let the gateway try anyway and surface
@@ -228,19 +208,22 @@ export class ModelStack {
     // System One is local-only by contract (see `contracts/overlays/systemone.yaml`
     // in the upstream SDK). When the runtime tier is `cloud` the stack never
     // builds a gateway — System One must NOT silently route to Provider.chat on
-    // the cloud tier. The cloud-tier auto-disable also avoids constructing a
-    // PendingSystemOneClient whose only role would be to refuse on first call.
+    // the cloud tier. The cloud-tier auto-disable also avoids instantiating
+    // OllamaSystemOneClient against a cloud client (which would be refused
+    // eagerly by the gateway's `tier === 'cloud'` check, but there is no
+    // reason to construct it in the first place).
     //
     // When enabled and local, the stack builds a SystemOneDecisionGateway
-    // around a PendingSystemOneClient today. Once the upstream SDK re-exports
-    // NativeApi.systemOne / OllamaClient.systemOne, the PendingSystemOneClient
-    // is replaced with a one-line adapter (see the Wave 8 final report).
+    // around an OllamaSystemOneClient that calls the SDK's public
+    // `systemOne` operation via `OllamaClient.runtime.invoke`. The local
+    // Ollama version probe (used by the gateway to enforce `minVersion:
+    // 0.35.0`) is served by the same `runtime.invoke` seam.
     this.decisionModel = cfg.decisionModel;
     if (cfg.enableDecision && cfg.tier === "local") {
       this.decisionGateway =
         opts.decisionGateway ??
         new SystemOneDecisionGateway({
-          client: new PendingSystemOneClient(),
+          client: new OllamaSystemOneClient(localProvider.getOllamaClient()),
           environment: new LocalSystemOneEnvironment(localProvider),
         });
     } else {

@@ -5,20 +5,21 @@
  *
  * ── Adapter seam ───────────────────────────────────────────────────────────
  *
- * The upstream SDK (`@nemesis-oss/ollama-sdk`) PR #26 currently exposes
- * System One only through generated internals:
+ * The upstream SDK (`@nemesis-oss/ollama-sdk@1.7.0+`) exposes the System One
+ * operation through its public `./generated/api` subpath export, which ships
+ * `NativeApi`, `systemOneOp` (re-exported as `systemOne`), and the
+ * `OllamaRuntime` class. The SDK's public `OllamaClient.runtime` getter
+ * returns the runtime that `NativeApi` would use internally.
  *
- *   - `NativeApi.systemOne(request: Record<string, unknown>): Promise<unknown>`
- *     in `src/generated/api/native-api.ts`
- *   - `systemOneOp` OperationDefinition in `src/generated/api/operations.ts`
- *
- * These are NOT re-exported from the SDK's public entrypoint
- * (`src/index.ts`). Per the integration contract, Nexum does NOT deep-import
- * generated internals. Instead, this gateway depends on a small Nexum-owned
- * {@link SystemOneClient} interface that mirrors the SDK's `systemOne`
- * method shape. A one-line adapter will wire the real SDK call here once the
- * upstream export lands (see the module README and the final report's
- * "Upstream export gap" section).
+ * Nexum does NOT depend on `NativeApi.systemOne` directly because that method
+ * does not accept an `AbortSignal`, and Nexum's Decision Plane contract
+ * preserves the caller's signal end-to-end. Instead, the production adapter
+ * ({@link OllamaSystemOneClient} in `./ollama-system-one-client.js`) calls
+ * `OllamaClient.runtime.invoke({ operation: systemOneOp, body, signal })`
+ * directly — using only SDK public surface — which gives us native abort
+ * support. This gateway depends on the small Nexum-owned
+ * {@link SystemOneClient} interface that mirrors the SDK's call shape, so
+ * tests can inject a fake without the SDK.
  *
  * ── Failure model ──────────────────────────────────────────────────────────
  *
