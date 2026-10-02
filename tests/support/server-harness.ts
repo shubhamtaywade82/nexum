@@ -11,6 +11,7 @@ export interface ServerHarnessOptions {
   createAgent?: () => FakeAgent;
   host?: string;
   token?: string;
+  interactionTimeoutMs?: number;
 }
 
 export class ServerHarness {
@@ -56,6 +57,7 @@ export class ServerHarness {
       host: opts.host ?? "127.0.0.1",
       port: 0,
       token: opts.token,
+      interactionTimeoutMs: opts.interactionTimeoutMs,
     });
 
     const bound = await this.hostInstance.start();

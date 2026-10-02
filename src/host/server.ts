@@ -37,7 +37,6 @@ import {
   CreateRunRequestSchema,
   InvokeToolRequestSchema,
   ResolveInteractionRequestSchema,
-  type ResolveInteractionRequest,
   PROTOCOL_VERSION,
   type NexumRunEvent,
   type NexumCapabilities,
@@ -64,6 +63,8 @@ export interface NexumHostOptions {
   host?: string;
   port?: number;
   token?: string;
+  /** How long an unanswered approval/clarification waits before failing closed. Default 5 min. */
+  interactionTimeoutMs?: number;
 }
 
 export interface NexumHost {
@@ -119,6 +120,7 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
   const registry = new HostAgentRegistry({
     createAgent: opts.createAgent,
     messages: repos.messages,
+    interactionTimeoutMs: opts.interactionTimeoutMs,
   });
   const runOwners = new Map<string, string>();
   const activeRuns = new Set<Promise<void>>();
@@ -257,7 +259,8 @@ async function drainActiveRuns(
   if (timer) clearTimeout(timer);
   if (timedOut) {
     for (const sessionId of runOwners.values()) {
-      registry.peek(sessionId)?.agent.cancelExecutionRun();
+      const entry = registry.peek(sessionId);
+      if (entry) cancelRun(entry);
     }
     await Promise.allSettled([...activeRuns]);
   }
@@ -378,7 +381,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
     if (method === "POST" && segments.length === 3 && segments[2] === "cancel" && runId) {
       const sessionId = ctx.runOwners.get(runId);
       const entry = sessionId ? ctx.registry.peek(sessionId) : null;
-      const cancelled = entry ? entry.agent.cancelExecutionRun() : false;
+      const cancelled = entry ? cancelRun(entry) : false;
       writeJson(res, 200, { cancelled });
       return;
     }
@@ -394,7 +397,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
       if (interactionId) {
         await handleResolveInteraction(req, res, {
           repos: ctx.repos,
-          eventBus: ctx.eventBus,
+          registry: ctx.registry,
+          runOwners: ctx.runOwners,
           runId,
           interactionId,
         });
@@ -406,29 +410,27 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   writeJson(res, 404, { error: "not_found", message: `no route for ${method} ${url.pathname}` });
 }
 
-function buildInteractionResolvedEvent(
-  runId: string,
-  interactionId: string,
-  data: ResolveInteractionRequest,
-): NexumRunEvent {
-  const ts = Date.now();
-  if (data.selectedId !== undefined) {
-    return { type: "run.clarification.resolved", runId, interactionId, selectedId: data.selectedId, ts };
-  }
-  if (data.response !== undefined) {
-    return { type: "run.mcp_elicitation.resolved", runId, interactionId, response: data.response, ts };
-  }
-  return { type: "run.approval.resolved", runId, interactionId, approved: data.approved ?? true, ts };
+/** Aborts the run and releases anything it is blocked on, so cancel can't be stranded behind a prompt. */
+function cancelRun({ agent, bridge }: AgentEntry): boolean {
+  const cancelled = agent.cancelExecutionRun();
+  bridge.denyPending();
+  return cancelled;
 }
 
 async function handleResolveInteraction(
   req: IncomingMessage,
   res: ServerResponse,
-  ctx: { repos: Repos; eventBus: RedisEventBus; runId: string; interactionId: string },
+  ctx: {
+    repos: Repos;
+    registry: HostAgentRegistry;
+    runOwners: Map<string, string>;
+    runId: string;
+    interactionId: string;
+  },
 ): Promise<void> {
   const run = await ctx.repos.runs.get(ctx.runId);
   if (!run) {
-    writeJson(res, 404, { error: "not_found", message: `no run "${ctx.runId}"` });
+    writeJson(res, 404, { error: ErrorCodes.RUN_NOT_FOUND, message: `no run "${ctx.runId}"` });
     return;
   }
 
@@ -436,22 +438,33 @@ async function handleResolveInteraction(
   try {
     body = await readJsonBody(req);
   } catch (err) {
-    writeJson(res, 400, { error: "invalid_body", message: describeError(err) });
+    writeJson(res, 400, { error: ErrorCodes.INVALID_REQUEST, message: describeError(err) });
     return;
   }
-
   const parsed = ResolveInteractionRequestSchema.safeParse(body);
   if (!parsed.success) {
-    writeJson(res, 400, { error: "invalid_request", message: parsed.error.message });
+    writeJson(res, 400, { error: ErrorCodes.INVALID_REQUEST, message: parsed.error.message });
     return;
   }
 
-  const event = buildInteractionResolvedEvent(ctx.runId, ctx.interactionId, parsed.data);
-  const seq = await ctx.repos.events.append(event);
-  await ctx.eventBus.publish(runChannel(ctx.runId), { seq, ...event });
-
-  writeJson(res, 200, { resolved: true, interactionId: ctx.interactionId });
+  // Only a run still executing can have a pending interaction; a finished run has none.
+  const sessionId = ctx.runOwners.get(ctx.runId);
+  const bridge = sessionId ? ctx.registry.peek(sessionId)?.bridge : undefined;
+  const outcome = bridge?.resolve(ctx.interactionId, parsed.data);
+  if (outcome?.ok) {
+    writeJson(res, 200, { resolved: true, interactionId: ctx.interactionId });
+    return;
+  }
+  const failure = outcome ?? { reason: "not_found" as const, message: `no pending interaction "${ctx.interactionId}"` };
+  const rejection = INTERACTION_REJECTIONS[failure.reason];
+  writeJson(res, rejection.status, { error: rejection.code, message: failure.message });
 }
+
+const INTERACTION_REJECTIONS = {
+  not_found: { status: 404, code: ErrorCodes.INTERACTION_NOT_FOUND },
+  already_resolved: { status: 409, code: ErrorCodes.INTERACTION_ALREADY_RESOLVED },
+  invalid: { status: 400, code: ErrorCodes.INVALID_REQUEST },
+} as const;
 
 async function handleRunEvents(
   req: IncomingMessage,
@@ -611,7 +624,12 @@ async function handleCreateRun(
 
   const { agent, bridge }: AgentEntry = await ctx.registry.getOrCreate(sessionId);
   if (bridge.isBusy || ctx.busySessions.has(sessionId)) {
-    writeJson(res, 409, { error: "run_in_progress", message: `session "${sessionId}" already has a run in progress` });
+    const activeRunId = [...ctx.runOwners].find(([, owner]) => owner === sessionId)?.[0];
+    writeJson(res, 409, {
+      error: "run_in_progress",
+      message: `session "${sessionId}" already has a run in progress`,
+      runId: activeRunId,
+    });
     return;
   }
 
@@ -653,7 +671,7 @@ async function handleCreateRun(
 async function runAgentInBackground(
   agent: Agent,
   bridge: RunEventBridge,
-  { goal, outputFormat, openuiSpec }: CreateRunRequest,
+  { goal, outputFormat, openuiSpec, interactive }: CreateRunRequest,
   ctx: {
     repos: Repos;
     eventBus: RedisEventBus;
@@ -679,7 +697,7 @@ async function runAgentInBackground(
       });
   };
 
-  bridge.begin({ runId: ctx.runId, write: publish });
+  bridge.begin({ runId: ctx.runId, write: publish, interactive });
   publish({ type: "run.started", runId: ctx.runId, sessionId: ctx.sessionId, goal, ts: Date.now() });
 
   const messageCountBefore = agent.conversation.getMessages().length;

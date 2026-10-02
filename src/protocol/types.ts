@@ -189,7 +189,7 @@ export type NexumRunEvent =
       runId: string;
       interactionId: string;
       question: string;
-      options: Array<{ id: string; label: string }>;
+      options: Array<{ id: string; label: string; description?: string }>;
       ts: number;
     }
   | {
@@ -239,6 +239,11 @@ export const CreateRunRequestSchema = z
     outputFormat: NexumOutputFormatSchema.default("markdown"),
     /** Client-owned component spec, so the library the model targets is the one the client renders. */
     openuiSpec: z.string().min(1).max(MAX_OPENUI_SPEC_CHARS).optional(),
+    /**
+     * The client can answer approvals and clarifications. When false, approvals are denied and
+     * clarifications skipped, so a headless client never leaves a run waiting on nobody.
+     */
+    interactive: z.boolean().default(false),
   })
   .refine((req) => req.outputFormat !== "openui" || req.openuiSpec !== undefined, {
     message: 'outputFormat "openui" requires openuiSpec',

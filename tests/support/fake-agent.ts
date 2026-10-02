@@ -1,5 +1,7 @@
 import { AgentConversation } from "../../src/cli/agent-conversation.js";
 import type { Agent } from "../../src/cli/agent.js";
+import { ApprovalManager } from "../../src/cli/services/approval-manager.js";
+import type { ClarificationRequest, ClarificationResponse } from "../../src/runtime/types.js";
 import type { ToolDefinition } from "../../src/core/tools/tool-contract.js";
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
@@ -48,6 +50,14 @@ export class FakeAgent {
 
   private abortController: AbortController | null = null;
   private readonly listeners = new Map<string, Set<EventHandler>>();
+  // The real manager, so tests see the agent's actual deny-by-default and pending-promise behavior.
+  private readonly approvals = new ApprovalManager({
+    autoApprove: false,
+    onApprovalRequested: (request) => this.emit("onApprovalRequested", request),
+    onClarificationRequested: (request) => this.emit("onClarificationRequested", request),
+    hasApprovalListener: () => (this.listeners.get("onApprovalRequested")?.size ?? 0) > 0,
+    hasClarificationListener: () => (this.listeners.get("onClarificationRequested")?.size ?? 0) > 0,
+  });
   private customRunHandler?: (goal: string) => Promise<string>;
 
   on(event: string, handler: EventHandler): void {
@@ -65,6 +75,22 @@ export class FakeAgent {
 
   setRunHandler(handler: (goal: string) => Promise<string>): void {
     this.customRunHandler = handler;
+  }
+
+  requestApproval(title: string, summary: string): Promise<boolean> {
+    return this.approvals.requestApproval(title, summary);
+  }
+
+  requestClarification(request: ClarificationRequest): Promise<ClarificationResponse> {
+    return this.approvals.requestClarification(request);
+  }
+
+  resolveApproval(id: string, approved: boolean): void {
+    this.approvals.resolveApproval(id, approved);
+  }
+
+  resolveClarification(response: ClarificationResponse): void {
+    this.approvals.resolveClarification(response);
   }
 
   async startHost(): Promise<void> {}

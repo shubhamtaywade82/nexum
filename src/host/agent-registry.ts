@@ -29,6 +29,8 @@ export interface HostAgentRegistryOptions {
   messages?: MessageRepository;
   /** Idle time before an unused session's Agent is torn down. Default 30 min. */
   idleTtlMs?: number;
+  /** How long an unanswered approval/clarification waits before failing closed. Default 5 min. */
+  interactionTimeoutMs?: number;
 }
 
 export class HostAgentRegistry {
@@ -81,7 +83,7 @@ export class HostAgentRegistry {
       }
     }
 
-    const entry: AgentEntry = { agent, bridge: new RunEventBridge(agent), lastUsedAt: Date.now() };
+    const entry: AgentEntry = { agent, bridge: new RunEventBridge(agent, { interactionTimeoutMs: this.opts.interactionTimeoutMs }), lastUsedAt: Date.now() };
     this.entries.set(sessionId, entry);
     this.ensureSweepScheduled();
     return entry;
