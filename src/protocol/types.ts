@@ -246,6 +246,12 @@ export const CreateRunRequestSchema = z
   });
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>;
 
+/** Body of POST /sessions/:id/tools/:name — a read-only tool call from a rendered UI. */
+export const InvokeToolRequestSchema = z.object({
+  args: z.record(z.string(), z.unknown()).default({}),
+});
+export type InvokeToolRequest = z.infer<typeof InvokeToolRequestSchema>;
+
 export interface NexumCapabilities {
   protocolVersion: string;
   serverVersion?: string;
@@ -276,6 +282,8 @@ export const ErrorCodes = {
   INTERACTION_NOT_FOUND: "interaction_not_found",
   INTERACTION_ALREADY_RESOLVED: "interaction_already_resolved",
   UNSUPPORTED_OUTPUT_FORMAT: "unsupported_output_format",
+  TOOL_NOT_FOUND: "tool_not_found",
+  TOOL_REQUIRES_RUN: "tool_requires_run",
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

@@ -1,5 +1,39 @@
 import { AgentConversation } from "../../src/cli/agent-conversation.js";
 import type { Agent } from "../../src/cli/agent.js";
+import type { ToolDefinition } from "../../src/core/tools/tool-contract.js";
+import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
+import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
+
+/** Records every handler call so tests can prove a refused tool never executed. */
+export const fakeToolCalls: string[] = [];
+
+function fakeTool(id: string, risk: ToolDefinition["risk"], financial: boolean): ToolDefinition {
+  return {
+    id,
+    description: id,
+    inputSchema: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
+    capabilities: ["market"],
+    pack: "test",
+    tags: [],
+    risk,
+    sideEffects: { filesystem: false, process: false, network: false, externalMutation: financial, financial },
+    execution: { timeoutMs: 5_000, concurrency: 1, idempotent: !financial, reversible: !financial },
+    policy: { confirmation: "never" },
+  };
+}
+
+function fakeToolGateway(): DefaultToolGateway {
+  const catalog = new ToolCatalog()
+    .register(fakeTool("fake_quote", "read", false), async (args) => {
+      fakeToolCalls.push("fake_quote");
+      return { symbol: args.symbol, price: 67000.5 };
+    })
+    .register(fakeTool("fake_place_order", "high", true), async () => {
+      fakeToolCalls.push("fake_place_order");
+      return { placed: true };
+    });
+  return new DefaultToolGateway({ catalog });
+}
 
 type EventHandler = (...args: unknown[]) => void;
 
@@ -10,6 +44,7 @@ export class FakeAgent {
     resumeSessionById: (_id: string): null => null,
   };
   readonly execution: { signal: AbortSignal | null } = { signal: null };
+  readonly tools = { gateway: fakeToolGateway() };
 
   private abortController: AbortController | null = null;
   private readonly listeners = new Map<string, Set<EventHandler>>();

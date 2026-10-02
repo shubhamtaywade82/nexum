@@ -32,8 +32,10 @@ import type { Agent } from "../cli/agent.js";
 import { HostAgentRegistry, type AgentEntry } from "./agent-registry.js";
 import type { RunEventBridge } from "./event-bridge.js";
 import { SUPPORTED_OUTPUT_FORMATS, openuiInstructions, presentOutput } from "./presentation.js";
+import { invokeUiTool } from "./ui-tools.js";
 import {
   CreateRunRequestSchema,
+  InvokeToolRequestSchema,
   ResolveInteractionRequestSchema,
   type ResolveInteractionRequest,
   PROTOCOL_VERSION,
@@ -339,6 +341,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
       await handleCreateRun(req, res, sessionId, ctx);
       return;
     }
+
+    if (method === "POST" && segments.length === 4 && segments[2] === "tools" && sessionId) {
+      await handleInvokeTool(req, res, sessionId, decodeURIComponent(segments[3]), ctx);
+      return;
+    }
   }
 
   if (segments[0] === "runs" && segments.length >= 2) {
@@ -526,6 +533,34 @@ async function handleRunEvents(
   req.on("close", () => {
     if (!unsubscribed) void unsubscribe();
   });
+}
+
+async function handleInvokeTool(
+  req: IncomingMessage,
+  res: ServerResponse,
+  sessionId: string,
+  toolName: string,
+  ctx: RequestContext,
+): Promise<void> {
+  if (!(await ctx.repos.sessions.get(sessionId))) {
+    writeJson(res, 404, { error: "not_found", message: `no session "${sessionId}"` });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = InvokeToolRequestSchema.safeParse(await readJsonBody(req));
+  } catch (err) {
+    writeJson(res, 400, { error: ErrorCodes.INVALID_REQUEST, message: describeError(err) });
+    return;
+  }
+  if (!parsed.success) {
+    writeJson(res, 400, { error: ErrorCodes.INVALID_REQUEST, message: parsed.error.message });
+    return;
+  }
+
+  const { agent } = await ctx.registry.getOrCreate(sessionId);
+  const { status, body } = await invokeUiTool(agent.tools.gateway, toolName, parsed.data.args);
+  writeJson(res, status, body);
 }
 
 async function parseCreateRunRequest(
