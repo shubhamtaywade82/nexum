@@ -69,7 +69,7 @@ jobs:
         run: npm run docs:build
 
       - name: Run Test Suite
-        run: npm test
+        run: npm test -- --runInBand
         env:
           CI: true
           SKIP_NETWORK_TESTS: true
