@@ -69,6 +69,16 @@ describe("Protocol v1", () => {
       const res = CreateRunRequestSchema.safeParse({});
       expect(res.success).toBe(false);
     });
+
+    it("defaults outputFormat to markdown", () => {
+      const res = CreateRunRequestSchema.safeParse({ goal: "Build feature" });
+      expect(res.success && res.data.outputFormat).toBe("markdown");
+    });
+
+    it("rejects unknown outputFormat", () => {
+      const res = CreateRunRequestSchema.safeParse({ goal: "Build feature", outputFormat: "html" });
+      expect(res.success).toBe(false);
+    });
   });
 
   describe("ResolveInteractionRequestSchema", () => {

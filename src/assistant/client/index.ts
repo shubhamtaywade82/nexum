@@ -1,4 +1,10 @@
-import type { NexumCapabilities, NexumRun, RunEventEnvelope, ResolveInteractionRequest } from "../../protocol/types.js";
+import type {
+  NexumCapabilities,
+  NexumOutputFormat,
+  NexumRun,
+  RunEventEnvelope,
+  ResolveInteractionRequest,
+} from "../../protocol/types.js";
 
 export interface NexumClientOptions {
   baseUrl?: string;
@@ -13,6 +19,7 @@ export interface CreateSessionOptions {
 
 export interface CreateRunOptions {
   idempotencyKey?: string;
+  outputFormat?: NexumOutputFormat;
 }
 
 export interface StreamEventsOptions {
@@ -86,7 +93,7 @@ export class NexumClient {
     const res = await this.request<{ run: NexumRun }>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ goal }),
+      body: JSON.stringify({ goal, outputFormat: opts.outputFormat }),
     });
     return res.run;
   }

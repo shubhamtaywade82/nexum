@@ -31,7 +31,8 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
     // Await run execution to complete
     const finished = await harness.waitForRun(body.run.id);
     expect(finished.status).toBe("completed");
-    expect(finished.output).toContain("Finished task: Inspect project status");
+    expect(finished.output?.format).toBe("markdown");
+    expect(finished.output?.content).toContain("Finished task: Inspect project status");
   });
 
   it("GET /runs/:id retrieves run metadata", async () => {
@@ -48,6 +49,18 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
     await harness.waitForRun(created.run.id);
   });
 
+  it("POST /sessions/:id/runs rejects an output format the server cannot produce", async () => {
+    const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
+
+    const { status, body } = await harness.postJson<{ error: string }>(`/sessions/${sess.id}/runs`, {
+      goal: "Render a dashboard",
+      outputFormat: "openui",
+    });
+
+    expect(status).toBe(400);
+    expect(body.error).toBe("unsupported_output_format");
+  });
+
   it("GET /runs/:id/events streams SSE events with monotonic seq id", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
     const { body: created } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sess.id}/runs`, {
@@ -58,6 +71,7 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
     const terminal = await sub.waitForTerminal();
 
     expect(terminal.event).toBe("run.completed");
+    expect(terminal.data.output).toEqual({ format: "markdown", content: expect.any(String) });
     expect(sub.events.length).toBeGreaterThanOrEqual(3);
 
     // Verify event ordering and monotonic seq IDs

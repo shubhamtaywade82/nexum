@@ -136,7 +136,7 @@ function renderEvent(event: NexumRunEvent): number {
       console.log(`  [model: ${event.tier}/${event.model}]`);
       return 0;
     case "run.completed":
-      console.log(`\n✓ ${event.output}`);
+      console.log(`\n✓ ${event.output.content}`);
       return 0;
     case "run.failed":
       console.error(`\n✗ run failed: ${event.error}`);

@@ -247,7 +247,7 @@ function dispatchLifecycleEvent(bus: EventBus, ev: NexumRunEvent): boolean {
     return true;
   }
   if (ev.type === "run.completed") {
-    bus.publish({ type: "conversation.chunk", role: "assistant", chunk: ev.output });
+    bus.publish({ type: "conversation.chunk", role: "assistant", chunk: ev.output.content });
     bus.publish({ type: "status.changed", status: "completed" });
     return true;
   }

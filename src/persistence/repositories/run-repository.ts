@@ -1,7 +1,7 @@
 import { eq, inArray, and } from "drizzle-orm";
 import type { Database } from "../database.js";
 import { runs, type RunRow } from "../schema/run.js";
-import type { NexumRunStatus } from "../../protocol/types.js";
+import type { NexumRunOutput, NexumRunStatus } from "../../protocol/types.js";
 
 export class RunRepository {
   constructor(private readonly db: Database) {}
@@ -14,14 +14,15 @@ export class RunRepository {
   async updateStatus(
     id: string,
     status: NexumRunStatus,
-    fields: { output?: string; error?: string } = {},
+    fields: { output?: NexumRunOutput; error?: string } = {},
   ): Promise<void> {
     const isTerminal = ["completed", "failed", "cancelled", "interrupted"].includes(status);
     await this.db
       .update(runs)
       .set({
         status,
-        output: fields.output ?? null,
+        output: fields.output?.content ?? null,
+        outputFormat: fields.output?.format ?? null,
         error: fields.error ?? null,
         finishedAt: isTerminal ? new Date() : null,
       })
@@ -31,7 +32,7 @@ export class RunRepository {
   async complete(
     id: string,
     status: Exclude<NexumRunStatus, "queued" | "running">,
-    fields: { output?: string; error?: string },
+    fields: { output?: NexumRunOutput; error?: string },
   ): Promise<void> {
     await this.updateStatus(id, status, fields);
   }

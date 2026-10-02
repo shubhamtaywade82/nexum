@@ -81,7 +81,7 @@ async function handleStreamEvent(envelope: RunEventEnvelope, client: NexumClient
     const title = payload.title ?? "Action requires approval";
     await promptApproval(envelope.runId, payload.interactionId, title, client, io);
   } else if (payload.type === "run.completed") {
-    io.write(`\n🤖 ${payload.output}\n\n`);
+    io.write(`\n🤖 ${payload.output.content}\n\n`);
   } else if (payload.type === "run.failed") {
     io.write(`\n❌ Run failed: ${payload.error}\n\n`);
   }

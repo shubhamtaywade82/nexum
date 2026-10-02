@@ -38,6 +38,11 @@ import {
   PROTOCOL_VERSION,
   type NexumRunEvent,
   type NexumCapabilities,
+  type NexumOutputFormat,
+  type NexumRunOutput,
+  type CreateRunRequest,
+  type ErrorCode,
+  ErrorCodes,
 } from "../protocol/types.js";
 import { defaultStrategyRegistry, devAgentDescriptor } from "../runtime/agent/agent-runtime.js";
 import { sql } from "drizzle-orm";
@@ -69,9 +74,13 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB — chat goals/history, not file 
 
 // Static across every session — every Agent in the registry is built from
 // the same host-wide config, so this doesn't need a live Agent instance.
+// Only formats the runtime can actually produce; "openui" joins once a presenter exists (plan step 1C).
+const SUPPORTED_OUTPUT_FORMATS: NexumOutputFormat[] = ["markdown"];
+
 const STATIC_CAPABILITIES: NexumCapabilities = {
   agents: [devAgentDescriptor().id],
   strategies: defaultStrategyRegistry().names(),
+  outputFormats: SUPPORTED_OUTPUT_FORMATS,
   protocolVersion: PROTOCOL_VERSION,
 };
 
@@ -351,7 +360,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
         goal: run.goal,
         startedAt: run.startedAt.getTime(),
         finishedAt: run.finishedAt ? run.finishedAt.getTime() : undefined,
-        output: run.output ?? undefined,
+        output: run.output === null ? undefined : { format: run.outputFormat ?? "markdown", content: run.output },
         error: run.error ?? undefined,
       });
       return;
@@ -522,14 +531,22 @@ async function handleRunEvents(
   });
 }
 
-async function parseCreateRunGoal(req: IncomingMessage): Promise<{ goal?: string; error?: string }> {
+async function parseCreateRunRequest(
+  req: IncomingMessage,
+): Promise<{ request?: CreateRunRequest; error?: string; code?: ErrorCode }> {
   try {
     const body = await readJsonBody(req);
     const parsed = CreateRunRequestSchema.safeParse(body);
-    if (!parsed.success) return { error: parsed.error.message };
-    return { goal: parsed.data.goal };
+    if (!parsed.success) return { error: parsed.error.message, code: ErrorCodes.INVALID_REQUEST };
+    if (!SUPPORTED_OUTPUT_FORMATS.includes(parsed.data.outputFormat)) {
+      return {
+        error: `output format "${parsed.data.outputFormat}" is not supported; use one of: ${SUPPORTED_OUTPUT_FORMATS.join(", ")}`,
+        code: ErrorCodes.UNSUPPORTED_OUTPUT_FORMAT,
+      };
+    }
+    return { request: parsed.data };
   } catch (err) {
-    return { error: describeError(err) };
+    return { error: describeError(err), code: ErrorCodes.INVALID_REQUEST };
   }
 }
 
@@ -552,11 +569,12 @@ async function handleCreateRun(
     return;
   }
 
-  const parsed = await parseCreateRunGoal(req);
-  if (parsed.error || !parsed.goal) {
-    writeJson(res, 400, { error: "invalid_request", message: parsed.error });
+  const parsed = await parseCreateRunRequest(req);
+  if (!parsed.request) {
+    writeJson(res, 400, { error: parsed.code, message: parsed.error });
     return;
   }
+  const { goal } = parsed.request;
 
   const { agent, bridge }: AgentEntry = await ctx.registry.getOrCreate(sessionId);
   if (bridge.isBusy || ctx.busySessions.has(sessionId)) {
@@ -567,7 +585,7 @@ async function handleCreateRun(
   ctx.busySessions.add(sessionId);
   const runId = agent.startExecutionRun();
   ctx.runOwners.set(runId, sessionId);
-  const runRow = await ctx.repos.runs.create(runId, sessionId, parsed.goal, "running");
+  const runRow = await ctx.repos.runs.create(runId, sessionId, goal, "running");
 
   const resBody = {
     run: {
@@ -585,7 +603,7 @@ async function handleCreateRun(
 
   writeJson(res, 201, resBody);
 
-  const runPromise = runAgentInBackground(agent, bridge, parsed.goal, {
+  const runPromise = runAgentInBackground(agent, bridge, goal, {
     repos: ctx.repos,
     eventBus: ctx.eventBus,
     sessionId,
@@ -634,7 +652,7 @@ async function runAgentInBackground(
   const messageCountBefore = agent.conversation.getMessages().length;
 
   try {
-    const output = await agent.runUserMessage(goal);
+    const output: NexumRunOutput = { format: "markdown", content: await agent.runUserMessage(goal) };
     bridge.flushThinking();
     publish({ type: "run.completed", runId: ctx.runId, output, ts: Date.now() });
     await publishChain;

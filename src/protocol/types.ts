@@ -42,6 +42,16 @@ export type NexumRunStatus = "queued" | "running" | "completed" | "failed" | "ca
 
 export type WaitingOn = "approval" | "clarification" | "elicitation";
 
+export const NexumOutputFormatSchema = z.enum(["text", "markdown", "openui", "json"]);
+export type NexumOutputFormat = z.infer<typeof NexumOutputFormatSchema>;
+
+/** Final run output; `format` is authoritative, so clients pick a renderer from it rather than sniffing content. */
+export interface NexumRunOutput {
+  format: NexumOutputFormat;
+  content: string;
+  schemaVersion?: string;
+}
+
 export interface NexumRun {
   id: string;
   sessionId: string;
@@ -50,7 +60,7 @@ export interface NexumRun {
   waitingOn?: WaitingOn | null;
   startedAt: number;
   finishedAt?: number;
-  output?: string;
+  output?: NexumRunOutput;
   error?: string;
 }
 
@@ -205,7 +215,7 @@ export type NexumRunEvent =
       response: string;
       ts: number;
     }
-  | { type: "run.completed"; runId: string; output: string; ts: number }
+  | { type: "run.completed"; runId: string; output: NexumRunOutput; ts: number }
   | { type: "run.failed"; runId: string; error: string; ts: number }
   | { type: "run.cancelled"; runId: string; ts: number }
   | { type: "run.interrupted"; runId: string; reason: string; ts: number };
@@ -222,6 +232,7 @@ export interface RunEventEnvelope {
 
 export const CreateRunRequestSchema = z.object({
   goal: z.string().min(1, "goal must not be empty"),
+  outputFormat: NexumOutputFormatSchema.default("markdown"),
 });
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>;
 
@@ -230,6 +241,7 @@ export interface NexumCapabilities {
   serverVersion?: string;
   agents: string[];
   strategies: string[];
+  outputFormats: NexumOutputFormat[];
   features?: {
     streaming?: boolean;
     replay?: boolean;
@@ -253,6 +265,7 @@ export const ErrorCodes = {
   INTERNAL_ERROR: "internal_error",
   INTERACTION_NOT_FOUND: "interaction_not_found",
   INTERACTION_ALREADY_RESOLVED: "interaction_already_resolved",
+  UNSUPPORTED_OUTPUT_FORMAT: "unsupported_output_format",
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
