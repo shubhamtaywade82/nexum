@@ -31,6 +31,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import type { Agent } from "../cli/agent.js";
 import { HostAgentRegistry, type AgentEntry } from "./agent-registry.js";
 import type { RunEventBridge } from "./event-bridge.js";
+import { SUPPORTED_OUTPUT_FORMATS, openuiInstructions, presentOutput } from "./presentation.js";
 import {
   CreateRunRequestSchema,
   ResolveInteractionRequestSchema,
@@ -38,7 +39,6 @@ import {
   PROTOCOL_VERSION,
   type NexumRunEvent,
   type NexumCapabilities,
-  type NexumOutputFormat,
   type NexumRunOutput,
   type CreateRunRequest,
   type ErrorCode,
@@ -74,9 +74,6 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB — chat goals/history, not file 
 
 // Static across every session — every Agent in the registry is built from
 // the same host-wide config, so this doesn't need a live Agent instance.
-// Only formats the runtime can actually produce; "openui" joins once a presenter exists (plan step 1C).
-const SUPPORTED_OUTPUT_FORMATS: NexumOutputFormat[] = ["markdown"];
-
 const STATIC_CAPABILITIES: NexumCapabilities = {
   agents: [devAgentDescriptor().id],
   strategies: defaultStrategyRegistry().names(),
@@ -574,7 +571,8 @@ async function handleCreateRun(
     writeJson(res, 400, { error: parsed.code, message: parsed.error });
     return;
   }
-  const { goal } = parsed.request;
+  const runRequest = parsed.request;
+  const { goal } = runRequest;
 
   const { agent, bridge }: AgentEntry = await ctx.registry.getOrCreate(sessionId);
   if (bridge.isBusy || ctx.busySessions.has(sessionId)) {
@@ -603,7 +601,7 @@ async function handleCreateRun(
 
   writeJson(res, 201, resBody);
 
-  const runPromise = runAgentInBackground(agent, bridge, goal, {
+  const runPromise = runAgentInBackground(agent, bridge, runRequest, {
     repos: ctx.repos,
     eventBus: ctx.eventBus,
     sessionId,
@@ -620,7 +618,7 @@ async function handleCreateRun(
 async function runAgentInBackground(
   agent: Agent,
   bridge: RunEventBridge,
-  goal: string,
+  { goal, outputFormat, openuiSpec }: CreateRunRequest,
   ctx: {
     repos: Repos;
     eventBus: RedisEventBus;
@@ -650,9 +648,11 @@ async function runAgentInBackground(
   publish({ type: "run.started", runId: ctx.runId, sessionId: ctx.sessionId, goal, ts: Date.now() });
 
   const messageCountBefore = agent.conversation.getMessages().length;
+  agent.conversation.presentationInstructions =
+    outputFormat === "openui" && openuiSpec ? openuiInstructions(openuiSpec) : "";
 
   try {
-    const output: NexumRunOutput = { format: "markdown", content: await agent.runUserMessage(goal) };
+    const output: NexumRunOutput = presentOutput(await agent.runUserMessage(goal), outputFormat);
     bridge.flushThinking();
     publish({ type: "run.completed", runId: ctx.runId, output, ts: Date.now() });
     await publishChain;
@@ -669,6 +669,7 @@ async function runAgentInBackground(
     await publishChain;
     await ctx.repos.runs.complete(ctx.runId, cancelled ? "cancelled" : "failed", { error: message });
   } finally {
+    agent.conversation.presentationInstructions = "";
     bridge.end();
     agent.endExecutionRun();
     ctx.runOwners.delete(ctx.runId);

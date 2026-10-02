@@ -20,6 +20,7 @@ export interface CreateSessionOptions {
 export interface CreateRunOptions {
   idempotencyKey?: string;
   outputFormat?: NexumOutputFormat;
+  openuiSpec?: string;
 }
 
 export interface StreamEventsOptions {
@@ -93,7 +94,7 @@ export class NexumClient {
     const res = await this.request<{ run: NexumRun }>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ goal, outputFormat: opts.outputFormat }),
+      body: JSON.stringify({ goal, outputFormat: opts.outputFormat, openuiSpec: opts.openuiSpec }),
     });
     return res.run;
   }

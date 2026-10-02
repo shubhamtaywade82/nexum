@@ -1,6 +1,7 @@
 import {
   isValidRunTransition,
   CreateRunRequestSchema,
+  MAX_OPENUI_SPEC_CHARS,
   ResolveInteractionRequestSchema,
   PROTOCOL_VERSION,
   ErrorCodes,
@@ -73,6 +74,22 @@ describe("Protocol v1", () => {
     it("defaults outputFormat to markdown", () => {
       const res = CreateRunRequestSchema.safeParse({ goal: "Build feature" });
       expect(res.success && res.data.outputFormat).toBe("markdown");
+    });
+
+    it("requires openuiSpec when outputFormat is openui", () => {
+      expect(CreateRunRequestSchema.safeParse({ goal: "g", outputFormat: "openui" }).success).toBe(false);
+      expect(CreateRunRequestSchema.safeParse({ goal: "g", outputFormat: "openui", openuiSpec: "Stack" }).success).toBe(
+        true,
+      );
+    });
+
+    it("rejects an openuiSpec over the size cap", () => {
+      const res = CreateRunRequestSchema.safeParse({
+        goal: "g",
+        outputFormat: "openui",
+        openuiSpec: "x".repeat(MAX_OPENUI_SPEC_CHARS + 1),
+      });
+      expect(res.success).toBe(false);
     });
 
     it("rejects unknown outputFormat", () => {

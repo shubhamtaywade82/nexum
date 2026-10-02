@@ -4,6 +4,7 @@ import { FakeAgent } from "./fake-agent.js";
 import { createNexumHost, type NexumHost } from "../../src/host/server.js";
 import type { Database } from "../../src/persistence/database.js";
 import type { RedisEventBus } from "../../src/infrastructure/redis/pubsub.js";
+import type { NexumRun } from "../../src/protocol/types.js";
 
 export interface ServerHarnessOptions {
   workspaceRoot?: string;
@@ -132,10 +133,10 @@ export class ServerHarness {
     return { status: res.status, body };
   }
 
-  async waitForRun(runId: string, timeoutMs = 5000): Promise<{ id: string; status: string; output?: string }> {
+  async waitForRun(runId: string, timeoutMs = 5000): Promise<NexumRun> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const { status, body } = await this.getJson<{ id: string; status: string; output?: string }>(`/runs/${runId}`);
+      const { status, body } = await this.getJson<NexumRun>(`/runs/${runId}`);
       if (status === 200 && ["completed", "failed", "cancelled", "interrupted"].includes(body.status)) {
         return body;
       }

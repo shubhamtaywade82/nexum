@@ -230,10 +230,20 @@ export interface RunEventEnvelope {
 
 // ==================== Requests & Capabilities ====================
 
-export const CreateRunRequestSchema = z.object({
-  goal: z.string().min(1, "goal must not be empty"),
-  outputFormat: NexumOutputFormatSchema.default("markdown"),
-});
+// Generated OpenUI specs are ~5 KB; the cap bounds client text entering the model context.
+export const MAX_OPENUI_SPEC_CHARS = 32_000;
+
+export const CreateRunRequestSchema = z
+  .object({
+    goal: z.string().min(1, "goal must not be empty"),
+    outputFormat: NexumOutputFormatSchema.default("markdown"),
+    /** Client-owned component spec, so the library the model targets is the one the client renders. */
+    openuiSpec: z.string().min(1).max(MAX_OPENUI_SPEC_CHARS).optional(),
+  })
+  .refine((req) => req.outputFormat !== "openui" || req.openuiSpec !== undefined, {
+    message: 'outputFormat "openui" requires openuiSpec',
+    path: ["openuiSpec"],
+  });
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>;
 
 export interface NexumCapabilities {

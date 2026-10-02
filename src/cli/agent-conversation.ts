@@ -16,6 +16,10 @@ export class AgentConversation {
   // the "last 10" window, so a long tool-loop never silently loses the ask.
   private currentTurnUserMessage: ChatMessage | null = null;
 
+  /** Run-scoped output instructions (e.g. an OpenUI spec); the system prompt is
+   * rebuilt every turn, so clearing this keeps them out of later runs. */
+  presentationInstructions = "";
+
   buildSystemPrompt(config: CliConfig, learnings: LearningEntry[], _skills: SkillContent[]): string {
     const learningsBlock =
       learnings.length > 0
@@ -32,10 +36,13 @@ export class AgentConversation {
     const delegationBlock =
       config.tier === "cloud" && config.enableLocalWorker !== false ? `\n\n${LOCAL_DELEGATION_SYSTEM_ADDENDUM}` : "";
 
+    const presentationBlock = this.presentationInstructions ? `\n\n${this.presentationInstructions}` : "";
+
     return (
       (config.systemPrompt ?? "") +
       learningsBlock +
       delegationBlock +
+      presentationBlock +
       "\n\nTool contract:\n" +
       "1) Call exactly one tool per assistant turn when appropriate.\n" +
       "2) If read_file returns `truncated`, that is a content ceiling, not an instruction to stop.\n" +

@@ -53,12 +53,60 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
 
     const { status, body } = await harness.postJson<{ error: string }>(`/sessions/${sess.id}/runs`, {
-      goal: "Render a dashboard",
-      outputFormat: "openui",
+      goal: "Export as JSON",
+      outputFormat: "json",
     });
 
     expect(status).toBe(400);
     expect(body.error).toBe("unsupported_output_format");
+  });
+
+  describe("openui output", () => {
+    const spec = "Stack(gap, children) — vertical layout";
+
+    afterEach(() => harness.resetRunHandler());
+
+    async function runGoal(sessionId: string, payload: Record<string, unknown>): Promise<NexumRun> {
+      const { body } = await harness.postJson<{ run: NexumRun }>(`/sessions/${sessionId}/runs`, payload);
+      return harness.waitForRun(body.run.id);
+    }
+
+    it("injects the client spec for the run and labels OpenUI answers as openui", async () => {
+      const seenInstructions: string[] = [];
+      harness.setRunHandler(async (_goal, agent) => {
+        seenInstructions.push(agent.conversation.presentationInstructions);
+        return '  root = Stack("md", [])\n';
+      });
+      const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
+
+      const finished = await runGoal(sess.id, { goal: "BTC price card", outputFormat: "openui", openuiSpec: spec });
+
+      expect(seenInstructions[0]).toContain(spec);
+      expect(finished.output).toEqual({ format: "openui", content: 'root = Stack("md", [])' });
+    });
+
+    it("labels a Markdown answer as markdown even when openui was requested", async () => {
+      harness.setRunHandler(async () => "BTC is trading near its weekly high.");
+      const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
+
+      const finished = await runGoal(sess.id, { goal: "Explain BTC", outputFormat: "openui", openuiSpec: spec });
+
+      expect(finished.output).toEqual({ format: "markdown", content: "BTC is trading near its weekly high." });
+    });
+
+    it("does not carry the spec into a later markdown run on the same session", async () => {
+      const seenInstructions: string[] = [];
+      harness.setRunHandler(async (_goal, agent) => {
+        seenInstructions.push(agent.conversation.presentationInstructions);
+        return "done";
+      });
+      const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
+
+      await runGoal(sess.id, { goal: "first", outputFormat: "openui", openuiSpec: spec });
+      await runGoal(sess.id, { goal: "second" });
+
+      expect(seenInstructions).toEqual([expect.stringContaining(spec), ""]);
+    });
   });
 
   it("GET /runs/:id/events streams SSE events with monotonic seq id", async () => {

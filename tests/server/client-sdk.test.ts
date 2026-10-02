@@ -34,7 +34,7 @@ describe("Assistant Client SDK (Wave 13)", () => {
     const caps = await client.capabilities();
     expect(Array.isArray(caps.agents)).toBe(true);
     expect(caps.protocolVersion).toBeDefined();
-    expect(caps.outputFormats).toEqual(["markdown"]);
+    expect(caps.outputFormats).toEqual(["markdown", "openui"]);
   });
 
   it("manages session lifecycle (create, list, get)", async () => {
