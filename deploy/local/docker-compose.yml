@@ -70,6 +70,7 @@ services:
       REDIS_URL: redis://redis:6379
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       OLLAMA_HOST: ${OLLAMA_HOST:-}
+      NEXUM_SERVER_TOKEN: ${NEXUM_SERVER_TOKEN:-dev_secret_token_123}
     command: ["serve", "--host", "0.0.0.0", "--port", "3777", "--workspace", "/workspace"]
     ports:
       - "127.0.0.1:3777:3777"
@@ -87,6 +88,7 @@ services:
       - nexum
     environment:
       NEXUM_HOST_URL: http://nexum:3777
+      NEXUM_SERVER_TOKEN: ${NEXUM_SERVER_TOKEN:-dev_secret_token_123}
     ports:
       - "127.0.0.1:3400:3400"
     networks:

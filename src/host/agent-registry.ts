@@ -14,6 +14,7 @@
  */
 
 import type { Agent } from "../cli/agent.js";
+import type { MessageRepository } from "../persistence/repositories/message-repository.js";
 import { RunEventBridge } from "./event-bridge.js";
 
 export interface AgentEntry {
@@ -24,6 +25,8 @@ export interface AgentEntry {
 
 export interface HostAgentRegistryOptions {
   createAgent: () => Agent;
+  /** Canonical PostgreSQL message repository to hydrate conversation turns */
+  messages?: MessageRepository;
   /** Idle time before an unused session's Agent is torn down. Default 30 min. */
   idleTtlMs?: number;
 }
@@ -43,11 +46,9 @@ export class HostAgentRegistry {
   }
 
   /**
-   * Returns the session's Agent, constructing one on first use. A freshly
-   * constructed Agent tries to resume `sessionId`'s transcript (in case a
-   * prior process already saved one); if none exists yet, it adopts the id
-   * outright rather than keeping whatever fresh id its own SessionStore
-   * minted at construction time — the host, not Agent, owns id assignment.
+   * Returns the session's Agent, constructing one on first use.
+   * If messages repository is provided, hydrates conversation history directly
+   * from canonical PostgreSQL storage, bypassing the legacy local JSON store.
    */
   async getOrCreate(sessionId: string): Promise<AgentEntry> {
     const existing = this.entries.get(sessionId);
@@ -62,9 +63,22 @@ export class HostAgentRegistry {
     } catch (err) {
       process.stderr.write(`[nexum host] plugin host start failed for session ${sessionId}: ${describeError(err)}\n`);
     }
-    const resumed = agent.resumeSessionById(sessionId);
-    if (!resumed) {
-      agent.sessions.adopt(sessionId);
+
+    if (this.opts.messages) {
+      const history = await this.opts.messages.listBySession(sessionId);
+      if (history.length > 0) {
+        agent.conversation.loadMessages(
+          history.map((m) => ({
+            role: m.role as "user" | "assistant" | "system" | "tool",
+            content: m.content,
+          })),
+        );
+      }
+    } else {
+      const resumed = agent.resumeSessionById(sessionId);
+      if (!resumed) {
+        agent.sessions.adopt(sessionId);
+      }
     }
 
     const entry: AgentEntry = { agent, bridge: new RunEventBridge(agent), lastUsedAt: Date.now() };

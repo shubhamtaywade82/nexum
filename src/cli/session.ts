@@ -70,10 +70,18 @@ async function showSession(url: string, sessionId: string): Promise<void> {
 }
 
 async function attachAndRun(url: string, sessionId: string, goal: string): Promise<void> {
-  const res = await fetch(`${url}/sessions/${encodeURIComponent(sessionId)}/runs`, {
+  const postRes = await fetch(`${url}/sessions/${encodeURIComponent(sessionId)}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ goal }),
+  });
+  if (!postRes.ok) {
+    throw new Error(`${postRes.status} ${postRes.statusText}: ${await postRes.text().catch(() => "")}`);
+  }
+  const { run } = (await postRes.json()) as { run: { id: string } };
+
+  const res = await fetch(`${url}/runs/${encodeURIComponent(run.id)}/events?stream=1`, {
+    headers: { Accept: "text/event-stream" },
   });
   if (!res.ok || !res.body) {
     throw new Error(`${res.status} ${res.statusText}: ${await res.text().catch(() => "")}`);

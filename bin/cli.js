@@ -120,6 +120,12 @@ if (command === 'session') {
   process.exit(0);
 }
 
+if (command === 'chat') {
+  const { runChatCli } = await import('../dist/cli/chat.js');
+  await runChatCli(process.argv.slice(3));
+  process.exit(0);
+}
+
 if (command === 'migrate') {
   const { main } = await import('../dist/cli/migrate.js');
   await main(process.argv.slice(3));
