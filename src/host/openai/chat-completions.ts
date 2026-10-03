@@ -1,17 +1,15 @@
-import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { describeError, readJsonBody, writeJson } from "../http.js";
-import { cancelRun, startRun, type RunServices } from "../run-starter.js";
+import { cancelRun, startRun } from "../run-starter.js";
 import { writeOpenAiError } from "./errors.js";
-import { composeGoal, ChatCompletionRequestSchema, parseConversation, type Conversation } from "./messages.js";
+import { ChatCompletionRequestSchema, parseConversation, toRunRequest, type Conversation } from "./messages.js";
 import { AGENT_MODEL_ID } from "./models.js";
-
-export type OpenAiContext = RunServices & { workspaceRoot: string };
+import { streamCompletion } from "./stream-completion.js";
+import { withTemporarySession, type OpenAiContext } from "./temporary-session.js";
 
 /**
- * POST /v1/chat/completions (non-streaming). Each request runs on a temporary session seeded with the
- * history the client sent, and the session is deleted afterwards: an OpenAI client keeps its own transcript,
- * so there is nothing for Nexum to remember between calls.
+ * POST /v1/chat/completions. Each request runs on a temporary session (see temporary-session.ts), and the
+ * answer is returned whole or, with `stream: true`, as an SSE stream.
  */
 export async function handleChatCompletion(
   req: IncomingMessage,
@@ -34,21 +32,14 @@ export async function handleChatCompletion(
     });
     return;
   }
-  if (request.stream) {
-    writeOpenAiError(res, 400, "invalid_request_error", "streaming is not available yet", {
-      code: "stream_not_supported",
-      param: "stream",
-    });
-    return;
-  }
-
   const conversation = parseConversation(request.messages);
   if (!conversation.ok) {
     writeOpenAiError(res, 400, "invalid_request_error", conversation.message, { param: "messages" });
     return;
   }
 
-  await runOnTemporarySession(res, ctx, conversation.conversation);
+  if (request.stream) await streamCompletion(res, ctx, conversation.conversation);
+  else await completeOnce(res, ctx, conversation.conversation);
 }
 
 async function readBody(req: IncomingMessage, res: ServerResponse): Promise<unknown> {
@@ -62,22 +53,10 @@ async function readBody(req: IncomingMessage, res: ServerResponse): Promise<unkn
 
 type Outcome = { ok: true; runId: string; content: string } | { ok: false; message: string };
 
-async function runOnTemporarySession(
-  res: ServerResponse,
-  ctx: OpenAiContext,
-  conversation: Conversation,
-): Promise<void> {
-  const sessionId = randomUUID();
-  await ctx.repos.sessions.create(sessionId, ctx.workspaceRoot, "openai-compat");
-  let outcome: Outcome;
-  try {
-    outcome = await runToCompletion(res, ctx, sessionId, conversation);
-  } finally {
-    await ctx.registry.evict(sessionId);
-    await ctx.repos.sessions.delete(sessionId).catch((err) => {
-      process.stderr.write(`[nexum host] could not delete temporary session ${sessionId}: ${describeError(err)}\n`);
-    });
-  }
+async function completeOnce(res: ServerResponse, ctx: OpenAiContext, conversation: Conversation): Promise<void> {
+  const outcome = await withTemporarySession(ctx, conversation.history, (sessionId) =>
+    runToCompletion(res, ctx, sessionId, conversation),
+  );
   // Respond only after the cleanup, so a client that follows up never sees the temporary session.
   if (outcome.ok) writeJson(res, 200, completion(outcome.runId, outcome.content));
   else writeOpenAiError(res, 500, "server_error", outcome.message);
@@ -87,15 +66,9 @@ async function runToCompletion(
   res: ServerResponse,
   ctx: OpenAiContext,
   sessionId: string,
-  { history, ...rest }: Conversation,
+  conversation: Conversation,
 ): Promise<Outcome> {
-  if (history.length > 0) await ctx.repos.messages.append(sessionId, history);
-
-  const started = await startRun(ctx, sessionId, {
-    goal: composeGoal({ ...rest, history }),
-    presentation: { mode: "markdown" },
-    interactive: false,
-  });
+  const started = await startRun(ctx, sessionId, toRunRequest(conversation));
   if (!started.ok) return { ok: false, message: "could not start a run on a new session" };
 
   // If the client goes away mid-run nobody is waiting for the answer, so stop spending effort on it.

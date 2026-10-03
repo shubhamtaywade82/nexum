@@ -164,10 +164,10 @@ describe("OpenAI-compatible API", () => {
       it.each([
         ["an unknown model", { model: "gpt-4", messages: [userMessage("hi")] }, 404, "model_not_found"],
         [
-          "streaming (not yet available)",
-          { model: "nexum-agent", messages: [userMessage("hi")], stream: true },
-          400,
-          "stream_not_supported",
+          "an unknown model even when streaming",
+          { model: "gpt-4", messages: [userMessage("hi")], stream: true },
+          404,
+          "model_not_found",
         ],
         ["an empty message list", { model: "nexum-agent", messages: [] }, 400, null],
         ["a missing model", { messages: [userMessage("hi")] }, 400, null],
@@ -202,6 +202,123 @@ describe("OpenAI-compatible API", () => {
     });
   });
 
+  describe("streaming", () => {
+    const stream = (messages: unknown[]) => complete({ model: "nexum-agent", messages, stream: true });
+
+    interface StreamChunk {
+      id: string;
+      object: string;
+      choices: Array<{
+        delta: { role?: string; content?: string; tool_calls?: unknown };
+        finish_reason: string | null;
+      }>;
+    }
+    type StreamEvent = StreamChunk | "[DONE]";
+
+    /** Reads a whole SSE body and returns its parsed `data:` payloads. */
+    async function readStream(res: Response): Promise<StreamEvent[]> {
+      const text = await res.text();
+      return text
+        .split("\n\n")
+        .filter((block) => block.startsWith("data: "))
+        .map((block) => block.slice(6))
+        .map((data) => (data === "[DONE]" ? "[DONE]" : (JSON.parse(data) as StreamChunk)));
+    }
+    const contentOf = (events: StreamEvent[]) =>
+      events.map((e) => (e === "[DONE]" ? "" : (e.choices[0].delta.content ?? ""))).join("");
+
+    it("should stream tool activity, then the answer, then stop and [DONE]", async () => {
+      harness.setRunHandler(async (_goal, agent) => {
+        agent.emit("onToolCall", "read_file", { path: "notes.txt" });
+        agent.emit("onToolResult", "read_file", { content: "x" });
+        return "The file says hello.";
+      });
+
+      const res = await stream([userMessage("read it")]);
+      const events = await readStream(res);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      expect(contentOf(events)).toBe('> 🔧 **read_file** `{"path":"notes.txt"}`\n\nThe file says hello.');
+      const chunks = events.filter((e): e is StreamChunk => e !== "[DONE]");
+      expect(chunks[0].choices[0].delta.role).toBe("assistant");
+      expect(chunks.at(-1)?.choices[0].finish_reason).toBe("stop");
+      expect(events.at(-1)).toBe("[DONE]");
+      expect(new Set(chunks.map((c) => c.id)).size).toBe(1);
+      expect(new Set(chunks.map((c) => c.object))).toEqual(new Set(["chat.completion.chunk"]));
+    });
+
+    it("should never put a tool_calls delta on the wire", async () => {
+      harness.setRunHandler(async (_goal, agent) => {
+        agent.emit("onToolCall", "run_shell", { command: "ls" });
+        agent.emit("onToolResult", "run_shell", { stdout: "" });
+        return "listed";
+      });
+
+      const events = await readStream(await stream([userMessage("ls")]));
+
+      for (const event of events) {
+        if (event !== "[DONE]") expect(event.choices[0].delta).not.toHaveProperty("tool_calls");
+      }
+    });
+
+    it("should flag a tool that failed", async () => {
+      harness.setRunHandler(async (_goal, agent) => {
+        agent.emit("onToolCall", "read_file", { path: "../secret" });
+        agent.emit("onToolResult", "read_file", { error: "PathEscapeError", message: "outside the workspace" });
+        return "I could not read it.";
+      });
+
+      const text = contentOf(await readStream(await stream([userMessage("read")])));
+
+      expect(text).toContain("> ⚠️ **read_file** failed: PathEscapeError: outside the workspace");
+    });
+
+    it("should stream just the answer when no tools were used", async () => {
+      harness.setRunHandler(async () => "Paris.");
+
+      expect(contentOf(await readStream(await stream([userMessage("capital of France?")])))).toBe("Paris.");
+    });
+
+    it("should report a failed run as text and still end the stream properly", async () => {
+      harness.setRunHandler(async () => {
+        throw new Error("model exploded");
+      });
+
+      const events = await readStream(await stream([userMessage("hi")]));
+
+      expect(contentOf(events)).toContain("⚠️ The run failed: model exploded");
+      expect(events.at(-1)).toBe("[DONE]");
+    });
+
+    it("should leave no session behind once the stream has ended", async () => {
+      harness.setRunHandler(async () => "ok");
+
+      await readStream(await stream([userMessage("hi")]));
+
+      const { body } = await harness.getJson<{ sessions: SessionSummary[] }>("/sessions");
+      expect(body.sessions).toEqual([]);
+    });
+
+    it("should cancel the run when the client disconnects mid-stream", async () => {
+      let sawAbort = false;
+      harness.setRunHandler(async (_goal, agent) => {
+        agent.emit("onToolCall", "slow_tool", {});
+        for (let i = 0; i < 150 && !agent.execution.signal?.aborted; i++) await new Promise((r) => setTimeout(r, 20));
+        sawAbort = agent.execution.signal?.aborted ?? false;
+        throw new Error("aborted");
+      });
+
+      const res = await stream([userMessage("long task")]);
+      const reader = res.body!.getReader();
+      await reader.read(); // the first chunk: the run is underway
+      await reader.cancel();
+
+      for (let i = 0; i < 150 && !sawAbort; i++) await new Promise((r) => setTimeout(r, 20));
+      expect(sawAbort).toBe(true);
+    });
+  });
+
   describe("official openai client", () => {
     const client = () => new OpenAI({ baseURL: `${harness.baseUrl}/v1`, apiKey: "unused" });
 
@@ -218,6 +335,30 @@ describe("OpenAI-compatible API", () => {
       expect(models.data.map((m) => m.id)).toEqual(["nexum-agent"]);
       expect(reply.choices[0].message.content).toBe("echo ping");
       expect(reply.choices[0].finish_reason).toBe("stop");
+    });
+
+    it("should stream a chat through the client's streaming helpers", async () => {
+      harness.setRunHandler(async (_goal, agent) => {
+        agent.emit("onToolCall", "read_file", { path: "a" });
+        agent.emit("onToolResult", "read_file", { content: "x" });
+        return "streamed answer";
+      });
+
+      const stream = await client().chat.completions.create({
+        model: "nexum-agent",
+        messages: [{ role: "user", content: "go" }],
+        stream: true,
+      });
+      let text = "";
+      let finish: string | null = null;
+      for await (const chunk of stream) {
+        text += chunk.choices[0]?.delta?.content ?? "";
+        finish = chunk.choices[0]?.finish_reason ?? finish;
+      }
+
+      expect(text).toContain("**read_file**");
+      expect(text.endsWith("streamed answer")).toBe(true);
+      expect(finish).toBe("stop");
     });
 
     it("should surface an unknown model as the client's NotFoundError", async () => {

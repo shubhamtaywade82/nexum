@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CreateRunRequest } from "../../protocol/types.js";
 
 const ContentPartSchema = z.union([
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -87,4 +88,9 @@ export function parseConversation(messages: Message[]): ConversationResult {
 /** The goal Nexum runs: the user's request, led by the client's context when it sent any. */
 export function composeGoal({ goal, context }: Conversation): string {
   return context ? `Context from the client:\n${context}\n\nUser request:\n${goal}` : goal;
+}
+
+/** The run Nexum starts for a chat request: non-interactive (nobody can answer a prompt) and Markdown. */
+export function toRunRequest(conversation: Conversation): CreateRunRequest {
+  return { goal: composeGoal(conversation), presentation: { mode: "markdown" }, interactive: false };
 }

@@ -362,4 +362,12 @@ One model, `nexum-agent`. It is the whole agent, not a raw LLM; the underlying m
 - **Response:** a `chat.completion` with the agent's final answer and `finish_reason: "stop"`. A failed run is
   `500 server_error` carrying the reason.
 - **Disconnect:** if the client closes the connection before the answer is ready, the run is cancelled.
-- **Not yet available:** `stream: true` returns `400` with code `stream_not_supported`.
+- **Streaming (`stream: true`):** a standard `chat.completion.chunk` SSE stream: a first chunk with
+  `delta.role = "assistant"`, text chunks, a last chunk with `finish_reason: "stop"`, then `data: [DONE]`. While the agent
+  works, each tool call appears as a Markdown blockquote line (`> 🔧 **read_file** \`{"path":"a"}\``, and
+  `> ⚠️ **name** failed: ...` on failure), then a blank line and the answer. Thoughts and plans are not shown, and no
+  `tool_calls` delta is ever sent, because a client that saw one would try to run the tool itself. The agent produces
+  its answer in one piece, so the answer arrives as a single chunk at the end. SSE comment lines (`: keep-alive`) are
+  sent every 15 s while the agent is silent. A run that fails is reported as a final text line and the stream still ends
+  normally. Closing the connection cancels the run. The temporary session is deleted before the stream ends. A request
+  that fails before the stream starts (an unknown model, a bad body) gets an ordinary JSON error instead.
