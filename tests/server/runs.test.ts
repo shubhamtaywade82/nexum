@@ -49,20 +49,38 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
     await harness.waitForRun(created.run.id);
   });
 
-  it("POST /sessions/:id/runs rejects an output format the server cannot produce", async () => {
+  it("POST /sessions/:id/runs rejects a presentation the server cannot produce", async () => {
     const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
 
     const { status, body } = await harness.postJson<{ error: string }>(`/sessions/${sess.id}/runs`, {
-      goal: "Export as JSON",
-      outputFormat: "json",
+      goal: "Export as unsupported OpenUI",
+      presentation: {
+        mode: "openui",
+        openui: {
+          schemaVersion: "99.0.0",
+          spec: "Stack",
+          schema: {},
+        },
+      },
     });
 
     expect(status).toBe(400);
-    expect(body.error).toBe("unsupported_output_format");
+    expect(body.error).toBe("unsupported_presentation");
   });
 
   describe("openui output", () => {
     const spec = "Stack(gap, children) — vertical layout";
+    const schema = {
+      $defs: {
+        Stack: {
+          type: "object",
+          properties: {
+            gap: { type: "string" },
+            children: { type: "array" },
+          },
+        },
+      },
+    };
 
     afterEach(() => harness.resetRunHandler());
 
@@ -79,19 +97,50 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
       });
       const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
 
-      const finished = await runGoal(sess.id, { goal: "BTC price card", outputFormat: "openui", openuiSpec: spec });
+      const finished = await runGoal(sess.id, {
+        goal: "BTC price card",
+        presentation: {
+          mode: "openui",
+          openui: { schemaVersion: "0.3.0", spec, schema },
+        },
+      });
 
       expect(seenInstructions[0]).toContain(spec);
-      expect(finished.output).toEqual({ format: "openui", content: 'root = Stack("md", [])' });
+      expect(finished.output).toEqual({
+        format: "openui",
+        content: 'root = Stack("md", [])',
+        schemaVersion: "0.3.0",
+      });
     });
 
     it("labels a Markdown answer as markdown even when openui was requested", async () => {
       harness.setRunHandler(async () => "BTC is trading near its weekly high.");
       const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
 
-      const finished = await runGoal(sess.id, { goal: "Explain BTC", outputFormat: "openui", openuiSpec: spec });
+      const finished = await runGoal(sess.id, {
+        goal: "Explain BTC",
+        presentation: {
+          mode: "openui",
+          openui: { schemaVersion: "0.3.0", spec, schema },
+        },
+      });
 
       expect(finished.output).toEqual({ format: "markdown", content: "BTC is trading near its weekly high." });
+    });
+
+    it("labels an invalid OpenUI answer as markdown when validation fails", async () => {
+      harness.setRunHandler(async () => "root = UnknownComponent()");
+      const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
+
+      const finished = await runGoal(sess.id, {
+        goal: "Explain BTC",
+        presentation: {
+          mode: "openui",
+          openui: { schemaVersion: "0.3.0", spec, schema },
+        },
+      });
+
+      expect(finished.output).toEqual({ format: "markdown", content: "root = UnknownComponent()" });
     });
 
     it("does not carry the spec into a later markdown run on the same session", async () => {
@@ -102,7 +151,13 @@ describe("Durable Runs & SSE Replay (Waves 4, 5, 6, 7, 8)", () => {
       });
       const { body: sess } = await harness.postJson<{ id: string }>("/sessions", {});
 
-      await runGoal(sess.id, { goal: "first", outputFormat: "openui", openuiSpec: spec });
+      await runGoal(sess.id, {
+        goal: "first",
+        presentation: {
+          mode: "openui",
+          openui: { schemaVersion: "0.3.0", spec, schema },
+        },
+      });
       await runGoal(sess.id, { goal: "second" });
 
       expect(seenInstructions).toEqual([expect.stringContaining(spec), ""]);

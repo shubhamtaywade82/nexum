@@ -1,11 +1,22 @@
-import type { NexumOutputFormat, NexumRunOutput } from "../protocol/types.js";
+import { createParser, type LibraryJSONSchema } from "@openuidev/lang-core";
+import type { NexumPresentationCapability, NexumRunOutput, PresentationRequest } from "../protocol/types.js";
 
-export const SUPPORTED_OUTPUT_FORMATS: NexumOutputFormat[] = ["markdown", "openui"];
+export const OPENUI_SCHEMA_VERSION = "0.3.0";
 
-/** Wraps a client-supplied OpenUI spec in Nexum's presentation policy. */
+export const SUPPORTED_PRESENTATIONS: NexumPresentationCapability[] = [
+  { format: "markdown" },
+  { format: "openui", schemaVersion: OPENUI_SCHEMA_VERSION },
+];
+
+export function isPresentationSupported(presentation: PresentationRequest): boolean {
+  if (presentation.mode === "markdown") return true;
+  if (!presentation.openui) return true;
+  return presentation.openui.schemaVersion === OPENUI_SCHEMA_VERSION;
+}
+
 export function openuiInstructions(spec: string): string {
-  // The client owns which components exist; Nexum owns when UI is warranted,
-  // so the model is told Markdown remains a valid final answer.
+  // Model prompt frames OpenUI as preferred for structured data but keeps Markdown valid
+  // so the agent can fall back when components cannot represent the result.
   return [
     "Output presentation:",
     "The client can render OpenUI Lang built only from the components specified below.",
@@ -17,13 +28,31 @@ export function openuiInstructions(spec: string): string {
   ].join("\n");
 }
 
-// Format classification, not OpenUI validation: malformed output may still be labelled openui, and the
-// client renderer's Markdown fallback is the safety net. Parse with @openuidev/lang-core if that proves too loose.
 const OPENUI_ROOT = /^root\s*=\s*[A-Z]\w*\s*\(/;
 
-/** Labels the final answer with the format it actually is, not merely the one requested. */
-export function presentOutput(content: string, requested: NexumOutputFormat): NexumRunOutput {
+export function presentOutput(content: string, presentation: PresentationRequest): NexumRunOutput {
   const trimmed = content.trim();
-  if (requested === "openui" && OPENUI_ROOT.test(trimmed)) return { format: "openui", content: trimmed };
+  if (presentation.mode === "markdown" || !presentation.openui) {
+    return { format: "markdown", content };
+  }
+
+  // Validates syntax and component signatures against the client-provided schema.
+  // If parsing fails or reports errors, the safe fallback is markdown.
+  if (OPENUI_ROOT.test(trimmed)) {
+    try {
+      const parser = createParser(presentation.openui.schema as LibraryJSONSchema);
+      const parsed = parser.parse(trimmed);
+      if (parsed.root !== null && !parsed.meta.incomplete && parsed.meta.errors.length === 0) {
+        return {
+          format: "openui",
+          content: trimmed,
+          schemaVersion: presentation.openui.schemaVersion,
+        };
+      }
+    } catch {
+      // Fallback to markdown when schema is unparseable
+    }
+  }
+
   return { format: "markdown", content };
 }

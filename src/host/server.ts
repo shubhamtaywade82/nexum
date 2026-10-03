@@ -31,7 +31,13 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import type { Agent } from "../cli/agent.js";
 import { HostAgentRegistry, type AgentEntry } from "./agent-registry.js";
 import type { RunEventBridge } from "./event-bridge.js";
-import { SUPPORTED_OUTPUT_FORMATS, openuiInstructions, presentOutput } from "./presentation.js";
+import {
+  SUPPORTED_PRESENTATIONS,
+  OPENUI_SCHEMA_VERSION,
+  openuiInstructions,
+  presentOutput,
+  isPresentationSupported,
+} from "./presentation.js";
 import { invokeUiTool } from "./ui-tools.js";
 import { discoverCapabilities, type DiscoveredCapabilities } from "./capabilities.js";
 import {
@@ -42,6 +48,7 @@ import {
   type NexumRunEvent,
   type NexumCapabilities,
   type NexumRunOutput,
+  type NexumOutputFormat,
   type CreateRunRequest,
   type ErrorCode,
   ErrorCodes,
@@ -85,7 +92,7 @@ const DISCOVERY_SESSION_ID = "__capabilities__";
 const STATIC_CAPABILITIES: Omit<NexumCapabilities, keyof DiscoveredCapabilities> = {
   agents: [devAgentDescriptor().id],
   strategies: defaultStrategyRegistry().names(),
-  outputFormats: SUPPORTED_OUTPUT_FORMATS,
+  presentations: SUPPORTED_PRESENTATIONS,
   protocolVersion: PROTOCOL_VERSION,
 };
 
@@ -381,7 +388,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
         goal: run.goal,
         startedAt: run.startedAt.getTime(),
         finishedAt: run.finishedAt ? run.finishedAt.getTime() : undefined,
-        output: run.output === null ? undefined : { format: run.outputFormat ?? "markdown", content: run.output },
+        output:
+          run.output === null
+            ? undefined
+            : {
+                format: (run.outputFormat as NexumOutputFormat) ?? "markdown",
+                content: run.output,
+                schemaVersion: run.outputFormat === "openui" ? OPENUI_SCHEMA_VERSION : undefined,
+              },
         error: run.error ?? undefined,
       });
       return;
@@ -597,10 +611,10 @@ async function parseCreateRunRequest(
     const body = await readJsonBody(req);
     const parsed = CreateRunRequestSchema.safeParse(body);
     if (!parsed.success) return { error: parsed.error.message, code: ErrorCodes.INVALID_REQUEST };
-    if (!SUPPORTED_OUTPUT_FORMATS.includes(parsed.data.outputFormat)) {
+    if (!isPresentationSupported(parsed.data.presentation)) {
       return {
-        error: `output format "${parsed.data.outputFormat}" is not supported; use one of: ${SUPPORTED_OUTPUT_FORMATS.join(", ")}`,
-        code: ErrorCodes.UNSUPPORTED_OUTPUT_FORMAT,
+        error: `presentation schemaVersion "${parsed.data.presentation.openui?.schemaVersion}" is not supported; use "${OPENUI_SCHEMA_VERSION}"`,
+        code: ErrorCodes.UNSUPPORTED_PRESENTATION,
       };
     }
     return { request: parsed.data };
@@ -685,7 +699,7 @@ async function handleCreateRun(
 async function runAgentInBackground(
   agent: Agent,
   bridge: RunEventBridge,
-  { goal, outputFormat, openuiSpec, interactive }: CreateRunRequest,
+  { goal, presentation, interactive }: CreateRunRequest,
   ctx: {
     repos: Repos;
     eventBus: RedisEventBus;
@@ -716,10 +730,10 @@ async function runAgentInBackground(
 
   const messageCountBefore = agent.conversation.getMessages().length;
   agent.conversation.presentationInstructions =
-    outputFormat === "openui" && openuiSpec ? openuiInstructions(openuiSpec) : "";
+    presentation.openui && presentation.mode !== "markdown" ? openuiInstructions(presentation.openui.spec) : "";
 
   try {
-    const output: NexumRunOutput = presentOutput(await agent.runUserMessage(goal), outputFormat);
+    const output: NexumRunOutput = presentOutput(await agent.runUserMessage(goal), presentation);
     bridge.flushThinking();
     publish({ type: "run.completed", runId: ctx.runId, output, ts: Date.now() });
     await publishChain;

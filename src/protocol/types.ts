@@ -233,22 +233,49 @@ export interface RunEventEnvelope {
 // Generated OpenUI specs are ~5 KB; the cap bounds client text entering the model context.
 export const MAX_OPENUI_SPEC_CHARS = 32_000;
 
-export const CreateRunRequestSchema = z
+export const MAX_OPENUI_SCHEMA_CHARS = 200_000;
+
+export const PresentationModeSchema = z.enum(["auto", "markdown", "openui"]);
+export type PresentationMode = z.infer<typeof PresentationModeSchema>;
+
+/** What a client can render in OpenUI: the prompt-ready spec, and the JSON schema Nexum validates answers against. */
+export const OpenUiOfferSchema = z.object({
+  schemaVersion: z.string().min(1).max(32),
+  spec: z.string().min(1).max(MAX_OPENUI_SPEC_CHARS),
+  schema: z.record(z.string(), z.unknown()).refine((s) => JSON.stringify(s).length <= MAX_OPENUI_SCHEMA_CHARS, {
+    message: `schema exceeds ${MAX_OPENUI_SCHEMA_CHARS} characters`,
+  }),
+});
+export type OpenUiOffer = z.infer<typeof OpenUiOfferSchema>;
+
+/**
+ * How the answer should be presented. Nexum decides the format and reports it in `run.completed`; the client
+ * only says what it can render and how much it wants UI.
+ *  - `auto` (default): Nexum may answer in OpenUI when the client offered it and the content fits.
+ *  - `markdown`: always Markdown.
+ *  - `openui`: answer in OpenUI; requires an `openui` offer. If the answer fails validation it is returned as Markdown.
+ */
+export const PresentationRequestSchema = z
   .object({
-    goal: z.string().min(1, "goal must not be empty"),
-    outputFormat: NexumOutputFormatSchema.default("markdown"),
-    /** Client-owned component spec, so the library the model targets is the one the client renders. */
-    openuiSpec: z.string().min(1).max(MAX_OPENUI_SPEC_CHARS).optional(),
-    /**
-     * The client can answer approvals and clarifications. When false, approvals are denied and
-     * clarifications skipped, so a headless client never leaves a run waiting on nobody.
-     */
-    interactive: z.boolean().default(false),
+    mode: PresentationModeSchema.default("auto"),
+    openui: OpenUiOfferSchema.optional(),
   })
-  .refine((req) => req.outputFormat !== "openui" || req.openuiSpec !== undefined, {
-    message: 'outputFormat "openui" requires openuiSpec',
-    path: ["openuiSpec"],
+  .refine((p) => p.mode !== "openui" || p.openui !== undefined, {
+    message: 'presentation mode "openui" requires an openui offer',
+    path: ["openui"],
   });
+export type PresentationRequest = z.infer<typeof PresentationRequestSchema>;
+export type PresentationRequestInput = z.input<typeof PresentationRequestSchema>;
+
+export const CreateRunRequestSchema = z.object({
+  goal: z.string().min(1, "goal must not be empty"),
+  presentation: PresentationRequestSchema.default({ mode: "auto" }),
+  /**
+   * The client can answer approvals and clarifications. When false, approvals are denied and
+   * clarifications skipped, so a headless client never leaves a run waiting on nobody.
+   */
+  interactive: z.boolean().default(false),
+});
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>;
 
 /** Body of POST /sessions/:id/tools/:name — a read-only tool call from a rendered UI. */
@@ -289,12 +316,18 @@ export interface NexumMcpServerInfo {
   tools: number;
 }
 
+/** A presentation format this server can produce; `schemaVersion` is the OpenUI language version it validates. */
+export interface NexumPresentationCapability {
+  format: NexumOutputFormat;
+  schemaVersion?: string;
+}
+
 export interface NexumCapabilities {
   protocolVersion: string;
   serverVersion?: string;
   agents: string[];
   strategies: string[];
-  outputFormats: NexumOutputFormat[];
+  presentations: NexumPresentationCapability[];
   tools: NexumToolInfo[];
   skills: NexumSkillInfo[];
   models: NexumModelInfo[];
@@ -323,7 +356,7 @@ export const ErrorCodes = {
   INTERNAL_ERROR: "internal_error",
   INTERACTION_NOT_FOUND: "interaction_not_found",
   INTERACTION_ALREADY_RESOLVED: "interaction_already_resolved",
-  UNSUPPORTED_OUTPUT_FORMAT: "unsupported_output_format",
+  UNSUPPORTED_PRESENTATION: "unsupported_presentation",
   TOOL_NOT_FOUND: "tool_not_found",
   TOOL_REQUIRES_RUN: "tool_requires_run",
 } as const;

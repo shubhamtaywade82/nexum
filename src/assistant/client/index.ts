@@ -1,7 +1,7 @@
 import type {
   NexumCapabilities,
-  NexumOutputFormat,
   NexumRun,
+  PresentationRequestInput,
   RunEventEnvelope,
   ResolveInteractionRequest,
 } from "../../protocol/types.js";
@@ -19,8 +19,7 @@ export interface CreateSessionOptions {
 
 export interface CreateRunOptions {
   idempotencyKey?: string;
-  outputFormat?: NexumOutputFormat;
-  openuiSpec?: string;
+  presentation?: PresentationRequestInput;
   /** Declare that this client answers approvals/clarifications; otherwise they are denied/skipped. */
   interactive?: boolean;
 }
@@ -93,15 +92,17 @@ export class NexumClient {
     if (opts.idempotencyKey) {
       headers["Idempotency-Key"] = opts.idempotencyKey;
     }
+    const body: Record<string, unknown> = {
+      goal,
+      interactive: opts.interactive,
+    };
+    if (opts.presentation !== undefined) {
+      body.presentation = opts.presentation;
+    }
     const res = await this.request<{ run: NexumRun }>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        goal,
-        outputFormat: opts.outputFormat,
-        openuiSpec: opts.openuiSpec,
-        interactive: opts.interactive,
-      }),
+      body: JSON.stringify(body),
     });
     return res.run;
   }

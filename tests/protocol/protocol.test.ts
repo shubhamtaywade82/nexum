@@ -71,29 +71,44 @@ describe("Protocol v1", () => {
       expect(res.success).toBe(false);
     });
 
-    it("defaults outputFormat to markdown", () => {
+    it("defaults presentation to mode auto", () => {
       const res = CreateRunRequestSchema.safeParse({ goal: "Build feature" });
-      expect(res.success && res.data.outputFormat).toBe("markdown");
+      expect(res.success && res.data.presentation).toEqual({ mode: "auto" });
     });
 
-    it("requires openuiSpec when outputFormat is openui", () => {
-      expect(CreateRunRequestSchema.safeParse({ goal: "g", outputFormat: "openui" }).success).toBe(false);
-      expect(CreateRunRequestSchema.safeParse({ goal: "g", outputFormat: "openui", openuiSpec: "Stack" }).success).toBe(
-        true,
-      );
+    it("requires openui offer when mode is openui", () => {
+      expect(CreateRunRequestSchema.safeParse({ goal: "g", presentation: { mode: "openui" } }).success).toBe(false);
+      expect(
+        CreateRunRequestSchema.safeParse({
+          goal: "g",
+          presentation: {
+            mode: "openui",
+            openui: { schemaVersion: "0.3.0", spec: "Stack", schema: {} },
+          },
+        }).success,
+      ).toBe(true);
     });
 
-    it("rejects an openuiSpec over the size cap", () => {
+    it("rejects an openui spec over the size cap", () => {
       const res = CreateRunRequestSchema.safeParse({
         goal: "g",
-        outputFormat: "openui",
-        openuiSpec: "x".repeat(MAX_OPENUI_SPEC_CHARS + 1),
+        presentation: {
+          mode: "openui",
+          openui: {
+            schemaVersion: "0.3.0",
+            spec: "x".repeat(MAX_OPENUI_SPEC_CHARS + 1),
+            schema: {},
+          },
+        },
       });
       expect(res.success).toBe(false);
     });
 
-    it("rejects unknown outputFormat", () => {
-      const res = CreateRunRequestSchema.safeParse({ goal: "Build feature", outputFormat: "html" });
+    it("rejects unknown presentation mode", () => {
+      const res = CreateRunRequestSchema.safeParse({
+        goal: "Build feature",
+        presentation: { mode: "html" as any },
+      });
       expect(res.success).toBe(false);
     });
   });

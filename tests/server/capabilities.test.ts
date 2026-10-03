@@ -28,7 +28,7 @@ describe("Capability discovery (GET /capabilities)", () => {
     const { status, body } = await harness.getJson<NexumCapabilities>("/capabilities");
 
     expect(status).toBe(200);
-    expect(body.outputFormats).toEqual(["markdown", "openui"]);
+    expect(body.presentations).toEqual([{ format: "markdown" }, { format: "openui", schemaVersion: "0.3.0" }]);
     expect(body.tools).toEqual([
       expect.objectContaining({ id: "fake_high_opted_in", risk: "high", uiInvocable: false }),
       expect.objectContaining({ id: "fake_place_order", risk: "high", uiInvocable: false }),

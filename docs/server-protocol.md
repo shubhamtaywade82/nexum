@@ -53,7 +53,10 @@ Metadata only: no file paths, commands, arguments, environment or keys.
     "protocolVersion": "1.0.0",
     "agents": ["devagent"],
     "strategies": ["react", "plan_execute", "graph"],
-    "outputFormats": ["markdown", "openui"],
+    "presentations": [
+      { "format": "markdown" },
+      { "format": "openui", "schemaVersion": "0.3.0" }
+    ],
     "tools": [
       { "id": "read_file", "description": "...", "pack": "Filesystem", "risk": "medium", "uiInvocable": true },
       { "id": "run_shell", "description": "...", "pack": "Shell", "risk": "high", "uiInvocable": false }
@@ -157,19 +160,20 @@ Initiates a new execution turn. Returns immediately with the created run resourc
   ```json
   {
     "goal": "Refactor auth_service.rb to use token revocation list",
-    "outputFormat": "markdown",
+    "presentation": {
+      "mode": "auto"
+    },
     "interactive": false
   }
   ```
   | Field | Meaning |
   | --- | --- |
   | `goal` | Required. The user's message. |
-  | `outputFormat` | `markdown` (default) or `openui`; must be listed in `/capabilities`, otherwise `400 unsupported_output_format`. |
-  | `openuiSpec` | Required when `outputFormat` is `openui` (max 32,000 chars). The client's OpenUI component spec; Nexum adds it to the prompt for this run only. |
+  | `presentation` | Optional. `{ mode: "auto" | "markdown" | "openui", openui?: { schemaVersion, spec, schema } }`. Nexum decides final output format (`markdown` or `openui`). `openui` mode requires an `openui` offer; unsupported schema versions return `400 unsupported_presentation`. |
   | `interactive` | `true` if this client will show approvals and clarifications to a user. Default `false`: approvals are denied and clarifications skipped, so a headless client never leaves a run waiting. |
 - **Status**:
   - `201 Created` — Run accepted and started.
-  - `400 Bad Request` — Invalid body, or `unsupported_output_format`.
+  - `400 Bad Request` — Invalid body, or `unsupported_presentation`.
   - `409 Conflict` — Session already has a run in progress. The body carries that run's id:
     `{ "error": "run_in_progress", "message": "...", "runId": "run-98a72b" }`.
 - **Response (201)**:
