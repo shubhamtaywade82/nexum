@@ -11,7 +11,11 @@ export function docsPack(store: DocsStore, workspaceRoot: string): ToolPack {
     "docs",
     "Workspace documentation search and retrieval.",
     "docs",
-    [new SearchDocsTool(store, workspaceRoot), new GetDocTool(store), new ListDocSourcesTool(store, workspaceRoot)],
+    [
+      [new SearchDocsTool(store, workspaceRoot), { policy: { uiInvocable: true } }],
+      [new GetDocTool(store), { policy: { uiInvocable: true } }],
+      [new ListDocSourcesTool(store, workspaceRoot), { policy: { uiInvocable: true } }],
+    ],
     "Docs",
   );
 }

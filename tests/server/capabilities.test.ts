@@ -19,8 +19,10 @@ describe("Capability discovery (GET /capabilities)", () => {
     expect(status).toBe(200);
     expect(body.outputFormats).toEqual(["markdown", "openui"]);
     expect(body.tools).toEqual([
+      expect.objectContaining({ id: "fake_high_opted_in", risk: "high", uiInvocable: false }),
       expect.objectContaining({ id: "fake_place_order", risk: "high", uiInvocable: false }),
       expect.objectContaining({ id: "fake_quote", risk: "read", uiInvocable: true }),
+      expect.objectContaining({ id: "fake_unlisted_read", risk: "read", uiInvocable: false }),
     ]);
     expect(body.skills).toEqual([
       { id: "deploy", name: "Deploy", description: "Ship a release", tags: ["ops"], scope: "global" },

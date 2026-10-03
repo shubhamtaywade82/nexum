@@ -213,3 +213,46 @@ export class GitTool extends Tool {
     });
   }
 }
+
+const READ_ONLY_SUBCOMMANDS = new Set(["status", "diff", "log", "show", "blame", "rev-parse"]);
+// These subcommands can hand content to a program named in repo-local git config.
+const PROGRAM_RUNNING_SUBCOMMANDS = new Set(["diff", "log", "show"]);
+const PROGRAM_FLAG = /^(--ext-diff|--textconv|--open-files-in-pager(=.*)?|-O.*)$/;
+
+/**
+ * The inspection-only slice of `git`: it can read the repository but not change it, so it can be
+ * offered where `git` itself cannot (e.g. directly to a rendered UI). Repo-local config can name a
+ * program to run on diff output (diff.external, textconv drivers); those are switched off here. The
+ * switches go after the caller's arguments, because the last occurrence of a flag wins and git also
+ * accepts abbreviated long options that a denylist would miss.
+ */
+export class GitReadTool extends GitTool {
+  get name(): string {
+    return "git_read";
+  }
+
+  get description(): string {
+    return "Inspect the repository with a read-only git subcommand (status, diff, log, show, blame, rev-parse). It cannot change anything; use `git` to add, commit, branch or push.";
+  }
+
+  async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const gitArgs = args.args;
+    const subcommand = Array.isArray(gitArgs) ? gitArgs[0] : undefined;
+    if (typeof subcommand !== "string" || !READ_ONLY_SUBCOMMANDS.has(subcommand)) {
+      return {
+        error: "DisallowedGitCommandError",
+        message: `git_read only runs: ${[...READ_ONLY_SUBCOMMANDS].join(", ")}`,
+      };
+    }
+    const rest = (gitArgs as string[]).slice(1);
+    if (rest.some((a) => PROGRAM_FLAG.test(a))) {
+      return { error: "DisallowedGitCommandError", message: "flags that run external programs are blocked" };
+    }
+    if (!PROGRAM_RUNNING_SUBCOMMANDS.has(subcommand)) return super.call({ ...args, args: [subcommand, ...rest] });
+
+    const pathsStart = rest.indexOf("--");
+    const options = pathsStart === -1 ? rest : rest.slice(0, pathsStart);
+    const paths = pathsStart === -1 ? [] : rest.slice(pathsStart);
+    return super.call({ ...args, args: [subcommand, ...options, "--no-ext-diff", "--no-textconv", ...paths] });
+  }
+}

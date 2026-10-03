@@ -44,24 +44,29 @@ Deep dependency readiness check (PostgreSQL, Redis, Runtime).
   ```
 
 ### `GET /capabilities`
-Advertises supported agents, execution strategies, and features.
+What this server can do, so clients discover it instead of assuming. Requires the auth token when one is configured.
+Metadata only: no file paths, commands, arguments, environment or keys.
 - **Status**: 200 OK
 - **Response**:
   ```json
   {
     "protocolVersion": "1.0.0",
-    "serverVersion": "2.0.0-alpha.2",
-    "agents": ["dev-agent"],
-    "strategies": ["react", "plan-execute"],
-    "features": {
-      "streaming": true,
-      "replay": true,
-      "approvals": true,
-      "clarifications": true,
-      "mcpElicitation": true
-    }
+    "agents": ["devagent"],
+    "strategies": ["react", "plan_execute", "graph"],
+    "outputFormats": ["markdown", "openui"],
+    "tools": [
+      { "id": "read_file", "description": "...", "pack": "Filesystem", "risk": "medium", "uiInvocable": true },
+      { "id": "run_shell", "description": "...", "pack": "Shell", "risk": "high", "uiInvocable": false }
+    ],
+    "skills": [{ "id": "deploy", "name": "Deploy", "description": "...", "tags": ["ops"], "scope": "workspace" }],
+    "models": [{ "name": "qwen3:4b", "capabilities": ["tools", "quick", "coding"] }],
+    "mcp": [{ "name": "github", "trust": "trusted" }]
   }
   ```
+- `uiInvocable` means a rendered UI may call the tool directly (see [UI tool calls](#6-ui-tool-calls)). It is a
+  separate, opt-in policy flag, not a function of `risk`.
+- `mcp` lists configured servers. The host does not connect them yet, so their tools are not in `tools`.
+- Model listing is bounded to 5 seconds; an unreachable provider yields an empty `models`.
 
 ---
 
@@ -146,12 +151,22 @@ Initiates a new execution turn. Returns immediately with the created run resourc
 - **Request Body**:
   ```json
   {
-    "goal": "Refactor auth_service.rb to use token revocation list"
+    "goal": "Refactor auth_service.rb to use token revocation list",
+    "outputFormat": "markdown",
+    "interactive": false
   }
   ```
+  | Field | Meaning |
+  | --- | --- |
+  | `goal` | Required. The user's message. |
+  | `outputFormat` | `markdown` (default) or `openui`; must be listed in `/capabilities`, otherwise `400 unsupported_output_format`. |
+  | `openuiSpec` | Required when `outputFormat` is `openui` (max 32,000 chars). The client's OpenUI component spec; Nexum adds it to the prompt for this run only. |
+  | `interactive` | `true` if this client will show approvals and clarifications to a user. Default `false`: approvals are denied and clarifications skipped, so a headless client never leaves a run waiting. |
 - **Status**:
   - `201 Created` — Run accepted and started.
-  - `409 Conflict` — Session is currently executing an active run.
+  - `400 Bad Request` — Invalid body, or `unsupported_output_format`.
+  - `409 Conflict` — Session already has a run in progress. The body carries that run's id:
+    `{ "error": "run_in_progress", "message": "...", "runId": "run-98a72b" }`.
 - **Response (201)**:
   ```json
   {
@@ -182,9 +197,13 @@ Retrieves the metadata and current state of a run.
     "error": null
   }
   ```
+  When finished, `output` is `{ "format": "markdown" | "openui", "content": "..." }`. `format` is what the answer
+  actually is, not what was requested: `openui` is reported only when the content starts with
+  `root = Component(`, which is classification, not validation.
 
 ### `POST /runs/:runId/cancel`
-Cooperatively cancels an in-flight run via the agent's `AbortController`.
+Cooperatively cancels an in-flight run via the agent's `AbortController`. Anything the run is waiting on
+(an approval or clarification) is denied or skipped so the run can end.
 - **Status**: 200 OK
 - **Response**:
   ```json
@@ -222,56 +241,74 @@ data: {"type":"tool.completed","runId":"run-98a72b","callId":"call_1","name":"re
 
 id: 104
 event: run.completed
-data: {"type":"run.completed","runId":"run-98a72b","output":"Refactoring complete.","ts":1727900065000}
+data: {"type":"run.completed","runId":"run-98a72b","output":{"format":"markdown","content":"Refactoring complete."},"ts":1727900065000}
 ```
 
 ---
 
-## 5. Human-in-the-Loop Interaction Endpoints
+## 5. Human-in-the-Loop Interactions
+
+A run created with `interactive: true` pauses when the agent needs a decision, emitting an event and waiting:
+
+| Event | Fields |
+| --- | --- |
+| `run.approval.required` | `interactionId`, `title`, `summary` |
+| `run.clarification.required` | `interactionId`, `question`, `options: [{ id, label, description? }]` |
+
+The run continues on the same connection once the interaction is resolved; a `run.approval.resolved` /
+`run.clarification.resolved` event follows. Unanswered interactions fail closed after 5 minutes (approval denied,
+clarification skipped) and are reported with the same `*.resolved` events. Cancelling or ending the run releases
+anything still pending. MCP elicitation is not yet carried by this protocol.
 
 ### `POST /runs/:runId/interactions/:interactionId/resolve`
-Resolves a pending human interaction (approval, clarification, or MCP input).
-- **Request Body**:
+Answers a pending interaction.
+- **Request Body** — an approval must say `approved` explicitly; it is never inferred:
   ```json
-  {
-    "approved": true,
-    "reason": "Verified safe to execute"
-  }
+  { "approved": true }
   ```
-  Or for clarification:
+  Or, for a clarification, one of the offered option ids:
   ```json
-  {
-    "selectedId": "opt-2"
-  }
+  { "selectedId": "opt-2" }
   ```
-- **Status**: 200 OK (or 404 Not Found, 409 Conflict if already resolved)
-- **Response**:
-  ```json
-  {
-    "resolved": true,
-    "interactionId": "appr-1892"
-  }
-  ```
+- **Status**:
+  - `200 OK` — `{ "resolved": true, "interactionId": "appr-1892" }`
+  - `400 Bad Request` — `approved` missing for an approval, or `selectedId` not among the offered options.
+  - `404 Not Found` — `run_not_found`, or `interaction_not_found` (never requested, or the run has finished).
+  - `409 Conflict` — `interaction_already_resolved`.
 
 ---
 
-## 6. Standardized Error Contract
+## 6. UI tool calls
 
-All error responses return a structured JSON envelope:
+### `POST /sessions/:sessionId/tools/:name`
+Lets a rendered UI (for example an OpenUI `Query`) call a tool directly, outside any agent run.
+- **Request Body**: `{ "args": { ... } }` (`args` defaults to `{}`)
+- Only tools whose `/capabilities` entry has `uiInvocable: true` run here. Eligibility is an explicit opt-in on the
+  tool's policy and is separate from `risk`; a high-risk tool never qualifies even if mislabelled. Everything else,
+  and anything that changes state, must go through an agent run so policy and approvals apply.
+- The tool still runs through the gateway: argument validation and policy checks apply.
+- **Status**:
+  - `200 OK` — `{ "ok": true, "data": { ... } }` or `{ "ok": false, "error": { "code", "message" } }` when the
+    gateway rejects the call (for example `ValidationError`). A tool may also return its own `{ "error": ... }`
+    inside `data`.
+  - `403 Forbidden` — `tool_requires_run`: not UI-invocable. The tool is not executed.
+  - `404 Not Found` — `tool_not_found` or unknown session.
+  - `400 Bad Request` — `args` is not an object.
+
+---
+
+## 7. Standardized Error Contract
+
+Error responses are a flat JSON object with a lowercase snake_case code, a message, and sometimes extra fields:
 ```json
 {
-  "error": {
-    "code": "SESSION_BUSY",
-    "message": "Session \"sess-4fa9b2\" already has a run in progress",
-    "requestId": "req-981240"
-  }
+  "error": "run_in_progress",
+  "message": "session \"sess-4fa9b2\" already has a run in progress",
+  "runId": "run-98a72b"
 }
 ```
 
-Standard Error Codes:
-- `NOT_FOUND`
-- `SESSION_BUSY` (409)
-- `INVALID_REQUEST` (400)
-- `UNAUTHORIZED` (401)
-- `SERVER_NOT_READY` (503)
-- `INTERNAL_ERROR` (500)
+Codes in use: `not_found`, `session_not_found`, `run_not_found`, `run_in_progress` (409), `invalid_request` (400),
+`unsupported_output_format` (400), `tool_not_found` (404), `tool_requires_run` (403),
+`interaction_not_found` (404), `interaction_already_resolved` (409), `unauthorized` (401),
+`server_not_ready` (503), `internal_error` (500).

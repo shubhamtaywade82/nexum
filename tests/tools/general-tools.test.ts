@@ -3,6 +3,7 @@ import { generalPack } from "../../src/tools/packs/general-pack.js";
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import { mountToolPack } from "../../src/tools/gateway/tool-pack.js";
 import { AgentToolManager } from "../../src/cli/agent-tools.js";
+import { isUiInvocable } from "../../src/host/ui-tools.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,6 +128,7 @@ describe("generalPack", () => {
 
     const risks = Object.fromEntries(catalog.all().map((e) => [e.definition.id, e.definition.risk]));
     expect(risks).toEqual({ calculator: "read", weather_api: "read", web_search: "read" });
+    expect(catalog.all().every((e) => isUiInvocable(e.definition))).toBe(true);
   });
 });
 
@@ -150,6 +152,28 @@ describe("general tools in a real agent", () => {
     for (const id of ["calculator", "weather_api", "web_search"]) {
       expect(definitions.find((d) => d.id === id)?.risk).toBe("read");
     }
+  });
+
+  it("should let generated UI call only the opted-in read tools of a base agent", () => {
+    const uiCallable = baseTools()
+      .gateway.discover()
+      .filter(isUiInvocable)
+      .map((d) => d.id)
+      .sort();
+
+    expect(uiCallable).toEqual(
+      [
+        "calculator",
+        "git_read",
+        "list_directory",
+        "memory_recall",
+        "rag_search",
+        "read_file",
+        "search_code",
+        "weather_api",
+        "web_search",
+      ].sort(),
+    );
   });
 
   it("should compute through the gateway", async () => {

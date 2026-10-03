@@ -17,7 +17,7 @@ export function ragPack(rag: RagService): ToolPack {
       metadata: {
         risk: "read",
         execution: { timeoutMs: 60_000, concurrency: 4, idempotent: true, reversible: false, idempotencyKey: "none" },
-        policy: { confirmation: "never" },
+        policy: { confirmation: "never", uiInvocable: true },
       },
     },
   ]);

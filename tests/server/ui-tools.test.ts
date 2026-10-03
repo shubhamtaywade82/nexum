@@ -30,11 +30,14 @@ describe("UI tool invocation (POST /sessions/:id/tools/:name)", () => {
     expect(body).toEqual({ ok: true, data: { symbol: "BTCUSDT", price: 67000.5 } });
   });
 
-  it("refuses a non-read tool without executing it", async () => {
-    const { status, body } = await harness.postJson<{ error: string }>(
-      `/sessions/${sessionId}/tools/fake_place_order`,
-      { args: { symbol: "BTCUSDT" } },
-    );
+  it.each([
+    ["a high-risk tool", "fake_place_order"],
+    ["a read-risk tool that never opted in", "fake_unlisted_read"],
+    ["a high-risk tool that opted in by mistake", "fake_high_opted_in"],
+  ])("refuses %s without executing it", async (_label, tool) => {
+    const { status, body } = await harness.postJson<{ error: string }>(`/sessions/${sessionId}/tools/${tool}`, {
+      args: { symbol: "BTCUSDT" },
+    });
 
     expect(status).toBe(403);
     expect(body.error).toBe("tool_requires_run");

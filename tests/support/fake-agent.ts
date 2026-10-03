@@ -9,7 +9,11 @@ import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
 /** Records every handler call so tests can prove a refused tool never executed. */
 export const fakeToolCalls: string[] = [];
 
-function fakeTool(id: string, risk: ToolDefinition["risk"], financial: boolean): ToolDefinition {
+function fakeTool(
+  id: string,
+  risk: ToolDefinition["risk"],
+  { financial = false, uiInvocable = false } = {},
+): ToolDefinition {
   return {
     id,
     description: id,
@@ -20,20 +24,27 @@ function fakeTool(id: string, risk: ToolDefinition["risk"], financial: boolean):
     risk,
     sideEffects: { filesystem: false, process: false, network: false, externalMutation: financial, financial },
     execution: { timeoutMs: 5_000, concurrency: 1, idempotent: !financial, reversible: !financial },
-    policy: { confirmation: "never" },
+    policy: { confirmation: "never", uiInvocable },
   };
 }
 
 function fakeToolGateway(): DefaultToolGateway {
+  const record =
+    (id: string, result: Record<string, unknown> = { ok: true }) =>
+    async () => {
+      fakeToolCalls.push(id);
+      return result;
+    };
   const catalog = new ToolCatalog()
-    .register(fakeTool("fake_quote", "read", false), async (args) => {
+    .register(fakeTool("fake_quote", "read", { uiInvocable: true }), async (args) => {
       fakeToolCalls.push("fake_quote");
       return { symbol: args.symbol, price: 67000.5 };
     })
-    .register(fakeTool("fake_place_order", "high", true), async () => {
-      fakeToolCalls.push("fake_place_order");
-      return { placed: true };
-    });
+    // Read-risk, but never opted in: risk alone must not make a tool callable from a UI.
+    .register(fakeTool("fake_unlisted_read", "read"), record("fake_unlisted_read"))
+    // Opted in by mistake, but high-risk: still agent-only.
+    .register(fakeTool("fake_high_opted_in", "high", { uiInvocable: true }), record("fake_high_opted_in"))
+    .register(fakeTool("fake_place_order", "high", { financial: true }), record("fake_place_order", { placed: true }));
   return new DefaultToolGateway({ catalog });
 }
 
