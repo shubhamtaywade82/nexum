@@ -72,19 +72,26 @@ describe("Assistant Client SDK (Wave 13)", () => {
     expect(completed.status).toBe("completed");
   });
 
-  it("resolves an interaction via resolveInteraction", async () => {
+  it("resolves a pending approval via resolveInteraction", async () => {
+    harness.setRunHandler(async (_goal, agent) => `approved: ${await agent.requestApproval("Deploy", "to staging")}`);
     const session = await client.createSession();
-    const run = await client.createRun(session.id, "Deploy to staging");
+    const run = await client.createRun(session.id, "Deploy to staging", { interactive: true });
 
-    const resolution = await client.resolveInteraction(run.id, "appr_test_sdk", {
+    let interactionId = "";
+    for await (const event of client.streamEvents(run.id)) {
+      if (event.payload.type === "run.approval.required") {
+        interactionId = event.payload.interactionId;
+        break;
+      }
+    }
+    const resolution = await client.resolveInteraction(run.id, interactionId, {
       approved: true,
       reason: "Approved from SDK",
     });
 
-    expect(resolution.resolved).toBe(true);
-    expect(resolution.interactionId).toBe("appr_test_sdk");
-
-    await harness.waitForRun(run.id);
+    expect(resolution).toEqual({ resolved: true, interactionId });
+    expect((await harness.waitForRun(run.id)).output?.content).toBe("approved: true");
+    harness.resetRunHandler();
   });
 
   it("sends Bearer token header when token is configured", async () => {

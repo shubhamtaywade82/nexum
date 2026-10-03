@@ -21,6 +21,8 @@ export interface CreateRunOptions {
   idempotencyKey?: string;
   outputFormat?: NexumOutputFormat;
   openuiSpec?: string;
+  /** Declare that this client answers approvals/clarifications; otherwise they are denied/skipped. */
+  interactive?: boolean;
 }
 
 export interface StreamEventsOptions {
@@ -94,7 +96,12 @@ export class NexumClient {
     const res = await this.request<{ run: NexumRun }>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ goal, outputFormat: opts.outputFormat, openuiSpec: opts.openuiSpec }),
+      body: JSON.stringify({
+        goal,
+        outputFormat: opts.outputFormat,
+        openuiSpec: opts.openuiSpec,
+        interactive: opts.interactive,
+      }),
     });
     return res.run;
   }

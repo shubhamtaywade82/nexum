@@ -76,11 +76,12 @@ describe("Concurrency & Idempotency (Wave 12)", () => {
     expect(res1.status).toBe(201);
 
     // Attempt second run on the same session while first run is in progress
-    const res2 = await harness.postJson<{ error: string }>(`/sessions/${sess.id}/runs`, {
+    const res2 = await harness.postJson<{ error: string; runId?: string }>(`/sessions/${sess.id}/runs`, {
       goal: "Second concurrent run",
     });
     expect(res2.status).toBe(409);
     expect(res2.body.error).toBe("run_in_progress");
+    expect(res2.body.runId).toBe(res1.body.run.id);
 
     // Release first run and wait for it to complete
     if (releaseFirstRun) {
