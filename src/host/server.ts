@@ -34,7 +34,7 @@ import type { RunEventBridge } from "./event-bridge.js";
 import {
   SUPPORTED_PRESENTATIONS,
   OPENUI_SCHEMA_VERSION,
-  openuiInstructions,
+  presentationInstructions,
   presentOutput,
   isPresentationSupported,
 } from "./presentation.js";
@@ -729,8 +729,7 @@ async function runAgentInBackground(
   publish({ type: "run.started", runId: ctx.runId, sessionId: ctx.sessionId, goal, ts: Date.now() });
 
   const messageCountBefore = agent.conversation.getMessages().length;
-  agent.conversation.presentationInstructions =
-    presentation.openui && presentation.mode !== "markdown" ? openuiInstructions(presentation.openui.spec) : "";
+  agent.conversation.presentationInstructions = presentationInstructions(presentation);
 
   try {
     const output: NexumRunOutput = presentOutput(await agent.runUserMessage(goal), presentation);

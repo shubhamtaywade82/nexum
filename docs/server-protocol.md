@@ -169,8 +169,21 @@ Initiates a new execution turn. Returns immediately with the created run resourc
   | Field | Meaning |
   | --- | --- |
   | `goal` | Required. The user's message. |
-  | `presentation` | Optional. `{ mode: "auto" | "markdown" | "openui", openui?: { schemaVersion, spec, schema } }`. Nexum decides final output format (`markdown` or `openui`). `openui` mode requires an `openui` offer; unsupported schema versions return `400 unsupported_presentation`. |
+  | `presentation` | Optional, default `{ "mode": "auto" }`. How the answer should be presented; see below. |
   | `interactive` | `true` if this client will show approvals and clarifications to a user. Default `false`: approvals are denied and clarifications skipped, so a headless client never leaves a run waiting. |
+  **Presentation.** `{ mode, openui? }` where `mode` is `auto`, `markdown` or `openui`, and `openui` is the client's offer:
+  `{ "schemaVersion", "spec", "schema" }` (`spec` is prompt-ready component documentation, max 32,000 chars; `schema` is
+  the library's JSON schema, which Nexum validates the answer against). The client says what it can render; Nexum decides
+  the format and reports it in `run.completed`.
+  - `markdown`: nothing is injected; the answer is Markdown.
+  - `auto`: with an `openui` offer, the spec is added to this run's prompt and the model may answer in OpenUI when the
+    content fits; without an offer, Markdown.
+  - `openui`: requires an offer; the model is told to answer in OpenUI.
+  - An answer is reported as `openui` only if it starts with `root =` (an enclosing code fence is allowed) **and** parses
+    against the schema with no errors. Anything else, including prose that contains a program, is returned unchanged as
+    `markdown`, so no text is dropped. There is no repair step.
+  - An offer whose `schemaVersion` differs from the server's (see `/capabilities`) is refused with
+    `400 unsupported_presentation`, unless `mode` is `markdown`.
 - **Status**:
   - `201 Created` — Run accepted and started.
   - `400 Bad Request` — Invalid body, or `unsupported_presentation`.
@@ -206,9 +219,9 @@ Retrieves the metadata and current state of a run.
     "error": null
   }
   ```
-  When finished, `output` is `{ "format": "markdown" | "openui", "content": "..." }`. `format` is what the answer
-  actually is, not what was requested: `openui` is reported only when the content starts with
-  `root = Component(`, which is classification, not validation.
+  When finished, `output` is `{ "format": "markdown" | "openui", "content": "...", "schemaVersion"? }`. `format` is
+  what the answer actually is, not what was requested: `openui` is reported only for an answer that validated against
+  the client's schema (see Presentation above); `content` is then the bare program.
 
 ### `POST /runs/:runId/cancel`
 Cooperatively cancels an in-flight run via the agent's `AbortController`. Anything the run is waiting on
@@ -318,6 +331,6 @@ Error responses are a flat JSON object with a lowercase snake_case code, a messa
 ```
 
 Codes in use: `not_found`, `session_not_found`, `run_not_found`, `run_in_progress` (409), `invalid_request` (400),
-`unsupported_output_format` (400), `tool_not_found` (404), `tool_requires_run` (403),
+`unsupported_presentation` (400), `tool_not_found` (404), `tool_requires_run` (403),
 `interaction_not_found` (404), `interaction_already_resolved` (409), `unauthorized` (401),
 `server_not_ready` (503), `internal_error` (500).
