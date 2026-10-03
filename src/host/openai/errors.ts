@@ -14,3 +14,10 @@ export function writeOpenAiError(
 ): void {
   writeJson(res, status, { error: { message, type, param: extra.param ?? null, code: extra.code ?? null } });
 }
+
+export const BUSY_MESSAGE = "this conversation already has a response in progress";
+
+/** 409 for a second request on a conversation whose previous answer is still being produced. */
+export function writeConversationBusy(res: ServerResponse): void {
+  writeOpenAiError(res, 409, "invalid_request_error", BUSY_MESSAGE, { code: "conversation_busy" });
+}

@@ -19,6 +19,10 @@ import { RunEventBridge } from "./event-bridge.js";
 import { McpHub } from "./mcp-hub.js";
 import type { NexumMcpServerInfo } from "../protocol/types.js";
 
+// Every session's agent comes from the same factory, so one reserved registry entry answers for all of them
+// (and gets the registry's idle eviction); it has no session row and never runs.
+export const DISCOVERY_SESSION_ID = "__capabilities__";
+
 export interface AgentEntry {
   agent: Agent;
   bridge: RunEventBridge;

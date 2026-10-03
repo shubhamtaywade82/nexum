@@ -1,15 +1,22 @@
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { describeError, readJsonBody, writeJson } from "../http.js";
 import { cancelRun, startRun } from "../run-starter.js";
-import { writeOpenAiError } from "./errors.js";
+import { BUSY_MESSAGE, writeConversationBusy, writeOpenAiError } from "./errors.js";
 import { ChatCompletionRequestSchema, parseConversation, toRunRequest, type Conversation } from "./messages.js";
 import { AGENT_MODEL_ID } from "./models.js";
 import { streamCompletion } from "./stream-completion.js";
-import { withTemporarySession, type OpenAiContext } from "./temporary-session.js";
+import { withChatSession, type OpenAiContext } from "./chat-session.js";
+import { SseStream } from "./sse.js";
+import { completeTask, isTaskRequest } from "./task-request.js";
+
+/** Open WebUI sends its chat id here (configured per connection), which keys a persistent Nexum session. */
+const CHAT_ID_HEADER = "x-openwebui-chat-id";
 
 /**
- * POST /v1/chat/completions. Each request runs on a temporary session (see temporary-session.ts), and the
- * answer is returned whole or, with `stream: true`, as an SSE stream.
+ * POST /v1/chat/completions. Housekeeping requests get a plain model reply; chat requests run the agent on the
+ * session for the conversation (see chat-session.ts). The answer is returned whole or, with `stream: true`, as
+ * an SSE stream.
  */
 export async function handleChatCompletion(
   req: IncomingMessage,
@@ -38,8 +45,37 @@ export async function handleChatCompletion(
     return;
   }
 
-  if (request.stream) await streamCompletion(res, ctx, conversation.conversation);
-  else await completeOnce(res, ctx, conversation.conversation);
+  if (isTaskRequest(req, conversation.conversation)) {
+    await replyToTask(res, ctx, conversation.conversation, request.stream === true);
+    return;
+  }
+  const chatId = req.headers[CHAT_ID_HEADER];
+  const chat = { ...conversation.conversation, externalKey: typeof chatId === "string" && chatId ? chatId : undefined };
+  if (request.stream) await streamCompletion(res, ctx, chat);
+  else await completeOnce(res, ctx, chat);
+}
+
+async function replyToTask(
+  res: ServerResponse,
+  ctx: OpenAiContext,
+  conversation: Conversation,
+  stream: boolean,
+): Promise<void> {
+  let content: string;
+  try {
+    content = await completeTask(ctx, conversation);
+  } catch (err) {
+    writeOpenAiError(res, 500, "server_error", `could not complete the request: ${describeError(err)}`);
+    return;
+  }
+  if (!stream) {
+    writeJson(res, 200, completion(`task-${randomUUID()}`, content));
+    return;
+  }
+  const sse = new SseStream(res, AGENT_MODEL_ID);
+  sse.open(`chatcmpl-task-${randomUUID()}`);
+  sse.text(content);
+  sse.finish();
 }
 
 async function readBody(req: IncomingMessage, res: ServerResponse): Promise<unknown> {
@@ -51,14 +87,15 @@ async function readBody(req: IncomingMessage, res: ServerResponse): Promise<unkn
   }
 }
 
-type Outcome = { ok: true; runId: string; content: string } | { ok: false; message: string };
+type Outcome = { ok: true; runId: string; content: string } | { ok: false; message: string; busy?: true };
 
 async function completeOnce(res: ServerResponse, ctx: OpenAiContext, conversation: Conversation): Promise<void> {
-  const outcome = await withTemporarySession(ctx, conversation.history, (sessionId) =>
+  const outcome = await withChatSession(ctx, conversation, (sessionId) =>
     runToCompletion(res, ctx, sessionId, conversation),
   );
   // Respond only after the cleanup, so a client that follows up never sees the temporary session.
   if (outcome.ok) writeJson(res, 200, completion(outcome.runId, outcome.content));
+  else if (outcome.busy) writeConversationBusy(res);
   else writeOpenAiError(res, 500, "server_error", outcome.message);
 }
 
@@ -69,7 +106,7 @@ async function runToCompletion(
   conversation: Conversation,
 ): Promise<Outcome> {
   const started = await startRun(ctx, sessionId, toRunRequest(conversation));
-  if (!started.ok) return { ok: false, message: "could not start a run on a new session" };
+  if (!started.ok) return { ok: false, message: BUSY_MESSAGE, busy: true };
 
   // If the client goes away mid-run nobody is waiting for the answer, so stop spending effort on it.
   res.on("close", () => {

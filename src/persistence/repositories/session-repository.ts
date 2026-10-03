@@ -5,10 +5,10 @@ import { sessions, type SessionRow } from "../schema/session.js";
 export class SessionRepository {
   constructor(private readonly db: Database) {}
 
-  async create(id: string, workspaceRoot: string, title?: string): Promise<SessionRow> {
+  async create(id: string, workspaceRoot: string, title?: string, externalKey?: string): Promise<SessionRow> {
     const [row] = await this.db
       .insert(sessions)
-      .values({ id, workspaceRoot, title: title ?? null })
+      .values({ id, workspaceRoot, title: title ?? null, externalKey: externalKey ?? null })
       .returning();
     return row;
   }
@@ -19,6 +19,11 @@ export class SessionRepository {
 
   async get(id: string): Promise<SessionRow | null> {
     const [row] = await this.db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
+    return row ?? null;
+  }
+
+  async findByExternalKey(externalKey: string): Promise<SessionRow | null> {
+    const [row] = await this.db.select().from(sessions).where(eq(sessions.externalKey, externalKey)).limit(1);
     return row ?? null;
   }
 

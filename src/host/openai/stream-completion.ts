@@ -2,12 +2,12 @@ import type { ServerResponse } from "node:http";
 import { followRun } from "../follow-run.js";
 import { describeError } from "../http.js";
 import { cancelRun, startRun } from "../run-starter.js";
-import { writeOpenAiError } from "./errors.js";
+import { BUSY_MESSAGE, writeConversationBusy, writeOpenAiError } from "./errors.js";
 import { toRunRequest, type Conversation } from "./messages.js";
 import { AGENT_MODEL_ID } from "./models.js";
 import { SseStream } from "./sse.js";
 import { projectEvent } from "./stream-projection.js";
-import { withTemporarySession, type OpenAiContext } from "./temporary-session.js";
+import { withChatSession, type OpenAiContext } from "./chat-session.js";
 
 /**
  * Streams a chat completion: the agent's tool activity as it happens, then its answer. Nexum's agent produces the
@@ -21,7 +21,7 @@ export async function streamCompletion(
   const stream = new SseStream(res, AGENT_MODEL_ID);
   let failure: string | null = null;
 
-  await withTemporarySession(ctx, conversation.history, async (sessionId) => {
+  await withChatSession(ctx, conversation, async (sessionId) => {
     try {
       failure = await relayRun(res, ctx, sessionId, conversation, stream);
     } catch (err) {
@@ -32,6 +32,7 @@ export async function streamCompletion(
 
   // Finish only after the session is gone, so a client that follows up never sees it.
   if (stream.isOpen) stream.finish();
+  else if (failure === BUSY_MESSAGE) writeConversationBusy(res);
   else writeOpenAiError(res, 500, "server_error", failure ?? "could not start a run");
 }
 
@@ -44,7 +45,7 @@ async function relayRun(
   stream: SseStream,
 ): Promise<string | null> {
   const started = await startRun(ctx, sessionId, toRunRequest(conversation));
-  if (!started.ok) return "could not start a run on a new session";
+  if (!started.ok) return BUSY_MESSAGE;
   stream.open(`chatcmpl-${started.run.id}`);
 
   // A client that goes away mid-run is not waiting for the answer any more: stop the work.

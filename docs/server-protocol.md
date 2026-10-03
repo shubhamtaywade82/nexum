@@ -357,8 +357,16 @@ One model, `nexum-agent`. It is the whole agent, not a raw LLM; the underlying m
   tools and never returns `tool_calls`.
 - **Run settings:** `interactive: false` (approvals are denied and clarifications skipped, so a destructive action is
   refused rather than waiting on a client that cannot answer) and `presentation: markdown`.
-- **Sessions:** each request runs on a temporary session seeded from the supplied history and deleted before the
-  response is sent. An OpenAI client keeps its own transcript, so nothing is remembered between calls.
+- **Sessions:** a request with an `X-OpenWebUI-Chat-Id` header runs on a persistent session keyed by that id: the first
+  request creates it (seeded with the supplied earlier turns), later ones continue it and only the last user message is
+  used. It is a normal session, visible under `/sessions`, and is never deleted by this API. A second request for a chat
+  whose previous answer is still running gets `409` with code `conversation_busy`. Without the header, each request
+  runs on a temporary session seeded from the supplied history and deleted before the response is sent, since an
+  OpenAI client keeps its own transcript. (Regenerating or editing a message in a keyed chat appends another turn
+  instead of replacing the old one.)
+- **Housekeeping requests:** a request with a non-empty `X-OpenWebUI-Task` header, or whose last user message starts
+  with `### Task:`, is a chat UI asking for a title, tags or follow-ups. It gets one plain model reply (streamed as a
+  single chunk if `stream: true`) with no agent, tools or session.
 - **Response:** a `chat.completion` with the agent's final answer and `finish_reason: "stop"`. A failed run is
   `500 server_error` carrying the reason.
 - **Disconnect:** if the client closes the connection before the answer is ready, the run is cancelled.

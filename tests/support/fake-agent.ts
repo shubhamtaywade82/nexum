@@ -117,6 +117,13 @@ export class FakeAgent {
     return ["fake-model"];
   }
 
+  readonly plainCompletions: Array<Array<{ role: string; content: string }>> = [];
+
+  async completeOnce(messages: Array<{ role: string; content: string }>): Promise<string> {
+    this.plainCompletions.push(messages);
+    return "plain reply";
+  }
+
   async modelCapabilities(models: string[]): Promise<Record<string, string[]>> {
     return Object.fromEntries(models.map((m) => [m, ["coding", "tools"]]));
   }

@@ -29,7 +29,7 @@
 import { randomUUID } from "node:crypto";
 import type { Agent } from "../cli/agent.js";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
-import { HostAgentRegistry } from "./agent-registry.js";
+import { DISCOVERY_SESSION_ID, HostAgentRegistry } from "./agent-registry.js";
 import { describeError, readJsonBody, writeJson } from "./http.js";
 import { cancelRun, startRun, type Repos } from "./run-starter.js";
 import { writeOpenAiError } from "./openai/errors.js";
@@ -79,9 +79,6 @@ export interface NexumHost {
 
 // Static across every session — every Agent in the registry is built from
 // the same host-wide config, so this doesn't need a live Agent instance.
-// Every session's agent comes from the same factory, so one reserved registry entry answers for all of them
-// (and gets the registry's idle eviction); it has no session row and never runs.
-const DISCOVERY_SESSION_ID = "__capabilities__";
 
 const STATIC_CAPABILITIES: Omit<NexumCapabilities, keyof DiscoveredCapabilities> = {
   agents: [devAgentDescriptor().id],

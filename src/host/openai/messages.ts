@@ -39,6 +39,8 @@ export interface Conversation {
   context: string;
   /** Earlier user/assistant turns, oldest first. */
   history: ClientTurn[];
+  /** The client's own id for this conversation, when it sent one. */
+  externalKey?: string;
 }
 
 export type ConversationResult = { ok: true; conversation: Conversation } | { ok: false; message: string };

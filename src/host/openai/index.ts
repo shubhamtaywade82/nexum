@@ -3,7 +3,7 @@ import { writeJson } from "../http.js";
 import { handleChatCompletion } from "./chat-completions.js";
 import { writeOpenAiError } from "./errors.js";
 import { AGENT_MODEL_ID, agentModel, modelList } from "./models.js";
-import type { OpenAiContext } from "./temporary-session.js";
+import type { OpenAiContext } from "./chat-session.js";
 
 /** Routes `/v1/*`: Nexum's OpenAI-compatible surface. `segments` starts with "v1". */
 export async function handleOpenAiRequest(

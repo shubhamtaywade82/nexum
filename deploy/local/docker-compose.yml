@@ -94,6 +94,29 @@ services:
     networks:
       - nexum
 
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: nexum-open-webui
+    restart: unless-stopped
+    depends_on:
+      - nexum
+    environment:
+      OPENAI_API_BASE_URLS: http://nexum:3777/v1
+      OPENAI_API_KEYS: ${NEXUM_SERVER_TOKEN:-dev_secret_token_123}
+      # Nexum keys its sessions on the chat id and recognises Open WebUI's housekeeping requests by the task header;
+      # Open WebUI does not send either unless a connection is told to.
+      OPENAI_API_CONFIGS: '{"0": {"headers": {"X-OpenWebUI-Chat-Id": "{{CHAT_ID}}", "X-OpenWebUI-Task": "{{TASK}}"}}}'
+      ENABLE_OLLAMA_API: "False"
+      ENABLE_FOLLOW_UP_GENERATION: "False"
+      # Local single-user setup. Turn auth back on before exposing this port beyond localhost.
+      WEBUI_AUTH: "False"
+    ports:
+      - "127.0.0.1:3500:8080"
+    volumes:
+      - nexum-open-webui:/app/backend/data
+    networks:
+      - nexum
+
 networks:
   nexum:
     driver: bridge
@@ -101,3 +124,4 @@ networks:
 volumes:
   nexum-postgres:
   nexum-redis:
+  nexum-open-webui:

@@ -1142,6 +1142,13 @@ export class Agent {
     return this.stack.listModels();
   }
 
+  /** One plain model reply: no tools, memory or session. For clients' housekeeping prompts (titles, tags). */
+  async completeOnce(messages: ChatMessage[]): Promise<string> {
+    await this.stack.ensureCatalog();
+    const reply = await this.stack.routeWithFallback("quick", messages, { stream: false });
+    return reply.message.content;
+  }
+
   modelAvailability(models: string[]): Record<string, boolean> {
     return this.stack.modelAvailability(models);
   }

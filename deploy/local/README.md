@@ -1,8 +1,8 @@
 # Nexum local platform
 
 Runs the full local stack: PostgreSQL (durable source of truth), Redis
-(live event fan-out), the Nexum Host, and Agentic Chat — all on one
-Docker network, all on your machine.
+(live event fan-out), the Nexum Host, Agentic Chat, and Open WebUI — all on
+one Docker network, all on your machine.
 
 ```
 Browser :3400
@@ -41,13 +41,27 @@ starts (`src/persistence/database.ts`'s `openDatabase()`).
 
 - Nexum Host: http://localhost:3777 (`/health`, `/capabilities`)
 - Agentic Chat: http://localhost:3400
+- Open WebUI: http://localhost:3500 (see below)
 - Postgres: `localhost:5432` (user `nexum`, db `nexum`) — bound to
   `127.0.0.1` only, for local debugging (`psql`, a GUI client)
 - Redis: `localhost:6379` — same, `127.0.0.1` only
 
+## Open WebUI
+
+Open WebUI talks to Nexum through its OpenAI-compatible `/v1` API (docs/server-protocol.md §8) and sees one
+model, `nexum-agent`: the whole agent, with Nexum's tools, MCP servers and policy behind it. The compose file
+already points it at `http://nexum:3777/v1` with `NEXUM_SERVER_TOKEN` as the API key, and tells the connection to
+send `X-OpenWebUI-Chat-Id` and `X-OpenWebUI-Task` headers (`OPENAI_API_CONFIGS`; needs Open WebUI ≥ 0.10). Those
+headers give each chat its own persistent Nexum session and keep Open WebUI's title/tag generation away from the agent.
+
+- Tool activity appears as quoted lines above the answer; the answer arrives in one piece, not token by token.
+- Open WebUI cannot answer approval prompts, so destructive actions are refused rather than run.
+- `WEBUI_AUTH=False` is for localhost only. Enable auth before publishing the port.
+- Generated UI (OpenUI) is Agentic Chat only; Open WebUI always gets Markdown.
+
 ## Data persistence
 
-Named volumes (`nexum-postgres`, `nexum-redis`) survive `docker compose down`.
+Named volumes (`nexum-postgres`, `nexum-redis`, `nexum-open-webui`) survive `docker compose down`.
 Use `docker compose down -v` to explicitly wipe local state (sessions, runs,
 event history) during development.
 
