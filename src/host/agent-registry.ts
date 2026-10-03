@@ -119,6 +119,14 @@ export class HostAgentRegistry {
     }
   }
 
+  /** Stops and forgets a session's agent, for a session that is being deleted. */
+  async evict(sessionId: string): Promise<void> {
+    const entry = this.entries.get(sessionId);
+    if (!entry) return;
+    this.entries.delete(sessionId);
+    await entry.agent.stopHost().catch(() => {});
+  }
+
   /** State of each configured MCP server (empty until the first agent exists). */
   mcpServers(): NexumMcpServerInfo[] {
     return this.mcpHub?.describe() ?? [];

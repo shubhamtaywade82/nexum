@@ -22,6 +22,11 @@ export class SessionRepository {
     return row ?? null;
   }
 
+  /** Removes a session; its messages, runs and events go with it (cascade). */
+  async delete(id: string): Promise<void> {
+    await this.db.delete(sessions).where(eq(sessions.id, id));
+  }
+
   async list(limit = 50): Promise<SessionRow[]> {
     return this.db.select().from(sessions).orderBy(desc(sessions.updatedAt)).limit(limit);
   }

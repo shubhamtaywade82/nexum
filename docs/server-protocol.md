@@ -334,3 +334,32 @@ Codes in use: `not_found`, `session_not_found`, `run_not_found`, `run_in_progres
 `unsupported_presentation` (400), `tool_not_found` (404), `tool_requires_run` (403),
 `interaction_not_found` (404), `interaction_already_resolved` (409), `unauthorized` (401),
 `server_not_ready` (503), `internal_error` (500).
+
+---
+
+## 8. OpenAI-compatible API (`/v1`)
+
+Lets any OpenAI client (Open WebUI, the official SDKs) use Nexum as a single model. It is a thin adapter over the
+runs described above: Nexum remains the only agent and tool runtime, and the client is only a chat window. The same
+Bearer token applies, and errors on these routes use OpenAI's envelope
+`{ "error": { "message", "type", "param", "code" } }` (for example `authentication_error` / `invalid_api_key`).
+
+### `GET /v1/models`, `GET /v1/models/:id`
+One model, `nexum-agent`. It is the whole agent, not a raw LLM; the underlying model is chosen by Nexum.
+
+### `POST /v1/chat/completions`
+- **Request:** `{ "model": "nexum-agent", "messages": [...] }`. Any other `model` is `404 model_not_found`.
+- **Mapping:** the last message must be a non-empty `user` message; it is the run's goal. `system` / `developer`
+  messages are passed as context (`Context from the client: ... User request: ...`), so retrieval context from a client
+  is kept. Earlier `user` / `assistant` turns seed the conversation. Only text content is accepted (an image part is
+  `400`). `tool` / `function` messages are ignored.
+- **Ignored parameters:** `temperature`, `max_tokens`, `tools` and the rest are accepted and ignored. Nexum runs its own
+  tools and never returns `tool_calls`.
+- **Run settings:** `interactive: false` (approvals are denied and clarifications skipped, so a destructive action is
+  refused rather than waiting on a client that cannot answer) and `presentation: markdown`.
+- **Sessions:** each request runs on a temporary session seeded from the supplied history and deleted before the
+  response is sent. An OpenAI client keeps its own transcript, so nothing is remembered between calls.
+- **Response:** a `chat.completion` with the agent's final answer and `finish_reason: "stop"`. A failed run is
+  `500 server_error` carrying the reason.
+- **Disconnect:** if the client closes the connection before the answer is ready, the run is cancelled.
+- **Not yet available:** `stream: true` returns `400` with code `stream_not_supported`.

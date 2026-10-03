@@ -27,17 +27,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { Agent } from "../cli/agent.js";
-import { HostAgentRegistry, type AgentEntry } from "./agent-registry.js";
-import type { RunEventBridge } from "./event-bridge.js";
-import {
-  SUPPORTED_PRESENTATIONS,
-  OPENUI_SCHEMA_VERSION,
-  presentationInstructions,
-  presentOutput,
-  isPresentationSupported,
-} from "./presentation.js";
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
+import { HostAgentRegistry } from "./agent-registry.js";
+import { describeError, readJsonBody, writeJson } from "./http.js";
+import { cancelRun, startRun, type Repos } from "./run-starter.js";
+import { writeOpenAiError } from "./openai/errors.js";
+import { handleOpenAiRequest } from "./openai/index.js";
+import { SUPPORTED_PRESENTATIONS, OPENUI_SCHEMA_VERSION, isPresentationSupported } from "./presentation.js";
 import { invokeUiTool } from "./ui-tools.js";
 import { discoverCapabilities, type DiscoveredCapabilities } from "./capabilities.js";
 import {
@@ -47,7 +44,6 @@ import {
   PROTOCOL_VERSION,
   type NexumRunEvent,
   type NexumCapabilities,
-  type NexumRunOutput,
   type NexumOutputFormat,
   type CreateRunRequest,
   type ErrorCode,
@@ -81,8 +77,6 @@ export interface NexumHost {
   stop(graceMs?: number): Promise<void>;
 }
 
-const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB — chat goals/history, not file uploads
-
 // Static across every session — every Agent in the registry is built from
 // the same host-wide config, so this doesn't need a live Agent instance.
 // Every session's agent comes from the same factory, so one reserved registry entry answers for all of them
@@ -95,13 +89,6 @@ const STATIC_CAPABILITIES: Omit<NexumCapabilities, keyof DiscoveredCapabilities>
   presentations: SUPPORTED_PRESENTATIONS,
   protocolVersion: PROTOCOL_VERSION,
 };
-
-interface Repos {
-  sessions: SessionRepository;
-  messages: MessageRepository;
-  runs: RunRepository;
-  events: EventRepository;
-}
 
 interface RequestContext {
   registry: HostAgentRegistry;
@@ -283,14 +270,21 @@ async function drainActiveRuns(
 }
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: RequestContext): Promise<void> {
-  if (!isAuthorized(req, ctx.isLoopbackHost, ctx.token)) {
-    writeJson(res, 401, { error: "unauthorized", message: "invalid or missing authentication token" });
-    return;
-  }
-
   const url = new URL(req.url ?? "/", "http://localhost");
   const segments = url.pathname.split("/").filter(Boolean);
   const method = req.method ?? "GET";
+
+  if (!isAuthorized(req, ctx.isLoopbackHost, ctx.token)) {
+    const message = "invalid or missing authentication token";
+    if (segments[0] === "v1") writeOpenAiError(res, 401, "authentication_error", message, { code: "invalid_api_key" });
+    else writeJson(res, 401, { error: "unauthorized", message });
+    return;
+  }
+
+  if (segments[0] === "v1") {
+    await handleOpenAiRequest(req, res, segments, ctx);
+    return;
+  }
 
   if (method === "GET" && segments.length === 0) {
     writeJson(res, 200, { name: "nexum-host", protocolVersion: PROTOCOL_VERSION });
@@ -436,13 +430,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   }
 
   writeJson(res, 404, { error: "not_found", message: `no route for ${method} ${url.pathname}` });
-}
-
-/** Aborts the run and releases anything it is blocked on, so cancel can't be stranded behind a prompt. */
-function cancelRun({ agent, bridge }: AgentEntry): boolean {
-  const cancelled = agent.cancelExecutionRun();
-  bridge.denyPending();
-  return cancelled;
 }
 
 async function handleResolveInteraction(
@@ -648,24 +635,17 @@ async function handleCreateRun(
     return;
   }
   const runRequest = parsed.request;
-  const { goal } = runRequest;
-
-  const { agent, bridge }: AgentEntry = await ctx.registry.getOrCreate(sessionId);
-  if (bridge.isBusy || ctx.busySessions.has(sessionId)) {
-    const activeRunId = [...ctx.runOwners].find(([, owner]) => owner === sessionId)?.[0];
+  const started = await startRun(ctx, sessionId, runRequest);
+  if (!started.ok) {
     writeJson(res, 409, {
       error: "run_in_progress",
       message: `session "${sessionId}" already has a run in progress`,
-      runId: activeRunId,
+      runId: started.activeRunId,
     });
     return;
   }
 
-  ctx.busySessions.add(sessionId);
-  const runId = agent.startExecutionRun();
-  ctx.runOwners.set(runId, sessionId);
-  const runRow = await ctx.repos.runs.create(runId, sessionId, goal, "running");
-
+  const { run: runRow } = started;
   const resBody = {
     run: {
       id: runRow.id,
@@ -681,133 +661,4 @@ async function handleCreateRun(
   }
 
   writeJson(res, 201, resBody);
-
-  const runPromise = runAgentInBackground(agent, bridge, runRequest, {
-    repos: ctx.repos,
-    eventBus: ctx.eventBus,
-    sessionId,
-    runId,
-    runOwners: ctx.runOwners,
-    busySessions: ctx.busySessions,
-  });
-  ctx.activeRuns.add(runPromise);
-  void runPromise.finally(() => {
-    ctx.activeRuns.delete(runPromise);
-  });
-}
-
-async function runAgentInBackground(
-  agent: Agent,
-  bridge: RunEventBridge,
-  { goal, presentation, interactive }: CreateRunRequest,
-  ctx: {
-    repos: Repos;
-    eventBus: RedisEventBus;
-    sessionId: string;
-    runId: string;
-    runOwners: Map<string, string>;
-    busySessions: Set<string>;
-  },
-): Promise<void> {
-  const channel = runChannel(ctx.runId);
-  let publishChain: Promise<void> = Promise.resolve();
-
-  const publish = (event: NexumRunEvent): void => {
-    publishChain = publishChain
-      .then(async () => {
-        const seq = await ctx.repos.events.append(event);
-        await ctx.eventBus.publish(channel, { seq, ...event });
-      })
-      .catch((err) => {
-        process.stderr.write(
-          `[nexum host] failed to persist/publish ${event.type} for ${ctx.runId}: ${describeError(err)}\n`,
-        );
-      });
-  };
-
-  bridge.begin({ runId: ctx.runId, write: publish, interactive });
-  publish({ type: "run.started", runId: ctx.runId, sessionId: ctx.sessionId, goal, ts: Date.now() });
-
-  const messageCountBefore = agent.conversation.getMessages().length;
-  agent.conversation.presentationInstructions = presentationInstructions(presentation);
-
-  try {
-    const output: NexumRunOutput = presentOutput(await agent.runUserMessage(goal), presentation);
-    bridge.flushThinking();
-    publish({ type: "run.completed", runId: ctx.runId, output, ts: Date.now() });
-    await publishChain;
-    await ctx.repos.runs.complete(ctx.runId, "completed", { output });
-  } catch (err) {
-    bridge.flushThinking();
-    const cancelled = agent.execution.signal?.aborted ?? false;
-    const message = describeError(err);
-    publish(
-      cancelled
-        ? { type: "run.cancelled", runId: ctx.runId, ts: Date.now() }
-        : { type: "run.failed", runId: ctx.runId, error: message, ts: Date.now() },
-    );
-    await publishChain;
-    await ctx.repos.runs.complete(ctx.runId, cancelled ? "cancelled" : "failed", { error: message });
-  } finally {
-    agent.conversation.presentationInstructions = "";
-    bridge.end();
-    agent.endExecutionRun();
-    ctx.runOwners.delete(ctx.runId);
-    ctx.busySessions.delete(ctx.sessionId);
-
-    const allMessages = agent.conversation.getMessages();
-    const newMessages = allMessages.slice(messageCountBefore);
-    if (newMessages.length > 0) {
-      await ctx.repos.messages
-        .append(
-          ctx.sessionId,
-          newMessages.map((m) => ({
-            role: m.role,
-            content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-          })),
-        )
-        .catch((err) =>
-          process.stderr.write(`[nexum host] failed to persist messages for ${ctx.sessionId}: ${describeError(err)}\n`),
-        );
-    }
-    await ctx.repos.sessions.touch(ctx.sessionId, allMessages.length).catch(() => {});
-  }
-}
-
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        reject(new Error(`request body exceeds ${MAX_BODY_BYTES} bytes`));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => {
-      if (chunks.length === 0) {
-        resolve({});
-        return;
-      }
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch (err) {
-        reject(err);
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
-function writeJson(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) });
-  res.end(payload);
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
