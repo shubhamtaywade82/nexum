@@ -16,6 +16,8 @@
 import type { Agent } from "../cli/agent.js";
 import type { MessageRepository } from "../persistence/repositories/message-repository.js";
 import { RunEventBridge } from "./event-bridge.js";
+import { McpHub } from "./mcp-hub.js";
+import type { NexumMcpServerInfo } from "../protocol/types.js";
 
 export interface AgentEntry {
   agent: Agent;
@@ -37,6 +39,9 @@ export class HostAgentRegistry {
   private readonly entries = new Map<string, AgentEntry>();
   private readonly idleTtlMs: number;
   private sweepTimer: NodeJS.Timeout | null = null;
+  private mcpHub: McpHub | null = null;
+  private mcpReady: Promise<void> | null = null;
+  private readonly warnedCollisions = new Set<string>();
 
   constructor(private readonly opts: HostAgentRegistryOptions) {
     this.idleTtlMs = opts.idleTtlMs ?? 30 * 60 * 1000;
@@ -60,6 +65,7 @@ export class HostAgentRegistry {
     }
 
     const agent = this.opts.createAgent();
+    await this.attachMcp(agent);
     try {
       await agent.startHost();
     } catch (err) {
@@ -83,10 +89,39 @@ export class HostAgentRegistry {
       }
     }
 
-    const entry: AgentEntry = { agent, bridge: new RunEventBridge(agent, { interactionTimeoutMs: this.opts.interactionTimeoutMs }), lastUsedAt: Date.now() };
+    const entry: AgentEntry = {
+      agent,
+      bridge: new RunEventBridge(agent, { interactionTimeoutMs: this.opts.interactionTimeoutMs }),
+      lastUsedAt: Date.now(),
+    };
     this.entries.set(sessionId, entry);
     this.ensureSweepScheduled();
     return entry;
+  }
+
+  /**
+   * The first agent supplies the MCP config and trust policy; the servers then run once for the host
+   * and every agent registers their tools (waiting for the connect attempt to settle, so a session
+   * never starts with a half-connected tool set).
+   */
+  private async attachMcp(agent: Agent): Promise<void> {
+    if (!this.mcpHub) {
+      const { servers, trust } = agent.mcpHostConfig();
+      this.mcpHub = new McpHub(servers, trust);
+      this.mcpReady = this.mcpHub.start();
+    }
+    await this.mcpReady;
+    const { skipped } = agent.tools.registerMcpTools(this.mcpHub.tools());
+    for (const name of skipped) {
+      if (this.warnedCollisions.has(name)) continue;
+      this.warnedCollisions.add(name);
+      process.stderr.write(`[nexum host] MCP tool "${name}" ignored: a tool with that name already exists\n`);
+    }
+  }
+
+  /** State of each configured MCP server (empty until the first agent exists). */
+  mcpServers(): NexumMcpServerInfo[] {
+    return this.mcpHub?.describe() ?? [];
   }
 
   private ensureSweepScheduled(): void {
@@ -114,6 +149,9 @@ export class HostAgentRegistry {
     const entries = [...this.entries.values()];
     this.entries.clear();
     await Promise.all(entries.map((e) => e.agent.stopHost().catch(() => {})));
+    await this.mcpHub?.stop();
+    this.mcpHub = null;
+    this.mcpReady = null;
   }
 }
 

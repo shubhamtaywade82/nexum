@@ -972,10 +972,9 @@ export class Agent {
     return this.learning.getSkillsRegistry();
   }
 
-  /** Configured MCP servers by name and trust level; never their commands, args or environment. */
-  describeMcpServers(): Array<{ name: string; trust: "trusted" | "ask" | "untrusted" }> {
-    // Servers listed in the user's own config are trusted unless the config says otherwise (see mcp/trust.ts).
-    return this.mcpServerConfigs.map((s) => ({ name: s.name, trust: s.trust ?? "trusted" }));
+  /** What the host needs to run MCP servers once for all sessions: the config and the trust policy built from it. */
+  mcpHostConfig(): { servers: McpCliServerConfig[]; trust?: McpTrustPolicy } {
+    return { servers: this.mcpServerConfigs, trust: this.mcpTrust };
   }
 
   flushLearning(): Promise<void> {

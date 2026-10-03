@@ -12,7 +12,7 @@ const MODEL_LIST_TIMEOUT_MS = 5_000;
  */
 export async function discoverCapabilities(
   agent: Agent,
-  opts: { modelListTimeoutMs?: number } = {},
+  opts: { mcp: DiscoveredCapabilities["mcp"]; modelListTimeoutMs?: number },
 ): Promise<DiscoveredCapabilities> {
   return {
     tools: agent.tools.gateway
@@ -30,7 +30,7 @@ export async function discoverCapabilities(
       .list()
       .map((s) => ({ id: s.id, name: s.name, description: s.description, tags: s.tags, scope: s.scope })),
     models: await listModels(agent, opts.modelListTimeoutMs ?? MODEL_LIST_TIMEOUT_MS),
-    mcp: agent.describeMcpServers(),
+    mcp: opts.mcp,
   };
 }
 

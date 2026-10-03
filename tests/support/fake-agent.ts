@@ -3,6 +3,9 @@ import type { Agent } from "../../src/cli/agent.js";
 import { ApprovalManager } from "../../src/cli/services/approval-manager.js";
 import type { ClarificationRequest, ClarificationResponse } from "../../src/runtime/types.js";
 import type { ToolDefinition } from "../../src/core/tools/tool-contract.js";
+import type { McpCliServerConfig } from "../../src/cli/config.js";
+import type { McpToolAdapter } from "../../src/mcp/adapter/mcp-tool-adapter.js";
+import { mcpTrustPolicyFromConfig } from "../../src/mcp/trust.js";
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
 
@@ -57,7 +60,12 @@ export class FakeAgent {
     resumeSessionById: (_id: string): null => null,
   };
   readonly execution: { signal: AbortSignal | null } = { signal: null };
-  readonly tools = { gateway: fakeToolGateway() };
+  readonly tools = {
+    gateway: fakeToolGateway(),
+    registerMcpTools: (tools: McpToolAdapter[]) => ({ registered: tools, skipped: [] as string[] }),
+  };
+
+  constructor(private readonly options: { mcpServers?: McpCliServerConfig[] } = {}) {}
 
   private abortController: AbortController | null = null;
   private readonly listeners = new Map<string, Set<EventHandler>>();
@@ -113,8 +121,9 @@ export class FakeAgent {
     return Object.fromEntries(models.map((m) => [m, ["coding", "tools"]]));
   }
 
-  describeMcpServers(): Array<{ name: string; trust: string }> {
-    return [{ name: "docs", trust: "ask" }];
+  mcpHostConfig() {
+    const servers = this.options.mcpServers ?? [];
+    return { servers, trust: mcpTrustPolicyFromConfig(servers) };
   }
 
   requestApproval(title: string, summary: string): Promise<boolean> {

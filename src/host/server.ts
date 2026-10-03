@@ -169,6 +169,10 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
           server.removeListener("error", reject);
           const addr = server.address();
           const actualPort = typeof addr === "object" && addr ? addr.port : port;
+          // Connect MCP servers in the background so the first request rarely waits on them.
+          void registry.getOrCreate(DISCOVERY_SESSION_ID).catch((err) => {
+            process.stderr.write(`[nexum host] warm-up failed: ${describeError(err)}\n`);
+          });
           resolve({ host, port: actualPort });
         });
       });
@@ -298,7 +302,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
 
   if (method === "GET" && segments[0] === "capabilities") {
     const { agent } = await ctx.registry.getOrCreate(DISCOVERY_SESSION_ID);
-    const capabilities: NexumCapabilities = { ...STATIC_CAPABILITIES, ...(await discoverCapabilities(agent)) };
+    const capabilities: NexumCapabilities = {
+      ...STATIC_CAPABILITIES,
+      ...(await discoverCapabilities(agent, { mcp: ctx.registry.mcpServers() })),
+    };
     writeJson(res, 200, capabilities);
     return;
   }

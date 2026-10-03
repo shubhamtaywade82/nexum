@@ -60,12 +60,17 @@ Metadata only: no file paths, commands, arguments, environment or keys.
     ],
     "skills": [{ "id": "deploy", "name": "Deploy", "description": "...", "tags": ["ops"], "scope": "workspace" }],
     "models": [{ "name": "qwen3:4b", "capabilities": ["tools", "quick", "coding"] }],
-    "mcp": [{ "name": "github", "trust": "trusted" }]
+    "mcp": [{ "name": "github", "trust": "trusted", "status": "connected", "tools": 26 }]
   }
   ```
 - `uiInvocable` means a rendered UI may call the tool directly (see [UI tool calls](#6-ui-tool-calls)). It is a
   separate, opt-in policy flag, not a function of `risk`.
-- `mcp` lists configured servers. The host does not connect them yet, so their tools are not in `tools`.
+- `mcp` lists the configured MCP servers. The host connects each one once, shared by every session, and closes
+  them on shutdown. `status` is `connected`, `failed`, or `denied` (the trust policy refused it, for example an
+  `ask` server with no recorded approval). Commands, arguments and error text are never exposed. Connected
+  servers' tools appear in `tools` with `pack: "MCP"`, a risk derived from the server's own read-only /
+  destructive hints, and are never `uiInvocable`. A server tool whose name matches an existing tool is ignored, so
+  a server cannot replace a built-in tool. MCP elicitation requests are declined until the protocol can carry them.
 - Model listing is bounded to 5 seconds; an unreachable provider yields an empty `models`.
 
 ---

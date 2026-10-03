@@ -1,13 +1,24 @@
+import { join } from "node:path";
 import { ServerHarness } from "../support/server-harness.js";
 import { FakeAgent } from "../support/fake-agent.js";
 import { discoverCapabilities } from "../../src/host/capabilities.js";
 import type { NexumCapabilities } from "../../src/protocol/types.js";
 
+const FIXTURE_SERVER = join(process.cwd(), "tests/fixtures/mcp-fixture-server.mjs");
+
 describe("Capability discovery (GET /capabilities)", () => {
   const harness = new ServerHarness();
 
   beforeAll(async () => {
-    await harness.start();
+    await harness.start({
+      createAgent: () =>
+        new FakeAgent({
+          mcpServers: [
+            { name: "docs", command: process.execPath, args: [FIXTURE_SERVER] },
+            { name: "restricted", command: process.execPath, args: [FIXTURE_SERVER], trust: "ask" },
+          ],
+        }),
+    });
   });
   afterAll(async () => {
     await harness.stop();
@@ -28,7 +39,10 @@ describe("Capability discovery (GET /capabilities)", () => {
       { id: "deploy", name: "Deploy", description: "Ship a release", tags: ["ops"], scope: "global" },
     ]);
     expect(body.models).toEqual([{ name: "fake-model", capabilities: ["coding", "tools"] }]);
-    expect(body.mcp).toEqual([{ name: "docs", trust: "ask" }]);
+    expect(body.mcp).toEqual([
+      { name: "docs", trust: "trusted", status: "connected", tools: 3 },
+      { name: "restricted", trust: "ask", status: "denied", tools: 0 },
+    ]);
   });
 
   it("should not expose filesystem paths, commands or arguments", async () => {

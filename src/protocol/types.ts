@@ -279,10 +279,14 @@ export interface NexumModelInfo {
   capabilities: string[];
 }
 
-/** A configured MCP server. Commands, args and environment are never exposed. */
+/** A configured MCP server. Commands, args, environment and error text are never exposed. */
 export interface NexumMcpServerInfo {
   name: string;
   trust: "trusted" | "ask" | "untrusted";
+  /** `denied` means the trust policy refused it (for example an `ask` server with no recorded approval). */
+  status: "connected" | "failed" | "denied";
+  /** Tools the server exposes (before any name collision with a built-in tool is dropped). */
+  tools: number;
 }
 
 export interface NexumCapabilities {
@@ -294,7 +298,7 @@ export interface NexumCapabilities {
   tools: NexumToolInfo[];
   skills: NexumSkillInfo[];
   models: NexumModelInfo[];
-  /** Configured servers; the host does not connect them yet, so their tools are not in `tools`. */
+  /** Configured MCP servers and their state; connected servers' tools are in `tools`. */
   mcp: NexumMcpServerInfo[];
   features?: {
     streaming?: boolean;
