@@ -13,7 +13,9 @@ import { initialRuntimeState, Store } from "../runtime/store.js";
 import { detectProjectInfo } from "../runtime/project-info.js";
 import { ClarificationResponse } from "../runtime/types.js";
 import type { McpElicitationResponse } from "../core/user-input.js";
-import { wireAgentBridge, BridgeableAgent } from "./agent-bridge.js";
+import { wireAgentBridge, BridgeableAgent, createRemoteAgentBridge } from "./agent-bridge.js";
+import { NexumClient } from "../assistant/client/index.js";
+import type { ShellAgent } from "./App.js";
 import { App } from "./App.js";
 import { validateAsl, generateAslGraph } from "../asl/commands.js";
 import { envIs } from "../platform/environment.js";
@@ -139,77 +141,86 @@ const cfg = loadConfig();
     sandboxProbe = probe;
   }
 
-  const agent = new Agent({ config: cfg });
-  // One startup line per registered-but-broken feature, with the fix. Silent
-  // degradation (missing sandbox image, LSP binary, gh CLI) otherwise looks
-  // like the agent simply not using a tool.
-  sandboxProbe
-    .then((ready) => agent.getCapabilities(ready))
-    .then((caps) => {
-      for (const c of startupWarnings(caps)) {
-        bus.publish({ type: "logs.appended", level: "warn", source: "capabilities", message: formatCapability(c) });
-      }
-    })
-    .catch(() => {});
-  // Start the plugin host + all P0-P2 services before the first user
-  // message so plugins can contribute tools, models, and context.
-  // Failure here is non-fatal: the agent still works with whatever
-  // kernel + service plane loaded; plugins just won't be active.
-  try {
-    await agent.startHost();
-  } catch (err) {
+  function buildLocalShellAgent(agent: Agent): ShellAgent {
+    return {
+      runUserMessage: (message: string) => agent.runUserMessage(message),
+      setModel: (model: string) => agent.setModel(model),
+      setTier: (tier: "local" | "cloud") => agent.setTier(tier),
+      resetContext: () => agent.resetContext(),
+      resumeSession: () => agent.resumeSession(),
+      resumeSessionById: (id: string) => agent.resumeSessionById(id),
+      hasResumableSession: () => agent.hasResumableSession(),
+      listSessions: () => agent.listSessions(),
+      getTools: () =>
+        agent
+          .getRegistry()
+          .getTools()
+          .map((t) => ({ name: t.name, description: t.description, category: agent.getRegistry().categoryOf(t.name) })),
+      listModels: () => agent.listModels(),
+      modelAvailability: (models: string[]) => agent.modelAvailability(models),
+      modelCapabilities: (models: string[]) => agent.modelCapabilities(models),
+      runPlan: (goal: string) => agent.runPlan(goal),
+      hasResumablePlan: () => agent.hasResumablePlan(),
+      getCapabilities: () => agent.getCapabilities(),
+      buildSandboxImage: () => agent.buildSandboxImage(),
+      resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
+      resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
+      resolveMcpElicitation: (resp: McpElicitationResponse) => agent.resolveMcpElicitation(resp),
+      validateModel: () => agent.validateModel(),
+      getSkillsRegistry: () => agent.getSkillsRegistry(),
+      pinSkill: (id: string | null) => agent.pinSkill(id),
+    };
+  }
+
+  const serverIndex = args.indexOf("--server");
+  const serverUrl =
+    process.env.NEXUM_SERVER_URL ||
+    (serverIndex !== -1
+      ? args[serverIndex + 1]?.startsWith("-")
+        ? "http://127.0.0.1:3777"
+        : (args[serverIndex + 1] ?? "http://127.0.0.1:3777")
+      : undefined);
+
+  let shellAgent: ShellAgent;
+  let agent: Agent | undefined;
+
+  if (serverUrl) {
+    const client = new NexumClient({ baseUrl: serverUrl });
+    shellAgent = createRemoteAgentBridge(client, bus);
     bus.publish({
       type: "logs.appended",
-      level: "warn",
-      source: "plugins",
-      message: `plugin host start failed: ${err instanceof Error ? err.message : String(err)}`,
+      level: "info",
+      source: "server",
+      message: `Connected to remote Nexum Server at ${client.baseUrl}`,
     });
+  } else {
+    agent = new Agent({ config: cfg });
+    sandboxProbe
+      .then((ready) => agent!.getCapabilities(ready))
+      .then((caps) => {
+        for (const c of startupWarnings(caps)) {
+          bus.publish({ type: "logs.appended", level: "warn", source: "capabilities", message: formatCapability(c) });
+        }
+      })
+      .catch(() => {});
+    try {
+      await agent.startHost();
+    } catch (err) {
+      bus.publish({
+        type: "logs.appended",
+        level: "warn",
+        source: "plugins",
+        message: `plugin host start failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+    agent.setProjectInfo(detectedProject);
+    wireAgentBridge(agent as unknown as BridgeableAgent, bus);
+    agent
+      .connectConfiguredMcpServers()
+      .then((servers) => bus.publish({ type: "mcp.changed", servers }))
+      .catch((e) => bus.publish({ type: "logs.appended", level: "error", source: "mcp", message: String(e) }));
+    shellAgent = buildLocalShellAgent(agent);
   }
-  agent.setProjectInfo(detectedProject);
-
-  // Agent.on<E extends AgentEventName> is structurally compatible with
-  // BridgeableAgent.on<E extends string> at runtime (the bridge only uses
-  // event names Agent emits), but TypeScript's generic-method variance rules
-  // reject the assignment statically because AgentEventName is narrower than
-  // string. Cast at this single bootstrap boundary.
-  wireAgentBridge(agent as unknown as BridgeableAgent, bus);
-
-  // Non-blocking: connecting spawns a subprocess per configured MCP server,
-  // which shouldn't hold up the TUI's first paint. Publishes even an empty
-  // list so the MCP actor moves out of "muted" once startup settles.
-  agent
-    .connectConfiguredMcpServers()
-    .then((servers) => bus.publish({ type: "mcp.changed", servers }))
-    .catch((e) => bus.publish({ type: "logs.appended", level: "error", source: "mcp", message: String(e) }));
-
-  const shellAgent = {
-    runUserMessage: (message: string) => agent.runUserMessage(message),
-    setModel: (model: string) => agent.setModel(model),
-    setTier: (tier: "local" | "cloud") => agent.setTier(tier),
-    resetContext: () => agent.resetContext(),
-    resumeSession: () => agent.resumeSession(),
-    resumeSessionById: (id: string) => agent.resumeSessionById(id),
-    hasResumableSession: () => agent.hasResumableSession(),
-    listSessions: () => agent.listSessions(),
-    getTools: () =>
-      agent
-        .getRegistry()
-        .getTools()
-        .map((t) => ({ name: t.name, description: t.description, category: agent.getRegistry().categoryOf(t.name) })),
-    listModels: () => agent.listModels(),
-    modelAvailability: (models: string[]) => agent.modelAvailability(models),
-    modelCapabilities: (models: string[]) => agent.modelCapabilities(models),
-    runPlan: (goal: string) => agent.runPlan(goal),
-    hasResumablePlan: () => agent.hasResumablePlan(),
-    getCapabilities: () => agent.getCapabilities(),
-    buildSandboxImage: () => agent.buildSandboxImage(),
-    resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
-    resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
-    resolveMcpElicitation: (resp: McpElicitationResponse) => agent.resolveMcpElicitation(resp),
-    validateModel: () => agent.validateModel(),
-    getSkillsRegistry: () => agent.getSkillsRegistry(),
-    pinSkill: (id: string | null) => agent.pinSkill(id),
-  };
 
   const disableFeatures = enableTerminalFeatures();
   const instance = render(
@@ -219,11 +230,12 @@ const cfg = loadConfig();
   registerForceQuitHandlers(() => instance.unmount(), disableFeatures);
   await instance.waitUntilExit();
   disableFeatures();
-  // Drain the plugin host + all services on shutdown.
-  try {
-    await agent.stopHost();
-  } catch {
-    // best-effort — process is exiting anyway
+  if (agent) {
+    try {
+      await agent.stopHost();
+    } catch {
+      // best-effort — process is exiting anyway
+    }
   }
   process.exit(0);
 })();

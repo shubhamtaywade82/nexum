@@ -551,6 +551,9 @@ export {
   type NexumCapabilities,
   type CreateRunRequest,
   CreateRunRequestSchema,
+  type NexumOutputFormat,
+  type NexumRunOutput,
+  NexumOutputFormatSchema,
   PROTOCOL_VERSION,
 } from "./protocol/types.js";
 export { createNexumHost, type NexumHost, type NexumHostOptions } from "./host/index.js";

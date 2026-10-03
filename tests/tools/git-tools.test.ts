@@ -1,10 +1,10 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { GitTool } from "../../src/tools/git-tools.js";
+import { GitReadTool, GitTool } from "../../src/tools/git-tools.js";
 
 const exec = promisify(execFile);
 
@@ -127,5 +127,94 @@ describe("GitTool", () => {
       expect(push.error).toBeUndefined();
       expect(push.exitCode).toBe(0);
     });
+  });
+});
+
+describe("GitReadTool", () => {
+  async function repoWithOneCommit(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    for (const args of [["init"], ["config", "user.email", "t@example.com"], ["config", "user.name", "T"]]) {
+      await exec("git", args, { cwd: dir });
+    }
+    await writeFile(join(dir, "a.txt"), "one\n");
+    await exec("git", ["add", "a.txt"], { cwd: dir });
+    await exec("git", ["commit", "-m", "first"], { cwd: dir });
+    return dir;
+  }
+
+  it("should report status, log and diff", async () => {
+    const dir = await repoWithOneCommit();
+    await writeFile(join(dir, "a.txt"), "two\n");
+    const tool = new GitReadTool(dir);
+
+    const status = await tool.call({ args: ["status", "--porcelain"] });
+    const log = await tool.call({ args: ["log", "--oneline"] });
+    const diff = await tool.call({ args: ["diff"] });
+
+    expect(status.stdout).toContain("a.txt");
+    expect(log.stdout).toContain("first");
+    expect(diff.stdout).toContain("+two");
+  });
+
+  it.each([
+    ["add", "a.txt"],
+    ["commit", "-m", "x"],
+    ["branch", "feature"],
+    ["checkout", "-b", "x"],
+    ["push", "origin", "x"],
+  ])("should refuse the state-changing subcommand git %s", async (...args) => {
+    const dir = await repoWithOneCommit();
+
+    const result = await new GitReadTool(dir).call({ args });
+
+    expect(result.error).toBe("DisallowedGitCommandError");
+  });
+
+  it.each([
+    ["diff", "--ext-diff"],
+    ["show", "--textconv"],
+    ["log", "-O"],
+    ["diff", "--open-files-in-pager=sh"],
+  ])("should refuse the program-running flag in git %s", async (...args) => {
+    const dir = await repoWithOneCommit();
+
+    const result = await new GitReadTool(dir).call({ args });
+
+    expect(result.error).toBe("DisallowedGitCommandError");
+  });
+
+  it.each([["--ext"], ["--ext-d"], ["--ext-diff"]])(
+    "should not run the configured diff program even when the caller passes %s",
+    async (flag) => {
+      const dir = await repoWithOneCommit();
+      const marker = join(dir, "pwned.marker");
+      const script = join(dir, "external-diff.sh");
+      await writeFile(script, `#!/bin/sh\ntouch "${marker}"\n`);
+      await chmod(script, 0o755);
+      await exec("git", ["config", "diff.external", script], { cwd: dir });
+      await writeFile(join(dir, "a.txt"), "changed\n");
+
+      await new GitReadTool(dir).call({ args: ["diff", flag, "--", "a.txt"] });
+
+      expect(existsSync(marker)).toBe(false);
+    },
+  );
+
+  it("should not run a program that repo-local config attaches to diff output", async () => {
+    const dir = await repoWithOneCommit();
+    const marker = join(dir, "pwned.marker");
+    const script = join(dir, "external-diff.sh");
+    await writeFile(script, `#!/bin/sh\ntouch "${marker}"\n`);
+    await chmod(script, 0o755);
+    await exec("git", ["config", "diff.external", script], { cwd: dir });
+    await writeFile(join(dir, "a.txt"), "changed\n");
+
+    await new GitTool(dir).call({ args: ["diff"] });
+    const controlRan = existsSync(marker);
+    await exec("rm", [marker]).catch(() => undefined);
+    await new GitReadTool(dir).call({ args: ["diff"] });
+
+    expect(controlRan).toBe(true); // the plain git tool does run it, so this setup is a real trap
+    expect(existsSync(marker)).toBe(false);
   });
 });

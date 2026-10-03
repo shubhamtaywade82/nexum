@@ -29,7 +29,7 @@ export function memoryPack(memory: SemanticMemory): ToolPack {
       metadata: {
         risk: "read",
         execution: { timeoutMs: 30_000, concurrency: 8, idempotent: true, reversible: false, idempotencyKey: "none" },
-        policy: { confirmation: "never" },
+        policy: { confirmation: "never", uiInvocable: true },
       },
     },
   ]);

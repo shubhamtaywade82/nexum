@@ -35,9 +35,9 @@ export function filesystemPack(boundary: WorkspaceBoundary): ToolPack {
     "Workspace file operations: read, write, list, copy, move, delete, patch (CAS), watch.",
     "filesystem",
     [
-      new ReadFileTool(guard),
+      [new ReadFileTool(guard), { policy: { uiInvocable: true } }],
       new WriteFileTool(guard),
-      new ListDirectoryTool(guard),
+      [new ListDirectoryTool(guard), { policy: { uiInvocable: true } }],
       new DeleteFileTool(guard),
       new MakeDirectoryTool(guard),
       new CopyFileTool(guard),
@@ -55,5 +55,11 @@ export function filesystemPack(boundary: WorkspaceBoundary): ToolPack {
 
 /** Workspace code search (kept inside the FilesystemPack family). */
 export function searchPack(boundary: WorkspaceBoundary): ToolPack {
-  return packOf("search", "Workspace code search.", "search", [new SearchCodeTool(toGuard(boundary))], "Search");
+  return packOf(
+    "search",
+    "Workspace code search.",
+    "search",
+    [[new SearchCodeTool(toGuard(boundary)), { policy: { uiInvocable: true } }]],
+    "Search",
+  );
 }

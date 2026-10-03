@@ -92,6 +92,12 @@ export interface ToolExecutionSpec {
 /** Human-in-the-loop policy attached to the tool itself. */
 export interface ToolPolicySpec {
   confirmation: "never" | "optional" | "required";
+  /**
+   * A rendered UI may call this tool directly, outside any agent run (see host/ui-tools.ts).
+   * Separate from `risk`: risk says how dangerous a call is, this says who may make it without
+   * an agent in the loop. Opt-in only; a tool that is not marked here is agent-run only.
+   */
+  uiInvocable?: boolean;
 }
 
 export interface ToolDefinition {
