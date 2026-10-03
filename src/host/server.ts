@@ -33,6 +33,7 @@ import { HostAgentRegistry, type AgentEntry } from "./agent-registry.js";
 import type { RunEventBridge } from "./event-bridge.js";
 import { SUPPORTED_OUTPUT_FORMATS, openuiInstructions, presentOutput } from "./presentation.js";
 import { invokeUiTool } from "./ui-tools.js";
+import { discoverCapabilities, type DiscoveredCapabilities } from "./capabilities.js";
 import {
   CreateRunRequestSchema,
   InvokeToolRequestSchema,
@@ -77,7 +78,11 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB — chat goals/history, not file 
 
 // Static across every session — every Agent in the registry is built from
 // the same host-wide config, so this doesn't need a live Agent instance.
-const STATIC_CAPABILITIES: NexumCapabilities = {
+// Every session's agent comes from the same factory, so one reserved registry entry answers for all of them
+// (and gets the registry's idle eviction); it has no session row and never runs.
+const DISCOVERY_SESSION_ID = "__capabilities__";
+
+const STATIC_CAPABILITIES: Omit<NexumCapabilities, keyof DiscoveredCapabilities> = {
   agents: [devAgentDescriptor().id],
   strategies: defaultStrategyRegistry().names(),
   outputFormats: SUPPORTED_OUTPUT_FORMATS,
@@ -292,7 +297,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   }
 
   if (method === "GET" && segments[0] === "capabilities") {
-    writeJson(res, 200, STATIC_CAPABILITIES);
+    const { agent } = await ctx.registry.getOrCreate(DISCOVERY_SESSION_ID);
+    const capabilities: NexumCapabilities = { ...STATIC_CAPABILITIES, ...(await discoverCapabilities(agent)) };
+    writeJson(res, 200, capabilities);
     return;
   }
 

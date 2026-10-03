@@ -257,12 +257,45 @@ export const InvokeToolRequestSchema = z.object({
 });
 export type InvokeToolRequest = z.infer<typeof InvokeToolRequestSchema>;
 
+export interface NexumToolInfo {
+  id: string;
+  description: string;
+  pack: string;
+  risk: "read" | "low" | "medium" | "high" | "critical";
+  /** A rendered UI may call this tool directly (POST /sessions/:id/tools/:name); otherwise it needs an agent run. */
+  uiInvocable: boolean;
+}
+
+export interface NexumSkillInfo {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  scope: string;
+}
+
+export interface NexumModelInfo {
+  name: string;
+  capabilities: string[];
+}
+
+/** A configured MCP server. Commands, args and environment are never exposed. */
+export interface NexumMcpServerInfo {
+  name: string;
+  trust: "trusted" | "ask" | "untrusted";
+}
+
 export interface NexumCapabilities {
   protocolVersion: string;
   serverVersion?: string;
   agents: string[];
   strategies: string[];
   outputFormats: NexumOutputFormat[];
+  tools: NexumToolInfo[];
+  skills: NexumSkillInfo[];
+  models: NexumModelInfo[];
+  /** Configured servers; the host does not connect them yet, so their tools are not in `tools`. */
+  mcp: NexumMcpServerInfo[];
   features?: {
     streaming?: boolean;
     replay?: boolean;

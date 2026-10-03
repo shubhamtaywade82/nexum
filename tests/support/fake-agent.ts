@@ -77,6 +77,35 @@ export class FakeAgent {
     this.customRunHandler = handler;
   }
 
+  getSkillsRegistry(): { list: () => unknown[] } {
+    return {
+      list: () => [
+        {
+          id: "deploy",
+          name: "Deploy",
+          description: "Ship a release",
+          tags: ["ops"],
+          version: "1.0.0",
+          scope: "global",
+          dir: "/home/someone/.nexum/skills/deploy",
+          path: "/home/someone/.nexum/skills/deploy/SKILL.md",
+        },
+      ],
+    };
+  }
+
+  async listModels(): Promise<string[]> {
+    return ["fake-model"];
+  }
+
+  async modelCapabilities(models: string[]): Promise<Record<string, string[]>> {
+    return Object.fromEntries(models.map((m) => [m, ["coding", "tools"]]));
+  }
+
+  describeMcpServers(): Array<{ name: string; trust: string }> {
+    return [{ name: "docs", trust: "ask" }];
+  }
+
   requestApproval(title: string, summary: string): Promise<boolean> {
     return this.approvals.requestApproval(title, summary);
   }
