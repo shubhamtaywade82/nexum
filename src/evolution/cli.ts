@@ -32,6 +32,8 @@ import { EvolutionMetricsTracker } from "./metrics.js";
 import { AgentMutationStrategy } from "./mutation/agent-mutation.js";
 import { GitWorktreeMutationExecutor, MutationStrategy } from "./mutation/mutation-executor.js";
 import { NexumEngineeringAgentRuntime, chatClientFromProvider } from "./mutation/nexum-agent-runtime.js";
+import { KernelEvolutionAgentRuntime, modelGatewayFromChatClient } from "./mutation/kernel-agent-runtime.js";
+import { DefaultAgentRuntime } from "../runtime/agent/agent-runtime.js";
 import { EvolutionVerificationProfile, verificationProfileByName } from "./mutation/verification-profile.js";
 import { GitHubDeliveryAdapter } from "./delivery/github-adapter.js";
 import { ActivationMonitor, OperationalTelemetry } from "./monitoring/activation-monitor.js";
@@ -59,10 +61,12 @@ Options:
                          worktree → planned edits → verification → candidate commit
       --agent            Alias for --strategy agent.
       --strategy <name>  Mutation strategy for --mutate: "heuristic" (default,
-                         policy-manifest edit) or "agent" (the PRODUCTION
-                         engineering agent, NexumEngineeringAgentRuntime over
-                         the configured provider, proposing edits to the
-                         actual implementation).
+                         policy-manifest edit), "agent" (the PRODUCTION
+                         engineering agent run through the kernel —
+                         KernelEvolutionAgentRuntime: policy, budgets,
+                         concurrency gates, cancellation — proposing edits to
+                         the actual implementation), or "agent-legacy" (the
+                         previous private tool loop, for parity checks).
       --verify-profile <name>  Verification gates for the mutation worktree:
                          "smoke" (node liveness), "fast" (format + lint +
                          typecheck; default), "full" (fast + npm test,
@@ -485,22 +489,37 @@ export function providerFromConfig(cfg: CliConfig): Provider {
   });
 }
 
+/** Mutation strategy names accepted by `nexum evolve --strategy`. */
+export const MUTATION_STRATEGIES = ["heuristic", "agent", "agent-legacy"] as const;
+
 /**
  * Resolves the mutation strategy for `nexum evolve --mutate`:
  *   absent/"heuristic" → null (executor's built-in HeuristicMutationStrategy);
- *   "agent"            → AgentMutationStrategy backed by NexumEngineeringAgentRuntime
- *                        (the production engineering agent on the configured Provider).
+ *   "agent"            → AgentMutationStrategy backed by KernelEvolutionAgentRuntime
+ *                        (same propose-only protocol, spawned through AgentRuntime.execute
+ *                        so policy, budgets, gates and cancellation apply);
+ *   "agent-legacy"     → AgentMutationStrategy backed by NexumEngineeringAgentRuntime
+ *                        (the pre-kernel private loop, kept for parity comparison).
  * Throws for unknown names so typos fail loudly instead of silently
  * downgrading to the heuristic planner.
  */
 export function buildMutationStrategy(name: string | undefined, cfg: CliConfig): MutationStrategy | null {
   if (!name || name === "heuristic") return null;
-  if (name !== "agent") {
-    throw new Error(`Unknown mutation strategy "${name}" (expected "heuristic" or "agent").`);
+  const chat = () => chatClientFromProvider(providerFromConfig(cfg));
+  if (name === "agent") {
+    return new AgentMutationStrategy({
+      runtime: new KernelEvolutionAgentRuntime({
+        runtime: new DefaultAgentRuntime(),
+        modelGateway: modelGatewayFromChatClient(chat()),
+      }),
+    });
   }
-  return new AgentMutationStrategy({
-    runtime: new NexumEngineeringAgentRuntime({ chat: chatClientFromProvider(providerFromConfig(cfg)) }),
-  });
+  if (name === "agent-legacy") {
+    return new AgentMutationStrategy({ runtime: new NexumEngineeringAgentRuntime({ chat: chat() }) });
+  }
+  throw new Error(
+    `Unknown mutation strategy "${name}" (expected ${MUTATION_STRATEGIES.map((n) => `"${n}"`).join(", ")}).`,
+  );
 }
 
 export interface GithubDeliveryEnvConfig {
@@ -669,8 +688,10 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     console.error(`--agent and --strategy ${values.strategy} conflict; pass only one.`);
     return;
   }
-  if (strategyName && strategyName !== "heuristic" && strategyName !== "agent") {
-    console.error(`Unknown mutation strategy "${strategyName}" (expected "heuristic" or "agent").`);
+  if (strategyName && !(MUTATION_STRATEGIES as readonly string[]).includes(strategyName)) {
+    console.error(
+      `Unknown mutation strategy "${strategyName}" (expected ${MUTATION_STRATEGIES.map((n) => `"${n}"`).join(", ")}).`,
+    );
     return;
   }
   // Verification profile: the gates the candidate must survive INSIDE the

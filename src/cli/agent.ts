@@ -100,6 +100,7 @@ import { ExecutionEventStore } from "../runtime/persistence/execution-event-stor
 import { ExecutionRecorder } from "../runtime/persistence/execution-recorder.js";
 import { newRunId } from "../core/identity.js";
 import { flushProcessTelemetry, telemetrySink } from "../observability/process-telemetry.js";
+import { budgetFromEnv, isBudgetExceeded, recordUsage, totalUsed } from "../observability/budget.js";
 import type { ExecutionRequest } from "../core/types.js";
 import type { StrategyHooks } from "../runtime/strategies/strategy-hooks.js";
 import { AgentConversationContext } from "./agent-conversation-context.js";
@@ -239,6 +240,8 @@ export class Agent {
   private readonly mcpTrust?: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
   readonly intentResolver = new IntentResolver();
+  /** Session token budget from NEXUM_TOKEN_BUDGET (0 = unlimited), enforced per run by the kernel BudgetTracker. */
+  readonly tokenBudget = budgetFromEnv();
   /**
    * Programmatic hooks (prompt submit, pre/post tool use) for embedders and
    * in-process plugins (provided to the plugin host as HOOK_ENGINE). A
@@ -741,6 +744,12 @@ export class Agent {
       this.emit("onStatus", `refined intent: "${userMessage}"`);
     }
 
+    if (isBudgetExceeded(this.tokenBudget)) {
+      const exhausted = `Token budget exhausted: ${totalUsed(this.tokenBudget)}/${this.tokenBudget.limit} tokens used this session (NEXUM_TOKEN_BUDGET). Raise the budget or start a new session.`;
+      this.emit("onStatus", exhausted);
+      return exhausted;
+    }
+
     const planned = await this.routeMultiStep(userMessage);
     if (planned !== null) return planned;
 
@@ -1225,6 +1234,11 @@ export class Agent {
       context: new AgentConversationContext(this.conversation),
       modelGateway: this.modelGateway,
       toolGateway: this.tools.gateway,
+      // The remaining session budget caps this run; the kernel stops the run
+      // with budget_exhausted when it is crossed mid-loop.
+      ...(this.tokenBudget.limit > 0
+        ? { budget: { maxTotalTokens: Math.max(1, this.tokenBudget.limit - totalUsed(this.tokenBudget)) } }
+        : {}),
     });
 
     try {
@@ -1232,7 +1246,18 @@ export class Agent {
         hooks,
         maxToolTurns: this.maxToolTurns,
       });
+      // The kernel's per-run usage (including a call that crossed the budget)
+      // is the source of truth for the session budget.
+      recordUsage(this.tokenBudget, result.usage?.totalTokens ?? 0, 0);
 
+      if (result.status === "budget_exhausted" && this.tokenBudget.limit > 0) {
+        // A budget stop is a policy outcome, not a crash: keep what was
+        // produced and say why the run ended.
+        success = false;
+        const notice = `[stopped] token budget exhausted: ${totalUsed(this.tokenBudget)}/${this.tokenBudget.limit} tokens (NEXUM_TOKEN_BUDGET)`;
+        this.emit("onStatus", notice);
+        return finish("error", lastAssistantText ? `${lastAssistantText}\n${notice}` : notice);
+      }
       if (result.status !== "completed") {
         success = false;
         finish("error", result.output);

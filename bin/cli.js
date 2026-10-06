@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // No `import 'dotenv/config'`: a workspace .env is repository content and is
 // loaded only once the workspace is trusted (see src/cli/workspace-trust.ts).
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 // --yolo: approve every destructive tool call without prompting (sets
 // NEXUM_AUTO_APPROVE, same as the env var). Stripped from argv before command
@@ -13,24 +13,24 @@ import { dirname, join } from 'node:path';
 // AGENTS.md §7.18 "first decision wins".
 {
   const args = process.argv.slice(2);
-  const yoloIndex = args.indexOf('--yolo');
+  const yoloIndex = args.indexOf("--yolo");
   if (yoloIndex !== -1) {
     args.splice(yoloIndex, 1);
-    process.env.NEXUM_AUTO_APPROVE = 'true';
+    process.env.NEXUM_AUTO_APPROVE = "true";
     process.argv = [process.argv[0], process.argv[1], ...args];
   }
 }
 
 const [command] = process.argv.slice(2);
 
-if (command === '--version' || command === '-v') {
-  const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '../package.json');
-  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+if (command === "--version" || command === "-v") {
+  const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "../package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
   console.log(`${pkg.name} v${pkg.version}`);
   process.exit(0);
 }
 
-if (command === '--help' || command === '-h') {
+if (command === "--help" || command === "-h") {
   console.log(`
 Nexum — Autonomous Software Engineering Agent Runtime & Workspace
 
@@ -46,6 +46,7 @@ Usage:
   nexum migrate                 Migrate legacy .devagent state to .nexum
   nexum trust [status|revoke]   Review and trust this workspace's settings and .env
   nexum asl [validate|graph]    Architecture definition commands
+  nexum eval <dataset.json>     Score real agent runs against an evaluation dataset
   nexum evolve [options]        Harness evolution and self-development commands
   nexum plugins sandbox <file>  Trial-run a plugin in the worker sandbox
   nexum plugins verify [id…]    Re-verify installed marketplace plugins
@@ -63,8 +64,8 @@ Options:
   process.exit(0);
 }
 
-if (command === 'trust') {
-  const { runTrustCli } = await import('../dist/cli/trust.js');
+if (command === "trust") {
+  const { runTrustCli } = await import("../dist/cli/trust.js");
   process.exit(await runTrustCli(process.argv.slice(3)));
 }
 
@@ -72,63 +73,79 @@ if (command === 'trust') {
 // workspace is trusted. The interactive UI asks; every other command runs
 // without them and says so on stderr.
 {
-  const nonInteractive = ['doctor', 'evolve', 'plugins', 'marketplace', 'mcp', 'credentials', 'capabilities', 'rpc', 'migrate', 'asl'];
-  const { ensureWorkspaceTrust } = await import('../dist/cli/trust.js');
+  const nonInteractive = [
+    "doctor",
+    "evolve",
+    "plugins",
+    "marketplace",
+    "mcp",
+    "credentials",
+    "capabilities",
+    "rpc",
+    "migrate",
+    "asl",
+  ];
+  const { ensureWorkspaceTrust } = await import("../dist/cli/trust.js");
   await ensureWorkspaceTrust({ interactive: !nonInteractive.includes(command) });
-  const { applyEnvFiles } = await import('../dist/cli/config.js');
+  const { applyEnvFiles } = await import("../dist/cli/config.js");
   applyEnvFiles();
 }
 
-if (command === 'doctor') {
-  const { runDoctor } = await import('../dist/cli/doctor.js');
+if (command === "doctor") {
+  const { runDoctor } = await import("../dist/cli/doctor.js");
   const report = await runDoctor();
-  console.log('=== Nexum Doctor ===');
-  console.log(report.lines.join('\n'));
+  console.log("=== Nexum Doctor ===");
+  console.log(report.lines.join("\n"));
   process.exit(report.ok ? 0 : 1);
 }
 
-if (command === 'evolve') {
-  const { runEvolutionCli } = await import('../dist/evolution/cli.js');
+if (command === "eval") {
+  const { runEvalCommand } = await import("../dist/evaluation/cli.js");
+  process.exit(await runEvalCommand(process.argv.slice(3)));
+}
+
+if (command === "evolve") {
+  const { runEvolutionCli } = await import("../dist/evolution/cli.js");
   await runEvolutionCli(process.argv.slice(3));
   process.exit(0);
 }
 
 // Trust & security command areas (plugins / marketplace / mcp / credentials /
 // capabilities). Everything else falls through to the interactive UI.
-if (['plugins', 'marketplace', 'mcp', 'credentials', 'capabilities'].includes(command)) {
-  const { runSecurityCli } = await import('../dist/cli/security.js');
+if (["plugins", "marketplace", "mcp", "credentials", "capabilities"].includes(command)) {
+  const { runSecurityCli } = await import("../dist/cli/security.js");
   const code = await runSecurityCli(command, process.argv.slice(3));
   process.exit(code);
 }
 
-if (command === 'rpc') {
-  const { main } = await import('../dist/cli/rpc.js');
+if (command === "rpc") {
+  const { main } = await import("../dist/cli/rpc.js");
   await main(process.argv.slice(3));
   // The RPC server blocks on stdin; exit happens via the stdin 'end' handler.
   process.exit(0);
 }
 
-if (command === 'serve') {
-  const { main } = await import('../dist/cli/serve.js');
+if (command === "serve") {
+  const { main } = await import("../dist/cli/serve.js");
   await main(process.argv.slice(3));
   // Blocks until SIGINT/SIGTERM; the cleanup handler calls process.exit(0).
 }
 
-if (command === 'session') {
-  const { main } = await import('../dist/cli/session.js');
+if (command === "session") {
+  const { main } = await import("../dist/cli/session.js");
   await main(process.argv.slice(3));
   process.exit(0);
 }
 
-if (command === 'chat') {
-  const { runChatCli } = await import('../dist/cli/chat.js');
+if (command === "chat") {
+  const { runChatCli } = await import("../dist/cli/chat.js");
   await runChatCli(process.argv.slice(3));
   process.exit(0);
 }
 
-if (command === 'migrate') {
-  const { main } = await import('../dist/cli/migrate.js');
+if (command === "migrate") {
+  const { main } = await import("../dist/cli/migrate.js");
   await main(process.argv.slice(3));
 } else {
-  await import('../dist/ui/index.js');
+  await import("../dist/ui/index.js");
 }

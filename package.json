@@ -54,6 +54,7 @@
     "dev:legacy": "tsx src/cli/tui.ts",
     "serve": "tsx src/cli/serve.ts",
     "benchmark": "tsx src/benchmark/cli.ts",
+    "eval": "tsx src/evaluation/cli.ts",
     "docs:ingest": "tsx src/docs/cli.ts",
     "doctor": "tsx src/cli/doctor.ts",
     "migrate": "tsx src/cli/migrate.ts",

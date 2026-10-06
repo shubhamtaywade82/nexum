@@ -211,3 +211,40 @@ describe("Agent wiring — telemetry and artifacts", () => {
     expect(agent.artifacts.count()).toBe(1);
   });
 });
+
+describe("Agent wiring — NEXUM_TOKEN_BUDGET", () => {
+  afterEach(() => {
+    delete process.env.NEXUM_TOKEN_BUDGET;
+    jest.restoreAllMocks();
+  });
+
+  it("refuses new runs once the session budget is spent", async () => {
+    process.env.NEXUM_TOKEN_BUDGET = "10";
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    const encoder = new TextEncoder();
+    const body = { message: { role: "assistant", content: "ok" }, done: true, prompt_eval_count: 8, eval_count: 4 };
+    (globalThis as any).fetch = jest.fn().mockImplementation(async (_u: string, init?: { body?: string }) => {
+      if (!init?.body) return { ok: true, status: 200, json: async () => ({ models: [] }) };
+      let sent = false;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        body: {
+          getReader: () => ({
+            read: async () =>
+              sent
+                ? { done: true, value: undefined }
+                : ((sent = true), { done: false, value: encoder.encode(JSON.stringify(body) + "\n") }),
+          }),
+        },
+      };
+    });
+    const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" } });
+    expect(agent.tokenBudget.limit).toBe(10);
+    // The run that crosses the budget is stopped by the kernel mid-loop.
+    expect(await agent.runUserMessage("first")).toMatch(/\[stopped\] token budget exhausted: 12\/10/);
+    const second = await agent.runUserMessage("second");
+    expect(second).toMatch(/^Token budget exhausted: 12\/10/);
+  });
+});
