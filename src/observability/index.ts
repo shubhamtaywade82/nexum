@@ -24,3 +24,4 @@ export type {
 } from "./metrics/registry.js";
 export { MetricsRegistry, DEFAULT_BUCKETS } from "./metrics/registry.js";
 export { renderPrometheus } from "./metrics/prometheus.js";
+export { processTelemetry, telemetrySink, prometheusMetrics, flushProcessTelemetry } from "./process-telemetry.js";

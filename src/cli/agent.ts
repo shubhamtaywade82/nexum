@@ -81,6 +81,10 @@ import { ContextService, defaultContextProviders } from "../context-providers/in
 import { AttachmentStore } from "../attachments/index.js";
 import { WorkflowService } from "../workflow/index.js";
 import { WebhookService } from "../webhooks/index.js";
+import { agentRunWorker, declarativeRule, isDeclarativeRuleSpec } from "../webhooks/agent-actions.js";
+import { DurableJobQueue, type QueueWorker } from "../jobs/durable-queue.js";
+import { SqliteArtifactStore } from "../artifacts/index.js";
+import { offloadLargeOutput } from "../tools/artifact-tools.js";
 import { WebService, defaultWebService } from "../web-service/index.js";
 
 import { LOCAL_DELEGATION_SYSTEM_ADDENDUM } from "../tools/delegate-tool.js";
@@ -95,6 +99,7 @@ import { createExecutionContext } from "../runtime/context/execution-context.js"
 import { ExecutionEventStore } from "../runtime/persistence/execution-event-store.js";
 import { ExecutionRecorder } from "../runtime/persistence/execution-recorder.js";
 import { newRunId } from "../core/identity.js";
+import { flushProcessTelemetry, telemetrySink } from "../observability/process-telemetry.js";
 import type { ExecutionRequest } from "../core/types.js";
 import type { StrategyHooks } from "../runtime/strategies/strategy-hooks.js";
 import { AgentConversationContext } from "./agent-conversation-context.js";
@@ -203,6 +208,11 @@ export class Agent {
   readonly workflows: WorkflowService;
   /** Verified external event ingress. */
   readonly webhooks: WebhookService;
+  /** Versioned, provenance-carrying outputs (oversized tool outputs, reports). */
+  readonly artifacts: SqliteArtifactStore;
+  /** Durable work that survives restarts (webhook-triggered agent runs). */
+  readonly workQueue: DurableJobQueue;
+  private agentRunWorkerInstance?: QueueWorker;
   /** Separated web capability providers (search/fetch/http/browser). */
   readonly web: WebService;
 
@@ -433,7 +443,9 @@ export class Agent {
     // Every run is recorded durably (.nexum/runs/<runId>.events.jsonl) so
     // sessions can be searched, traced and replayed after the process exits.
     this.runEvents = new ExecutionEventStore({ rootDir: statePaths.dir });
-    const recorder = new ExecutionRecorder({ store: this.runEvents });
+    // The recorder's live sink feeds process-wide telemetry (spans + metrics).
+    const live = telemetrySink();
+    const recorder = new ExecutionRecorder({ store: this.runEvents, ...(live ? { live } : {}) });
     this.runtime = new DefaultAgentRuntime({
       recorder: (ctx) =>
         recorder.forRun({ runId: ctx.runId, traceId: ctx.traceId, sessionId: ctx.sessionId, agentId: ctx.agentId }),
@@ -525,8 +537,18 @@ export class Agent {
     // Workflow service (durable, persisted to .nexum/workflows/).
     this.workflows = new WorkflowService({ rootDir: statePaths.dir });
 
-    // Webhook service (persisted to .nexum/webhooks/).
+    // Webhook service (persisted to .nexum/webhooks/). Declarative
+    // `agent.run` rules enqueue durable jobs (.nexum/queue.db, deduped per
+    // event); the worker that runs them starts with the first such rule.
     this.webhooks = new WebhookService({ rootDir: statePaths.dir });
+    this.workQueue = new DurableJobQueue(join(statePaths.dir, "queue.db"));
+    // Versioned outputs with provenance; oversized tool outputs land here.
+    this.artifacts = new SqliteArtifactStore(join(statePaths.dir, "artifacts.db"));
+    this.webhooks.setActionCompiler((spec) => {
+      if (!isDeclarativeRuleSpec(spec)) return undefined;
+      this.ensureAgentRunWorker();
+      return declarativeRule(spec, this.workQueue);
+    });
 
     this.mountProfile(cfg.profile ?? "nexum-cli");
 
@@ -535,7 +557,7 @@ export class Agent {
 
     // Model-facing tools over services that exist only after statePaths:
     // session/run history (read-only) and browserless web access.
-    this.tools.registerToolPack(historyPack(this.sessionQuery));
+    this.tools.registerToolPack(historyPack(this.sessionQuery, this.artifacts));
     this.tools.registerToolPack(webPack(this.web));
   }
 
@@ -587,6 +609,15 @@ export class Agent {
     this.activeProfile = id;
   }
 
+  /** Start (once) the worker that runs queued webhook-triggered agent runs. */
+  private ensureAgentRunWorker(): void {
+    if (this.agentRunWorkerInstance) return;
+    this.agentRunWorkerInstance = agentRunWorker(this.workQueue, async (prompt) => {
+      this.emit("onStatus", "running a webhook-triggered task");
+      return this.runUserMessage(prompt);
+    }).start();
+  }
+
   /** Profile mounted on the plugin host (see mountProfile). */
   activeProfile = "nexum-cli";
 
@@ -606,10 +637,14 @@ export class Agent {
    */
   async stopHost(): Promise<void> {
     this.controlPlane.drain();
+    await this.agentRunWorkerInstance?.stop();
     await this.jobs.stopAll();
     await this.subagents.stopAll();
     await this.pluginHost.stop();
     this.controlPlane.stop();
+    this.workQueue.close();
+    this.artifacts.close();
+    await flushProcessTelemetry();
   }
 
   on<E extends AgentEventName>(event: E, handler: AgentEventHandler<E>): this {
@@ -850,6 +885,7 @@ export class Agent {
     // Budget of the model answering the current turn (resolved in onTurnStart)
     // and the size of the tool schemas last advertised, charged to it.
     let turnBudget: ModelBudget | undefined;
+    const runId = newRunId();
     let lastToolSchemaChars = 0;
 
     // ── Kernel-native execution: the think→act→observe loop itself lives in
@@ -1120,7 +1156,22 @@ export class Agent {
 
         this.emit("onToolResult", name, record);
         this.intelligence.feedRailsIndex(name, args, record);
-        this.conversation.pushToolResult(typeof data === "string" ? data : JSON.stringify(data, null, 2));
+        const resultText = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+        // Oversized outputs live outside the context: excerpt + artifact id,
+        // sized to the answering model (a quarter of its budget, ≥ 4K chars).
+        const offloaded =
+          name === "artifact_read"
+            ? { text: resultText }
+            : offloadLargeOutput(this.artifacts, resultText, {
+                tool: name,
+                threshold: Math.max(4_000, Math.floor((turnBudget?.contextChars ?? 48_000) / 4)),
+                args,
+                runId,
+                sessionId: this.sessions.sessionId,
+                agentId: "devagent",
+              });
+        if (offloaded.artifactId) this.emit("onStatus", `stored large ${name} output as ${offloaded.artifactId}`);
+        this.conversation.pushToolResult(offloaded.text);
 
         if (name === "escalate_task" && record.escalate === true) {
           escalated = true;
@@ -1168,7 +1219,7 @@ export class Agent {
     };
     const context = createExecutionContext(request, {
       // One run id per message: each run gets its own seq-ordered event log.
-      runId: newRunId(),
+      runId,
       sessionId: this.sessions.sessionId,
       signal: this.execution.signal,
       context: new AgentConversationContext(this.conversation),

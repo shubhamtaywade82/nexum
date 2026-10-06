@@ -155,3 +155,59 @@ describe("Agent services wiring", () => {
     expect(notes[1].content).not.toContain("deploy steps here");
   });
 });
+
+describe("Agent wiring — telemetry and artifacts", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("feeds real runs into process telemetry", async () => {
+    const { prometheusMetrics } = await import("../../src/observability/process-telemetry.js");
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    mockModels();
+    const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" } });
+    await agent.runUserMessage("hello");
+    expect(prometheusMetrics()).toContain("nexum_runs_started_total");
+  });
+
+  it("offloads an oversized tool output to an artifact the model can read back", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    await writeFile(join(dir, "big.log"), Array.from({ length: 9_000 }, (_, i) => `entry ${i}`).join("\n"));
+    let chat = 0;
+    (globalThis as any).fetch = jest.fn().mockImplementation(async (_u: string, init?: { body?: string }) => {
+      if (!init?.body) return { ok: true, status: 200, json: async () => ({ models: [] }) };
+      chat += 1;
+      if (chat === 1) {
+        const encoder = new TextEncoder();
+        const body = {
+          message: {
+            role: "assistant",
+            content: "",
+            tool_calls: [{ function: { name: "read_file", arguments: { path: "big.log" } } }],
+          },
+          done: true,
+        };
+        let sent = false;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => body,
+          body: {
+            getReader: () => ({
+              read: async () =>
+                sent
+                  ? { done: true, value: undefined }
+                  : ((sent = true), { done: false, value: encoder.encode(JSON.stringify(body) + "\n") }),
+            }),
+          },
+        };
+      }
+      return chatResponse("done");
+    });
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
+    });
+    await agent.runUserMessage("read big.log");
+    const toolMsg = agent.conversation.getMessages().find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("full output stored as artifact");
+    expect(agent.artifacts.count()).toBe(1);
+  });
+});
