@@ -21,6 +21,7 @@ function num(re: RegExp, text: string): number | undefined {
 }
 
 export function parseTestSummary(output: string): TestSummary | null {
+  // eslint-disable-next-line no-control-regex -- strip ANSI color codes from runner output
   const text = output.replace(/\x1b\[[0-9;]*m/g, "");
   let passed: number | undefined;
   let failed: number | undefined;
