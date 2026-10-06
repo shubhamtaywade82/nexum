@@ -8,7 +8,9 @@
  */
 
 import { Orchestrator } from "../../orchestration/orchestrator.js";
-import { AgentStepRunner } from "../../orchestration/agent-planner.js";
+import { VerifiedStepRunner } from "../../orchestration/verified-step-runner.js";
+import type { CommandOutcome } from "../../runtime/critic/verifier.js";
+import type { ModelBudget } from "../../models/profiles/context-budget.js";
 import type { Planner } from "../../orchestration/types.js";
 import { PlanStep } from "../../orchestration/types.js";
 import { CheckpointStore, sanitizeResumedSteps } from "../../runtime/checkpoint.js";
@@ -21,6 +23,10 @@ export interface ExecutionManagerOptions {
   /** One step of work (delegated back to the composing Agent). */
   runStep: (message: string) => Promise<string>;
   onStepChange?: (step: PlanStep) => void;
+  /** Runs a step's `verify` command (policy-checked, sandboxed). */
+  runCommand?: (command: string) => Promise<CommandOutcome>;
+  /** Budget of the model expected to answer step turns (sizes the step brief). */
+  stepBudget?: () => ModelBudget | undefined;
 }
 
 /** A run scope: runId + signal, wired into tool calls issued within it. */
@@ -68,11 +74,26 @@ export class ExecutionManager {
     return this.opts.checkpoint.load() !== null;
   }
 
+  /** Step runner: compiled step briefs + verification-gated completion. */
+  private stepRunner(goal: string, steps: PlanStep[]): VerifiedStepRunner {
+    return new VerifiedStepRunner(
+      {
+        goal,
+        runUserMessage: (message) => this.opts.runStep(message),
+        runCommand: this.opts.runCommand,
+        budget: this.opts.stepBudget,
+      },
+      steps,
+    );
+  }
+
   /** Run a planned task through the Orchestrator (topological + concurrent + retry + replan). */
-  async runPlannedTask(steps: PlanStep[], planner: Planner): Promise<PlanStep[]> {
+  async runPlannedTask(steps: PlanStep[], planner: Planner, goal = ""): Promise<PlanStep[]> {
+    const runner = this.stepRunner(goal || summarizeGoal(steps), steps);
     const orchestrator = new Orchestrator({
       steps,
-      runner: new AgentStepRunner({ runUserMessage: (message) => this.opts.runStep(message) }),
+      goal: goal || undefined,
+      runner,
       planner,
       gates: this.opts.runtime.gates,
       signal: this.executionSignal ?? undefined,
@@ -80,7 +101,10 @@ export class ExecutionManager {
         await this.opts.runStep(`Roll back by running exactly this: ${command}`);
       },
       checkpoint: this.opts.checkpoint,
-      onStepChange: (step) => this.opts.onStepChange?.(step),
+      onStepChange: (step) => {
+        runner.observe(step);
+        this.opts.onStepChange?.(step);
+      },
     });
     return orchestrator.run();
   }
@@ -89,9 +113,12 @@ export class ExecutionManager {
   async resumePlannedTask(planner: Planner): Promise<PlanStep[] | null> {
     const saved = this.opts.checkpoint.load();
     if (!saved) return null;
+    const steps = sanitizeResumedSteps(saved.steps);
+    const runner = this.stepRunner(saved.goal || summarizeGoal(steps), steps);
     const orchestrator = new Orchestrator({
-      steps: sanitizeResumedSteps(saved.steps),
-      runner: new AgentStepRunner({ runUserMessage: (message) => this.opts.runStep(message) }),
+      steps,
+      goal: saved.goal,
+      runner,
       planner,
       gates: this.opts.runtime.gates,
       signal: this.executionSignal ?? undefined,
@@ -99,10 +126,23 @@ export class ExecutionManager {
         await this.opts.runStep(`Roll back by running exactly this: ${command}`);
       },
       checkpoint: this.opts.checkpoint,
-      onStepChange: (step) => this.opts.onStepChange?.(step),
+      onStepChange: (step) => {
+        runner.observe(step);
+        this.opts.onStepChange?.(step);
+      },
       history: saved.history,
       replanCount: saved.replanCount,
     });
     return orchestrator.run();
   }
+}
+
+/** Fallback mission goal when none was recorded (legacy checkpoints, direct callers). */
+function summarizeGoal(steps: PlanStep[]): string {
+  return (
+    steps
+      .map((s) => s.description)
+      .join("; ")
+      .slice(0, 500) || "complete the plan"
+  );
 }

@@ -63,6 +63,7 @@ import { detectEscalationHint, isLookupPrompt } from "./agent-escalation.js";
 import { ApprovalBroker, describeConfirmation } from "../core/policy/approval-broker.js";
 import { DefaultModelGateway } from "../models/gateway/model-gateway.js";
 import { ModelCapabilityRegistry } from "../models/profiles/model-capability-registry.js";
+import { budgetForProfile, CHARS_PER_TOKEN, type ModelBudget } from "../models/profiles/context-budget.js";
 import { DefaultAgentRuntime, devAgentDescriptor } from "../runtime/agent/agent-runtime.js";
 import { createExecutionContext } from "../runtime/context/execution-context.js";
 import type { ExecutionRequest } from "../core/types.js";
@@ -372,6 +373,8 @@ export class Agent {
       checkpoint: this.planCheckpoint,
       runStep: (message) => this.runUserMessage(message),
       onStepChange: (step) => this.emit("onMissionStep", step),
+      runCommand: (command) => this.runVerificationCommand(command),
+      stepBudget: () => this.budgetFor("quick"),
     });
 
     // ── Agent-harness primitives wiring (P0+P1+P2) ─────────────────────
@@ -669,6 +672,10 @@ export class Agent {
     // can flail indefinitely on the quick model. Reset on any successful tool call.
     let consecutiveToolErrors = 0;
     const TOOL_FAILURE_ESCALATION_THRESHOLD = 2;
+    // Budget of the model answering the current turn (resolved in onTurnStart)
+    // and the size of the tool schemas last advertised, charged to it.
+    let turnBudget: ModelBudget | undefined;
+    let lastToolSchemaChars = 0;
 
     // ── Kernel-native execution: the think→act→observe loop itself lives in
     // the kernel's ReActStrategy now (roadmap step 1, docs/guide/kernel.md).
@@ -678,8 +685,32 @@ export class Agent {
     // with the previously hard-coded loop is the design constraint — the
     // legacy reasoning is preserved verbatim inside the hooks.
     const hooks: StrategyHooks = {
-      onTurnStart: (turnInfo) => {
+      onTurnStart: async (turnInfo) => {
+        if (!escalated && consecutiveToolErrors >= TOOL_FAILURE_ESCALATION_THRESHOLD) {
+          escalated = true;
+          injectDelegationAddendum();
+          this.emit(
+            "onStatus",
+            `escalating to primary model: quick model failed ${consecutiveToolErrors} consecutive tool calls`,
+          );
+        }
         this.conversation.pruneContext();
+        // Size this turn to the model that will answer it: a quick 2B model
+        // and a cloud model share one transcript, but not one budget.
+        turnBudget = this.budgetFor(escalated ? escalationHint : "quick");
+        if (turnBudget) {
+          const compacted = await this.conversation.compactToBudget(
+            turnBudget.contextTokens,
+            this.compaction,
+            Math.ceil(lastToolSchemaChars / CHARS_PER_TOKEN),
+          );
+          if (compacted) {
+            this.emit(
+              "onStatus",
+              `compacted ${compacted} messages to fit ${turnBudget.modelId} (${turnBudget.contextTokens} tokens)`,
+            );
+          }
+        }
         this.emit("onStatus", `turn ${turnInfo.turn + 1}`);
       },
 
@@ -702,18 +733,16 @@ export class Agent {
           const delegateTool = this.tools.registry.getTools().find((t) => t.name === "delegate_to_local");
           if (delegateTool) activeTools.push(delegateTool);
         }
-        return activeTools.map((t) => t.schema);
+        // Small models pick tools worse as the list grows: cap to the
+        // answering model's toolBudget, keeping the routing tools above.
+        const pinnedNames = new Set(["escalate_task", "delegate_to_local"]);
+        const capped = turnBudget ? capTools(activeTools, turnBudget.toolBudget, pinnedNames) : activeTools;
+        const schemas = capped.map((t) => t.schema);
+        lastToolSchemaChars = JSON.stringify(schemas).length;
+        return schemas;
       },
 
       callModel: async (turnInfo, opts) => {
-        if (!escalated && consecutiveToolErrors >= TOOL_FAILURE_ESCALATION_THRESHOLD) {
-          escalated = true;
-          injectDelegationAddendum();
-          this.emit(
-            "onStatus",
-            `escalating to primary model: quick model failed ${consecutiveToolErrors} consecutive tool calls`,
-          );
-        }
         const capability: Capability | null = escalated ? escalationHint : "quick";
 
         // Buffer the attempt's streamed text instead of emitting it live, so a bad
@@ -964,6 +993,42 @@ export class Agent {
     }
   }
 
+  /**
+   * Run a plan step's `verify` command through the tool gateway — same
+   * policy engine, sandbox and approval UX as a model-issued run_shell.
+   * The exit code is the verdict; a denied or failed invocation is a
+   * failed verification, never a pass.
+   */
+  async runVerificationCommand(command: string): Promise<{ exitCode: number; output?: string }> {
+    this.emit("onStatus", `verifying: ${command}`);
+    const ctx = { agentId: "devagent", unattended: this.autoApproveFlag, signal: this.execution.signal };
+    let result = await this.tools.gateway.invoke("run_shell", { command }, ctx);
+    if (!result.ok && result.error?.code === "ConfirmationRequired") {
+      const spec = describeConfirmation("run_shell", { command }, result.error.message);
+      if (!(await this.approvals.requestApproval(spec.title, spec.summary))) {
+        return { exitCode: -1, output: "verification command not approved" };
+      }
+      result = await this.tools.gateway.invoke("run_shell", { command }, { ...ctx, confirmed: true });
+    }
+    const data = result.data ?? {};
+    const exitCode = typeof data.exitCode === "number" ? data.exitCode : -1;
+    const output = [data.stdout, data.stderr, result.error?.message]
+      .filter((p): p is string => typeof p === "string" && p.length > 0)
+      .join("\n");
+    return { exitCode: result.ok ? exitCode : exitCode === 0 ? -1 : exitCode, output };
+  }
+
+  /**
+   * Budget for the model that a capability routes to first (or the direct
+   * provider model when capability is null). Undefined until the catalog
+   * has profiled that model — callers then keep the count-based behavior.
+   */
+  budgetFor(capability: Capability | null): ModelBudget | undefined {
+    const name = capability ? this.stack.catalog.modelsFor(capability)[0]?.name : this.stack.provider.currentModel;
+    const profile = name ? this.stack.modelProfiles.get(name) : undefined;
+    return profile ? budgetForProfile(profile) : undefined;
+  }
+
   pinSkill(id: string | null): void {
     this.learning.pinSkill(id);
   }
@@ -981,13 +1046,13 @@ export class Agent {
     return this.learning.flushLearning();
   }
 
-  async runPlannedTask(steps: PlanStep[], planner: Planner): Promise<PlanStep[]> {
+  async runPlannedTask(steps: PlanStep[], planner: Planner, goal?: string): Promise<PlanStep[]> {
     // Delegated to the ExecutionManager service (review item 1): the plan's
     // concurrency gate comes from the runtime's GateRegistry, the run-scope
     // abort signal cancels cooperatively, and the checkpoint is kept for resume.
     this.planDepth++;
     try {
-      return await this.execution.runPlannedTask(steps, planner);
+      return await this.execution.runPlannedTask(steps, planner, goal);
     } finally {
       this.planDepth--;
     }
@@ -1078,7 +1143,7 @@ export class Agent {
     this.emit("onMissionPhase", "plan", "completed");
     this.emit("onPlanUpdate", goal, steps, "running");
     this.emit("onMissionPhase", "execute", "running");
-    const finalSteps = await this.runPlannedTask(steps, planner);
+    const finalSteps = await this.runPlannedTask(steps, planner, goal);
     const failed = finalSteps.some((s) => s.status === "failed");
     this.emit("onMissionPhase", "execute", failed ? "failed" : "completed");
     this.emit("onMissionPhase", "complete", failed ? "failed" : "completed");
@@ -1313,4 +1378,15 @@ export class Agent {
     }
     return results;
   }
+}
+
+/** Keep at most `budget` tools, never dropping pinned ones (they count toward it). */
+export function capTools<T extends { name: string }>(tools: T[], budget: number, pinned: Set<string>): T[] {
+  if (tools.length <= budget) return tools;
+  const keep = tools.filter((t) => pinned.has(t.name));
+  for (const t of tools) {
+    if (keep.length >= budget) break;
+    if (!pinned.has(t.name)) keep.push(t);
+  }
+  return tools.filter((t) => keep.includes(t));
 }

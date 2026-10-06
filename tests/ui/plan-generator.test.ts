@@ -79,3 +79,17 @@ describe("replanSteps", () => {
     await expect(replanSteps([], [], provider)).rejects.toThrow(PlanGenerationError);
   });
 });
+
+describe("generatePlan verify commands", () => {
+  it("keeps a non-empty verify command and drops blank ones", async () => {
+    const provider = fakeProvider(
+      JSON.stringify([
+        { id: "s1", description: "fix", dependencies: [], verify: " npm test -- auth " },
+        { id: "s2", description: "docs", dependencies: ["s1"], verify: "  " },
+      ]),
+    );
+    const steps = await generatePlan("fix auth", provider);
+    expect(steps[0].verify).toBe("npm test -- auth");
+    expect(steps[1]).not.toHaveProperty("verify");
+  });
+});

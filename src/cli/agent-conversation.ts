@@ -2,6 +2,7 @@ import { ChatMessage } from "../models/adapters/provider.js";
 import { CliConfig } from "./config.js";
 import { SkillContent } from "../skills/types.js";
 import { LOCAL_DELEGATION_SYSTEM_ADDENDUM } from "../tools/delegate-tool.js";
+import type { CompactionService, ConversationMessage } from "../compaction/index.js";
 
 interface LearningEntry {
   category: string;
@@ -121,28 +122,63 @@ export class AgentConversation {
 
   pruneContext(maxMessages = 25): void {
     if (this.messages.length <= maxMessages) return;
+    const { dropped } = this.window(10);
+    const toolRunCount = dropped.filter((m) => m.role === "tool").length;
+    this.replaceDropped(
+      dropped,
+      `[system] Bypassed ${dropped.length} intermediate turns (${toolRunCount} tool calls) to save context window.`,
+    );
+  }
 
-    const systemPrompt = this.messages[0];
+  /**
+   * Token-aware compaction against the budget of the model about to answer
+   * (budgetForProfile). The message-count prune above is model-blind: 25
+   * messages can be 3K tokens or 300K. This asks the CompactionService's
+   * policy whether the transcript is over its trigger for `contextTokens`
+   * and, if so, replaces the oldest turns with its summary — while keeping
+   * the same invariants as pruneContext (system prompt, pinned skills, the
+   * current request, and no orphaned tool result at the window head).
+   * Returns the number of messages compacted (0 when under budget).
+   */
+  async compactToBudget(contextTokens: number, compaction: CompactionService, reservedTokens = 0): Promise<number> {
+    if (this.messages.length < 2) return 0;
+    const decision = compaction.evaluate({
+      messages: this.messages.map(toConversationMessage),
+      contextWindow: contextTokens,
+      reserveForResponse: 0,
+      reserveForSystem: Math.max(0, reservedTokens),
+    });
+    if (!decision.shouldCompact) return 0;
+
+    const { dropped } = this.window(Math.max(1, decision.messagesToKeep));
+    const history = dropped.filter((m) => !this.pinned.has(m) && m !== this.currentTurnUserMessage);
+    if (!history.length) return 0;
+    const summary = await compaction.summaryProvider.summarize(history.map(toConversationMessage));
+    this.replaceDropped(dropped, `[Compacted History]\n\n${summary}\n\n(${history.length} messages compacted)`);
+    return history.length;
+  }
+
+  /** Split off the newest `keep` messages, never starting the window on a tool result. */
+  private window(keep: number): { recent: ChatMessage[]; dropped: ChatMessage[] } {
     // A `role:"tool"` message only makes sense directly after the assistant
     // message whose tool_calls produced it. Cutting on a fixed message count
     // could put an orphaned tool result at the head of the window, which
     // providers either reject or silently misread. Walk forward to the first
     // message that can legally start a window instead.
-    let recent = this.messages.slice(-10);
+    let recent = this.messages.slice(1).slice(-keep);
     while (recent.length > 0 && recent[0].role === "tool") recent = recent.slice(1);
+    return { recent, dropped: this.messages.slice(1, this.messages.length - recent.length) };
+  }
 
-    const dropped = this.messages.slice(1, this.messages.length - recent.length);
-    const toolRunCount = dropped.filter((m) => m.role === "tool").length;
-    const summaryText = `[system] Bypassed ${dropped.length} intermediate turns (${toolRunCount} tool calls) to save context window.`;
-
+  private replaceDropped(dropped: ChatMessage[], summaryText: string): void {
+    const systemPrompt = this.messages[0];
+    const recent = this.messages.slice(1 + dropped.length);
     // Skills are standing instructions; dropping them mid-task silently
     // changed the agent's behaviour, and injectSkill's dedup meant they were
     // never re-added.
     const pinned = dropped.filter((m) => this.pinned.has(m));
-
     const preserved =
-      this.currentTurnUserMessage && !recent.includes(this.currentTurnUserMessage) ? [this.currentTurnUserMessage] : [];
-
+      this.currentTurnUserMessage && dropped.includes(this.currentTurnUserMessage) ? [this.currentTurnUserMessage] : [];
     this.messages = [systemPrompt, ...pinned, { role: "system", content: summaryText }, ...preserved, ...recent];
   }
 
@@ -156,4 +192,16 @@ export class AgentConversation {
   isEmpty(): boolean {
     return this.messages.length === 0;
   }
+}
+
+function toConversationMessage(m: ChatMessage): ConversationMessage {
+  const calls = m.tool_calls?.map((c, i) => ({
+    id: `call_${i}`,
+    type: "function" as const,
+    function: {
+      name: c.function.name,
+      arguments: typeof c.function.arguments === "string" ? c.function.arguments : JSON.stringify(c.function.arguments),
+    },
+  }));
+  return { role: m.role, content: m.content ?? "", ...(calls?.length ? { toolCalls: calls } : {}) };
 }
