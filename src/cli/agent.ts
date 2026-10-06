@@ -590,7 +590,7 @@ export class Agent {
       "compaction-service": () => compactionServicePlugin({ service: this.compaction }),
       "session-query-service": () => sessionQueryServicePlugin({ service: this.sessionQuery }),
       "tool-registry": () => toolRegistryPlugin({ catalog: this.tools.kernelCatalog }),
-      "model-registry": () => modelRegistryPlugin({ registry: this.stack.modelProfiles }),
+      "model-registry": () => modelRegistryPlugin({ registry: this.stack.modelProfiles, gateway: this.modelGateway }),
     };
     const seen = new Set<string>();
     const plugins: NexumPlugin[] = [];

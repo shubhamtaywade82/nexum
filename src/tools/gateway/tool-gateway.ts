@@ -99,7 +99,7 @@ export class ToolTimeoutError extends Error {
 
 // ── Argument repair (decode + normalize) ────────────────────────────────────
 
-export { canonicalToolName, TOOL_ALIASES } from "../../core/tools/tool-aliases.js";
+export { canonicalToolName } from "../../core/tools/tool-aliases.js";
 
 export function normalizeToolArgs(definition: ToolDefinition | undefined, rawArgs: unknown): Record<string, unknown> {
   if (typeof rawArgs !== "object" || rawArgs === null) return {};

@@ -1,4 +1,6 @@
-import { packTaskContext } from "../../src/context/packer.js";
+import { ContextPacker } from "../../src/context/packer.js";
+
+const packTaskContext = (...args: Parameters<ContextPacker["pack"]>) => new ContextPacker().pack(...args);
 
 describe("Context - Packer", () => {
   it("packs task goal and relevant code within character budget", () => {

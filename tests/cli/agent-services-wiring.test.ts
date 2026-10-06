@@ -248,3 +248,17 @@ describe("Agent wiring — NEXUM_TOKEN_BUDGET", () => {
     expect(second).toMatch(/^Token budget exhausted: 12\/10/);
   });
 });
+
+describe("Agent wiring — model gateway for plugins", () => {
+  it("provides the agent's ModelGateway under MODEL_GATEWAY", async () => {
+    const { MODEL_GATEWAY } = await import("../../src/platform/plugins/index.js");
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" } });
+    await agent.startHost();
+    try {
+      expect(agent.pluginHost.lookup(MODEL_GATEWAY.id)).toBe(agent.modelGateway);
+    } finally {
+      await agent.stopHost();
+    }
+  });
+});

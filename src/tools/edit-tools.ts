@@ -79,7 +79,7 @@ export class AppendTool extends Tool {
 
 // ── CAS-based editing primitives (review items 10 + 11) ─────────────────────
 
-import { CasEditor, contentHash, ExpectedHashMismatchError } from "./mutations/cas-editor.js";
+import { CasEditor, ExpectedHashMismatchError } from "./mutations/cas-editor.js";
 
 /**
  * apply_patch — the PRIMARY editing primitive (review item 11): applies a
@@ -247,9 +247,4 @@ export class EditFileLinesTool extends Tool {
       return { error: err.name ?? "EditError", message: err.message };
     }
   }
-}
-
-/** read_file with hash stamping — the CAS token producer. */
-export function stampReadResult(path: string, content: string, extra: Record<string, unknown> = {}) {
-  return { path, content, hash: contentHash(content), ...extra };
 }

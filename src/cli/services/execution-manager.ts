@@ -29,12 +29,6 @@ export interface ExecutionManagerOptions {
   stepBudget?: () => ModelBudget | undefined;
 }
 
-/** A run scope: runId + signal, wired into tool calls issued within it. */
-export interface ExecutionRunScope {
-  runId: string;
-  signal: AbortSignal;
-}
-
 export class ExecutionManager {
   private currentRunController: AbortController | null = null;
   private executionSignal: AbortSignal | null = null;

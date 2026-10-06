@@ -13,7 +13,7 @@
  *   - non-destructive: .devagent is COPIED, never moved or deleted
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BRAND } from "./brand.js";
@@ -342,15 +342,4 @@ export function migrateGlobalState(home: string = homedirSafe()): MigrationRepor
     report.error = err instanceof Error ? err.message : String(err);
   }
   return report;
-}
-
-/** Read the raw marker contents (reporting / `nexum migrate` output). */
-export function readMigrationMarker(dir: string): Record<string, unknown> | null {
-  const p = join(dir, ".migrated-from-devagent.json");
-  if (!existsSync(p)) return null;
-  try {
-    return JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }

@@ -212,6 +212,6 @@ export interface AgentRuntime {
 // Ergonomic re-exports so kernel-internal modules can import peer contracts
 // from one place without introducing cycles.
 export type { ToolGateway } from "../tools/gateway/tool-gateway.js";
-export type { ToolDefinition, ToolInvocation, ToolResult } from "./tools/tool-contract.js";
-export type { PolicyEngine, PolicyRequest, PolicyDecision } from "./policy/policy-engine.js";
+export type { ToolDefinition } from "./tools/tool-contract.js";
+export type { PolicyEngine } from "./policy/policy-engine.js";
 export type { ModelGateway } from "../models/gateway/model-gateway.js";

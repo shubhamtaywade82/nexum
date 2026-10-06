@@ -11,7 +11,7 @@
 
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 export interface ShellExecutionRecord {
   /** Container name/id from docker run --name. */
@@ -234,9 +234,4 @@ function parseMemUsage(usage?: string): number | undefined {
     tib: 1024 ** 4,
   };
   return value * (multipliers[unit] ?? 1);
-}
-
-/** Convenience: the default accounting file under a workspace state dir. */
-export function shellAccountingFile(stateDir: string): string {
-  return join(stateDir, "shell-executions.jsonl");
 }

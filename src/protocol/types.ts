@@ -64,17 +64,23 @@ export interface NexumRun {
   error?: string;
 }
 
+const RUN_TRANSITIONS: Record<NexumRunStatus, readonly NexumRunStatus[]> = {
+  queued: ["running", "cancelled", "interrupted"],
+  running: ["completed", "failed", "cancelled", "interrupted"],
+  completed: [],
+  failed: [],
+  cancelled: [],
+  interrupted: [],
+};
+
 /** Validates run status transitions */
 export function isValidRunTransition(from: NexumRunStatus, to: NexumRunStatus): boolean {
-  const transitions: Record<NexumRunStatus, NexumRunStatus[]> = {
-    queued: ["running", "cancelled", "interrupted"],
-    running: ["completed", "failed", "cancelled", "interrupted"],
-    completed: [],
-    failed: [],
-    cancelled: [],
-    interrupted: [],
-  };
-  return transitions[from]?.includes(to) ?? false;
+  return RUN_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+/** Statuses a run may legally move to `to` from (the compare-and-set guard for persisted runs). */
+export function runStatusPredecessors(to: NexumRunStatus): NexumRunStatus[] {
+  return (Object.keys(RUN_TRANSITIONS) as NexumRunStatus[]).filter((from) => isValidRunTransition(from, to));
 }
 
 /** One PlanStep as surfaced to a remote client (subset of orchestration/types.ts PlanStep). */

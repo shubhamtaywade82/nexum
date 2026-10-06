@@ -37,15 +37,3 @@ export const BRAND = {
   /** Legacy sandbox Docker image (fallback default). */
   legacySandboxImage: "devagent-sandbox:latest",
 } as const;
-
-/**
- * Historical product names. Legitimate ONLY in migration/deprecation code —
- * workspace detection, legacy config reads, `nexum migrate` reporting, and
- * error interpretation. See docs/REBRANDING.md §2 for the contract.
- */
-export const LEGACY_PRODUCT_NAMES = ["DevAgent", "devagent-ts", "devagent"] as const;
-
-/** True when the given string is one of the historical product names. */
-export function isLegacyProductName(value: string): boolean {
-  return (LEGACY_PRODUCT_NAMES as readonly string[]).includes(value);
-}

@@ -24,7 +24,7 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { createTwoFilesPatch, diffLines } from "diff";
+import { createTwoFilesPatch } from "diff";
 import { WorkspaceGuard } from "../../core/fs/workspace-guard.js";
 import { readVerifiedWith, writeVerifiedWith } from "../verified-fs.js";
 import { enforceEditSyntax } from "../../validation/edit-check.js";
@@ -323,10 +323,4 @@ function findHunkAnchor(content: string[], hunk: ParsedHunk, from: number, to: n
   }
   // fallback: newStart as declared (trusting the producer)
   return Math.min(Math.max(0, hunk.newStart - 1), content.length);
-}
-
-/** Line diff convenience (used by edit_file_lines results). */
-export function lineDiff(before: string, after: string): string[] {
-  const parts = diffLines(before, after);
-  return parts.map((p) => `${p.added ? "+" : p.removed ? "-" : " "}${p.value.replace(/\n$/, "")}`);
 }

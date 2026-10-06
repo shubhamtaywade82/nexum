@@ -19,7 +19,7 @@ export const MODEL_CAPABILITY_REGISTRY = defineCapabilityToken<ModelCapabilityRe
   "nexum:models:capability-registry",
 );
 
-export function modelRegistryPlugin(opts: { registry?: ModelCapabilityRegistry } = {}) {
+export function modelRegistryPlugin(opts: { registry?: ModelCapabilityRegistry; gateway?: ModelGateway } = {}) {
   return definePlugin({
     manifest: {
       id: "model-registry",
@@ -39,6 +39,11 @@ export function modelRegistryPlugin(opts: { registry?: ModelCapabilityRegistry }
       // overwrite it.
       if (!ctx.host.provides(MODEL_CAPABILITY_REGISTRY.id)) {
         ctx.provide(MODEL_CAPABILITY_REGISTRY.id, opts.registry ?? new ModelCapabilityRegistry());
+      }
+      // The embedding app's gateway (capability routing over its providers),
+      // so plugins call models through the same router/fallbacks as the agent.
+      if (opts.gateway && !ctx.host.provides(MODEL_GATEWAY.id)) {
+        ctx.provide(MODEL_GATEWAY.id, opts.gateway);
       }
       ctx.declareCapability("models");
       ctx.log.debug("model registry declared");

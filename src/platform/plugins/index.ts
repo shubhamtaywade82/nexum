@@ -53,7 +53,7 @@ export {
 // Built-in plugins (mountable as-is or via profiles).
 export { coreServicesPlugin } from "./builtin/core-services-plugin.js";
 export { toolRegistryPlugin } from "./builtin/tool-registry-plugin.js";
-export { modelRegistryPlugin } from "./builtin/model-registry-plugin.js";
+export { modelRegistryPlugin, MODEL_GATEWAY, MODEL_CAPABILITY_REGISTRY } from "./builtin/model-registry-plugin.js";
 export { skillSystemPlugin } from "./builtin/skill-system-plugin.js";
 export { subagentServicePlugin } from "./builtin/subagent-service-plugin.js";
 export { jobServicePlugin } from "./builtin/job-service-plugin.js";
