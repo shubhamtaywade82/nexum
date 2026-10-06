@@ -155,3 +155,71 @@ describe("Agent wiring — decision plane", () => {
     expect(await agent.runUserMessage("hmm, thoughts on this?")).toBe("quick");
   });
 });
+
+describe("Agent wiring — hooks", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function toolCall(name: string, args: Record<string, unknown>) {
+    const encoder = new TextEncoder();
+    const body = {
+      message: { role: "assistant", content: "", tool_calls: [{ function: { name, arguments: args } }] },
+      done: true,
+    };
+    let delivered = false;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => body,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (delivered) return { done: true, value: undefined };
+            delivered = true;
+            return { done: false, value: encoder.encode(JSON.stringify(body) + "\n") };
+          },
+        }),
+      },
+    };
+  }
+
+  it("blocks a prompt denied by a UserPromptSubmit hook without calling the model", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    mockFetch(() => "should not run");
+    const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" } });
+    agent.hooks.onUserPromptSubmit((p) =>
+      p.includes("rm -rf") ? { allow: false, reason: "destructive" } : { allow: true },
+    );
+    expect(await agent.runUserMessage("please rm -rf /")).toBe("Request blocked by hook: destructive");
+    expect(chatBodies()).toHaveLength(0);
+  });
+
+  it("reports a PreToolUse deny to the model as a tool result and runs PostToolUse for executed tools", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    let chat = 0;
+    let first = true;
+    (globalThis as any).fetch = jest.fn().mockImplementation(async (_u: string, init?: { body?: string }) => {
+      if (!init?.body) {
+        const models = first ? [QUICK] : [QUICK];
+        first = false;
+        return { ok: true, status: 200, json: async () => ({ models }) };
+      }
+      chat += 1;
+      if (chat === 1) return toolCall("run_shell", { command: "ls" });
+      if (chat === 2) return toolCall("list_directory", { path: "." });
+      return chatResponse("done");
+    });
+    const post = jest.fn();
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
+    });
+    agent.hooks.onPreToolUse((ctx) =>
+      ctx.toolName === "run_shell" ? { allow: false, reason: "no shell" } : { allow: true },
+    );
+    agent.hooks.onPostToolUse(post);
+    await agent.runUserMessage("show me the files in this workspace please");
+    const second = chatBodies()[1];
+    expect(second.messages.some((m) => m.role === "tool" && m.content.includes("HookDenied"))).toBe(true);
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ toolName: "list_directory" }));
+    expect(post).not.toHaveBeenCalledWith(expect.objectContaining({ toolName: "run_shell" }));
+  });
+});

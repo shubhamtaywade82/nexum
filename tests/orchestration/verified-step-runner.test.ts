@@ -106,3 +106,26 @@ describe("VerifiedStepRunner", () => {
     expect(final[0]).toMatchObject({ status: "completed", retryCount: 1 });
   });
 });
+
+describe("VerifiedStepRunner escalation policy", () => {
+  it("first attempt stays local; a retry after failed verification escalates", async () => {
+    const calls: Array<{ escalate?: boolean }> = [];
+    const exits = [1, 0];
+    const runner = new VerifiedStepRunner({
+      goal: "g",
+      runUserMessage: async (_m, _p, opts) => {
+        calls.push(opts ?? {});
+        return "done";
+      },
+      runCommand: async () => ({ exitCode: exits.shift() ?? 0 }),
+    });
+    const s = step("s1", "fix", { verify: "npm test" });
+    await runner.run(s);
+    expect(runner.escalationFor("s1").reasons).toEqual(
+      expect.arrayContaining(["tests_still_fail", "local_failed", "materially_unresolved"]),
+    );
+    await runner.run(s);
+    expect(calls).toEqual([{ escalate: false }, { escalate: true }]);
+    expect(runner.escalationFor("s1").escalate).toBe(false);
+  });
+});

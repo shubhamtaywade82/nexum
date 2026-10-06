@@ -46,4 +46,14 @@ describe("AgentConversation.compactToBudget", () => {
     const firstTool = msgs.findIndex((m) => m.role === "tool");
     expect(msgs[firstTool - 1].role).toBe("assistant");
   });
+
+  it("never compacts the live exchange when the system prompt alone exceeds the budget (regression)", async () => {
+    const c = new AgentConversation();
+    c.loadMessages([{ role: "system", content: "rules ".repeat(20_000) }]);
+    c.pushUserMessage("show me the files");
+    c.pushAssistantMessage("", [{ function: { name: "list_directory", arguments: { path: "." } } }]);
+    c.pushToolResult("a.ts\nb.ts");
+    expect(await c.compactToBudget(8_000, new CompactionService())).toBe(0);
+    expect(c.getMessages()).toHaveLength(4);
+  });
 });

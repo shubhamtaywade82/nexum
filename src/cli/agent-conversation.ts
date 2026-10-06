@@ -141,21 +141,29 @@ export class AgentConversation {
    * Returns the number of messages compacted (0 when under budget).
    */
   async compactToBudget(contextTokens: number, compaction: CompactionService, reservedTokens = 0): Promise<number> {
-    if (this.messages.length < 2) return 0;
+    // Only conversational history is compactable: the system prompt and
+    // pinned skills are standing instructions, charged as reserved tokens.
+    const standing = [this.messages[0], ...this.messages.filter((m) => this.pinned.has(m))].filter(Boolean);
+    const history = this.messages.slice(1).filter((m) => !this.pinned.has(m));
+    const reserved =
+      Math.max(0, reservedTokens) + compaction.estimator.estimateConversation(standing.map(toConversationMessage));
     const decision = compaction.evaluate({
-      messages: this.messages.map(toConversationMessage),
+      messages: history.map(toConversationMessage),
       contextWindow: contextTokens,
       reserveForResponse: 0,
-      reserveForSystem: Math.max(0, reservedTokens),
+      reserveForSystem: reserved,
     });
     if (!decision.shouldCompact) return 0;
 
-    const { dropped } = this.window(Math.max(1, decision.messagesToKeep));
-    const history = dropped.filter((m) => !this.pinned.has(m) && m !== this.currentTurnUserMessage);
-    if (!history.length) return 0;
-    const summary = await compaction.summaryProvider.summarize(history.map(toConversationMessage));
-    this.replaceDropped(dropped, `[Compacted History]\n\n${summary}\n\n(${history.length} messages compacted)`);
-    return history.length;
+    // messagesToKeep counts history messages; map it back onto the transcript tail.
+    const keepTail = history.slice(-decision.messagesToKeep);
+    const keepFrom = keepTail.length ? this.messages.indexOf(keepTail[0]) : this.messages.length;
+    const { dropped } = this.window(this.messages.length - keepFrom);
+    const compacted = dropped.filter((m) => !this.pinned.has(m) && m !== this.currentTurnUserMessage);
+    if (!compacted.length) return 0;
+    const summary = await compaction.summaryProvider.summarize(compacted.map(toConversationMessage));
+    this.replaceDropped(dropped, `[Compacted History]\n\n${summary}\n\n(${compacted.length} messages compacted)`);
+    return compacted.length;
   }
 
   /** Split off the newest `keep` messages, never starting the window on a tool result. */

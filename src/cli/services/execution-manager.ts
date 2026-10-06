@@ -21,7 +21,7 @@ export interface ExecutionManagerOptions {
   runtime: DefaultAgentRuntime;
   checkpoint: CheckpointStore;
   /** One step of work (delegated back to the composing Agent). */
-  runStep: (message: string) => Promise<string>;
+  runStep: (message: string, opts?: { escalate?: boolean }) => Promise<string>;
   onStepChange?: (step: PlanStep) => void;
   /** Runs a step's `verify` command (policy-checked, sandboxed). */
   runCommand?: (command: string) => Promise<CommandOutcome>;
@@ -79,7 +79,7 @@ export class ExecutionManager {
     return new VerifiedStepRunner(
       {
         goal,
-        runUserMessage: (message) => this.opts.runStep(message),
+        runUserMessage: (message, _priority, opts) => this.opts.runStep(message, opts),
         runCommand: this.opts.runCommand,
         budget: this.opts.stepBudget,
       },

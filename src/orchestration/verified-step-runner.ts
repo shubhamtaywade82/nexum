@@ -18,12 +18,13 @@ import { ContextCompiler } from "../context/compiler.js";
 import { SIZE_CLASS_DEFAULTS, CHARS_PER_TOKEN, type ModelBudget } from "../models/profiles/context-budget.js";
 import { VerifierService, expectCommandSucceeds, type CommandOutcome } from "../runtime/critic/verifier.js";
 import { gateTaskCompletion } from "../runtime/verification-gate.js";
+import { evaluateEscalation, type EscalationDecision } from "../policy/escalation.js";
 import type { PlanStep, StepOutcome, StepRunner } from "./types.js";
 
 export interface VerifiedStepRunnerOptions {
   /** The overall mission goal the plan was generated from. */
   goal: string;
-  runUserMessage(message: string, priority?: PlanStep["priority"]): Promise<string>;
+  runUserMessage(message: string, priority?: PlanStep["priority"], opts?: { escalate?: boolean }): Promise<string>;
   /** Runs a verification command (normally run_shell through the tool gateway). */
   runCommand?(command: string): Promise<CommandOutcome>;
   /** Budget of the model expected to answer step turns; small-class default. */
@@ -55,6 +56,7 @@ export class VerifiedStepRunner implements StepRunner {
   private readonly steps = new Map<string, PlanStep>();
   private readonly outputs = new Map<string, string>();
   private readonly failures = new Map<string, string[]>();
+  private readonly lastFailure = new Map<string, "verification" | "error">();
 
   constructor(
     private readonly opts: VerifiedStepRunnerOptions,
@@ -106,14 +108,29 @@ export class VerifiedStepRunner implements StepRunner {
     return compiled.promptBlock;
   }
 
+  /**
+   * Escalation policy for a retry: a step whose previous attempt failed
+   * (verification red, or the turn itself errored) is materially
+   * unresolved, so the next attempt goes to the primary model instead of
+   * repeating the same quick-model attempt.
+   */
+  escalationFor(stepId: string): EscalationDecision {
+    const last = this.lastFailure.get(stepId);
+    return evaluateEscalation(
+      { localFailed: last !== undefined, testsStillFail: last === "verification" },
+      { validationFailed: last === "verification", changeNotApplied: last === "error" },
+    );
+  }
+
   async run(step: PlanStep): Promise<StepOutcome> {
     this.observe(step);
+    const escalation = this.escalationFor(step.id);
     let text: string;
     try {
-      text = await this.opts.runUserMessage(this.brief(step), step.priority);
+      text = await this.opts.runUserMessage(this.brief(step), step.priority, { escalate: escalation.escalate });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
-      this.recordFailure(step.id, error);
+      this.recordFailure(step.id, error, "error");
       return { kind: "retryable", error };
     }
 
@@ -134,16 +151,18 @@ export class VerifiedStepRunner implements StepRunner {
       );
       if (gate.outcome !== "completed") {
         const error = `verification failed: ${gate.reason}`;
-        this.recordFailure(step.id, error);
+        this.recordFailure(step.id, error, "verification");
         return { kind: "retryable", error };
       }
     }
 
     this.outputs.set(step.id, text);
+    this.lastFailure.delete(step.id);
     return { kind: "success", output: { text, verified: Boolean(step.verify) } };
   }
 
-  private recordFailure(stepId: string, error: string): void {
+  private recordFailure(stepId: string, error: string, kind: "verification" | "error"): void {
+    this.lastFailure.set(stepId, kind);
     const list = this.failures.get(stepId) ?? [];
     list.push(error);
     this.failures.set(stepId, list);

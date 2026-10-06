@@ -41,6 +41,7 @@ import { DecisionToolSelector } from "../tools/decision-tool-selector.js";
 import { DecisionRoutingHintResolver } from "../models/router/decision-routing-hint.js";
 import { HeuristicRouter } from "../models/router/heuristic-router.js";
 import { DecisionVerificationGate } from "../runtime/critic/decision-gate.js";
+import { HookEngine } from "../hooks/engine.js";
 import { join } from "node:path";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
@@ -204,6 +205,12 @@ export class Agent {
   private readonly mcpTrust?: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
   readonly intentResolver = new IntentResolver();
+  /**
+   * Programmatic hooks (prompt submit, pre/post tool use) for embedders and
+   * in-process plugins (provided to the plugin host as HOOK_ENGINE). A
+   * pre-tool deny is reported to the model as a tool result, not dropped.
+   */
+  readonly hooks = new HookEngine();
   projectInfo?: ProjectInfo;
 
   // ── Kernel (agent execution kernel) ─────────────────────────────────
@@ -404,7 +411,7 @@ export class Agent {
     this.execution = new ExecutionManager({
       runtime: this.runtime,
       checkpoint: this.planCheckpoint,
-      runStep: (message) => this.runUserMessage(message),
+      runStep: (message, opts) => this.runUserMessage(message, undefined, opts),
       onStepChange: (step) => this.emit("onMissionStep", step),
       runCommand: (command) => this.runVerificationCommand(command),
       stepBudget: () => this.budgetFor("quick"),
@@ -571,7 +578,19 @@ export class Agent {
     return summary;
   }
 
-  async runUserMessage(userMessage: string, _priority?: PlanStep["priority"]): Promise<string> {
+  async runUserMessage(
+    userMessage: string,
+    _priority?: PlanStep["priority"],
+    opts: { escalate?: boolean } = {},
+  ): Promise<string> {
+    const submitted = await this.hooks.runUserPromptSubmit(userMessage);
+    if (!submitted.allow) {
+      const blocked = `Request blocked by hook: ${submitted.reason}`;
+      this.emit("onStatus", blocked);
+      return blocked;
+    }
+    userMessage = submitted.updatedPrompt ?? userMessage;
+
     const clarificationReq = this.intentResolver.checkAmbiguity(userMessage, this.projectInfo);
     if (
       clarificationReq &&
@@ -655,6 +674,7 @@ export class Agent {
     // divergence, or explicit hints escalate to the primary model.
     let escalated = false;
     let delegationAddendumInjected = false;
+    const forceEscalate = opts.escalate === true;
     const injectDelegationAddendum = () => {
       if (this.stack.localWorker && !delegationAddendumInjected) {
         this.conversation.pushSystemMessage(LOCAL_DELEGATION_SYSTEM_ADDENDUM);
@@ -676,6 +696,11 @@ export class Agent {
             this.stack.heuristicRouter.classify(userMessage),
           )
         : undefined;
+    if (forceEscalate) {
+      escalated = true;
+      injectDelegationAddendum();
+      this.emit("onStatus", "escalating to primary model: a local attempt at this step already failed verification");
+    }
     if (routing && !escalated) {
       const heuristic = routing;
       if (heuristic.decision === "cloud") {
@@ -931,6 +956,13 @@ export class Agent {
       },
 
       beforeToolCall: async (call) => {
+        const decision = await this.hooks.runPreToolUse({ toolName: call.name, input: call.args });
+        if (!decision.allow) {
+          // Answer the tool call so the transcript keeps call/result adjacency.
+          this.conversation.pushToolResult(JSON.stringify({ error: "HookDenied", message: decision.reason }));
+          this.emit("onStatus", `tool ${call.name} denied by hook: ${decision.reason}`);
+          return false;
+        }
         this.emit("onToolCall", call.name, call.args);
         return true;
       },
@@ -945,10 +977,16 @@ export class Agent {
         return this.approvals.requestApproval(spec.title, spec.summary);
       },
 
-      onToolObserved: (obs) => {
+      onToolObserved: async (obs) => {
         const { name, args, result } = obs;
         const data = result.data;
         const record = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+        await this.hooks.runPostToolUse({
+          toolName: name,
+          input: args,
+          result: typeof data === "string" ? data : JSON.stringify(data),
+          isError: !result.ok || typeof record.error === "string",
+        });
 
         if (record.error === "PathEscapeError") {
           this.conversation.pushToolResult(
