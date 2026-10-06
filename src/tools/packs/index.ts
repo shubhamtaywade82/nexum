@@ -16,6 +16,8 @@
  *   AgentCorePack    escalate / delegate / ask-user
  *   MemoryPack       semantic long-term memory (save / recall)
  *   GeneralPack      calculator / weather / Wikipedia lookup
+ *   HistoryPack      session/run history search + trace (read-only)
+ *   WebPack          web_fetch + internet_search (no browser)
  *
  * Legacy compat factories (shellPack, dockerPack, projectPack, cryptoPack,
  * gitGithubPack) remain exported.
@@ -42,3 +44,5 @@ export { generalPack } from "./general-pack.js";
 export { agentCorePack } from "./agent-core-pack.js";
 export { memoryPack } from "./memory-pack.js";
 export { ragPack } from "./rag-pack.js";
+export { historyPack } from "./history-pack.js";
+export { webPack } from "./web-pack.js";

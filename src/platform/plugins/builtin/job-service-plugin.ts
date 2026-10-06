@@ -12,6 +12,8 @@ export const JOB_SERVICE = defineCapabilityToken<JobService>("nexum:jobs:service
 export interface JobServicePluginOptions {
   maxConcurrent?: number;
   defaultMaxOutputLines?: number;
+  /** Provide this existing service (the embedding app's live instance) instead of creating one. */
+  service?: JobService;
 }
 
 export function jobServicePlugin(opts: JobServicePluginOptions = {}) {
@@ -25,10 +27,12 @@ export function jobServicePlugin(opts: JobServicePluginOptions = {}) {
       requires: [],
     },
     setup(ctx) {
-      const service = new JobService({
-        maxConcurrent: opts.maxConcurrent,
-        defaultMaxOutputLines: opts.defaultMaxOutputLines,
-      });
+      const service =
+        opts.service ??
+        new JobService({
+          maxConcurrent: opts.maxConcurrent,
+          defaultMaxOutputLines: opts.defaultMaxOutputLines,
+        });
       ctx.provide(JOB_SERVICE.id, service);
       ctx.declareCapability("jobs");
       ctx.log.debug("job service registered");

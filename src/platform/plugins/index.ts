@@ -59,4 +59,5 @@ export { subagentServicePlugin } from "./builtin/subagent-service-plugin.js";
 export { jobServicePlugin } from "./builtin/job-service-plugin.js";
 export { compactionServicePlugin } from "./builtin/compaction-service-plugin.js";
 export { sessionQueryServicePlugin } from "./builtin/session-query-service-plugin.js";
+export { hookEnginePlugin, HOOK_ENGINE } from "./builtin/hook-engine-plugin.js";
 export { type PluginProfile, minimalProfile, standardProfile, fullProfile } from "./profiles.js";

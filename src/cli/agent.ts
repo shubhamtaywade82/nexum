@@ -33,23 +33,44 @@ import { DocsStore } from "../docs/store.js";
 import { AgentConversation } from "./agent-conversation.js";
 import { AgentToolManager, type McpRegistrationOptions } from "./agent-tools.js";
 import { McpApprovalStore, McpTrustPolicy, mcpTrustPolicyFromConfig } from "../mcp/trust.js";
+import { resolveMcpEnv } from "../mcp/env.js";
 import { preservingTrust, WorkspaceTrustStore } from "./workspace-trust.js";
 import { AgentIntelligence } from "./agent-intelligence.js";
 import { AgentLearning } from "./agent-learning.js";
 import { DynamicToolSelector } from "../tools/discovery.js";
+import { historyPack } from "../tools/packs/history-pack.js";
+import { webPack } from "../tools/packs/web-pack.js";
 import { DecisionToolSelector } from "../tools/decision-tool-selector.js";
 import { DecisionRoutingHintResolver } from "../models/router/decision-routing-hint.js";
 import { HeuristicRouter } from "../models/router/heuristic-router.js";
 import { DecisionVerificationGate } from "../runtime/critic/decision-gate.js";
 import { HookEngine } from "../hooks/engine.js";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
 
 // ── Agent-harness primitives (P0+P1+P2) ──────────────────────────────────
-import { DefaultPluginHost, standardProfile, type PluginHost } from "../platform/plugins/index.js";
+import {
+  DefaultPluginHost,
+  compactionServicePlugin,
+  hookEnginePlugin,
+  jobServicePlugin,
+  modelRegistryPlugin,
+  sessionQueryServicePlugin,
+  subagentServicePlugin,
+  toolRegistryPlugin,
+  type NexumPlugin,
+  type PluginHost,
+} from "../platform/plugins/index.js";
 import { SettingsService, registerDefaultSpecs } from "../settings/index.js";
-import { ProfileRegistry, registerBuiltinProfiles } from "../profiles/index.js";
+import {
+  ProfileComposer,
+  ProfileLoader,
+  ProfileRegistry,
+  ProfileResolver,
+  registerBuiltinProfiles,
+} from "../profiles/index.js";
 import { ControlPlaneService, registerDefaultMetrics } from "../control-plane/index.js";
 import { CredentialService } from "../credentials/index.js";
 import { JobService } from "../jobs/index.js";
@@ -71,6 +92,9 @@ import { ModelCapabilityRegistry } from "../models/profiles/model-capability-reg
 import { budgetForProfile, CHARS_PER_TOKEN, type ModelBudget } from "../models/profiles/context-budget.js";
 import { DefaultAgentRuntime, devAgentDescriptor } from "../runtime/agent/agent-runtime.js";
 import { createExecutionContext } from "../runtime/context/execution-context.js";
+import { ExecutionEventStore } from "../runtime/persistence/execution-event-store.js";
+import { ExecutionRecorder } from "../runtime/persistence/execution-recorder.js";
+import { newRunId } from "../core/identity.js";
 import type { ExecutionRequest } from "../core/types.js";
 import type { StrategyHooks } from "../runtime/strategies/strategy-hooks.js";
 import { AgentConversationContext } from "./agent-conversation-context.js";
@@ -222,6 +246,8 @@ export class Agent {
   readonly modelGateway: DefaultModelGateway;
   /** Kernel runtime: agent registry + strategy registry + agent gate. */
   readonly runtime: DefaultAgentRuntime;
+  /** Durable per-run execution event log (.nexum/runs/), read by sessionQuery. */
+  readonly runEvents: ExecutionEventStore;
   /** Capability profiles synced from every catalog refresh (ModelStack). */
   get modelProfiles(): ModelCapabilityRegistry {
     return this.stack.modelProfiles;
@@ -294,7 +320,7 @@ export class Agent {
     this.tools.registerRailsTools(this.intelligence.railsIndex);
 
     this.browser = new BrowserManager();
-    this.tools.registerBrowserTools(this.browser);
+    this.tools.registerBrowserTools(this.browser, () => this.attachments);
     this.binanceStream = new BinanceStreamManager();
     this.tools.registerBinanceStreamTools(this.binanceStream);
 
@@ -330,8 +356,9 @@ export class Agent {
     this.planCheckpoint = new CheckpointStore(statePaths.checkpoint);
 
     // SessionManager owns conversation persistence + summarization.
+    const sessionStore = new SessionStore(statePaths.sessionsDir);
     this.sessions = new SessionManager({
-      store: new SessionStore(statePaths.sessionsDir),
+      store: sessionStore,
       memory: this.memory,
       stack: this.stack,
       onMemorySummary: (summary) => this.emit("onMemorySummary", summary),
@@ -403,7 +430,14 @@ export class Agent {
       registry: this.stack.modelProfiles,
     });
 
-    this.runtime = new DefaultAgentRuntime();
+    // Every run is recorded durably (.nexum/runs/<runId>.events.jsonl) so
+    // sessions can be searched, traced and replayed after the process exits.
+    this.runEvents = new ExecutionEventStore({ rootDir: statePaths.dir });
+    const recorder = new ExecutionRecorder({ store: this.runEvents });
+    this.runtime = new DefaultAgentRuntime({
+      recorder: (ctx) =>
+        recorder.forRun({ runId: ctx.runId, traceId: ctx.traceId, sessionId: ctx.sessionId, agentId: ctx.agentId }),
+    });
     this.runtime.agents.register(devAgentDescriptor());
 
     // ExecutionManager owns run scopes + planned missions (needs runtime
@@ -429,22 +463,34 @@ export class Agent {
     // before the first user message, so that plugin setup doesn't block
     // constructor-time concerns like UI rendering.
     this.pluginHost = new DefaultPluginHost({ workspaceRoot: cfg.workspaceRoot });
-    this.pluginHost.registerAll(standardProfile.plugins());
 
     // Settings service with default specs.
     this.settings = new SettingsService({ rootDir: statePaths.dir });
     registerDefaultSpecs(this.settings);
 
-    // Profile registry with built-in profiles.
+    // Profile registry: built-ins + user profiles (~/.nexum/profiles, and
+    // .nexum/profiles in a trusted workspace). User profiles are JSON, so
+    // they contribute settings + dependsOn only — plugins come from code.
     this.profiles = new ProfileRegistry();
     registerBuiltinProfiles(this.profiles);
+    const userProfiles = new ProfileLoader({
+      ...(cfg.workspaceTrust?.trusted ? { workspaceRoot: cfg.workspaceRoot } : {}),
+      homeDir: homedir(),
+    }).load();
+    for (const rec of userProfiles) {
+      if (this.profiles.has(rec.bundle.id)) continue;
+      this.profiles.register({ ...rec.bundle, plugins: [] }, "user", rec.loadedFrom);
+    }
 
     // Control plane with default metrics.
     this.controlPlane = new ControlPlaneService();
     registerDefaultMetrics(this.controlPlane);
 
-    // Credential service (env + file providers).
-    this.credentials = new CredentialService({ rootDir: statePaths.dir });
+    // Credential service: env always; the .nexum credentials file only in a
+    // trusted workspace (in an untrusted one it is repository content and
+    // would otherwise override real env credentials). Consumed by MCP server
+    // `env` entries of the form `credential:NAME`.
+    this.credentials = new CredentialService(cfg.workspaceTrust?.trusted ? { rootDir: statePaths.dir } : {});
 
     // Job service.
     this.jobs = new JobService({ maxConcurrent: 8 });
@@ -461,15 +507,16 @@ export class Agent {
     this.compaction = new CompactionService();
 
     // Session query service (backed by the workspace's session + event stores).
-    this.sessionQuery = new SessionQueryService({
-      // These are wired later when the embedding app provides them — the
-      // service is functional without them (returns empty results).
-    });
+    this.sessionQuery = new SessionQueryService({ eventStore: this.runEvents, sessionStore: sessionStore });
 
-    // Context providers (default set).
-    this.contextProviders = new ContextService();
+    // Context providers (default set). Workspace root + AGENTS.md already
+    // live in the configured system prompt, so that provider is dropped here
+    // instead of duplicating it every turn.
+    this.contextProviders = new ContextService({ maxTokens: 1_500 });
+    // Runtime/session-reference only contribute opaque ids — noise to a model.
+    const skipProviders = new Set(["workspace", "runtime", "session-reference"]);
     for (const provider of defaultContextProviders()) {
-      this.contextProviders.registerProvider(provider);
+      if (!skipProviders.has(provider.id)) this.contextProviders.registerProvider(provider);
     }
 
     // Attachment store.
@@ -481,9 +528,67 @@ export class Agent {
     // Webhook service (persisted to .nexum/webhooks/).
     this.webhooks = new WebhookService({ rootDir: statePaths.dir });
 
-    // Web service (Node fetch + simple extractor).
+    this.mountProfile(cfg.profile ?? "nexum-cli");
+
+    // Web service (SSRF-guarded Node fetch + extractor + web search).
     this.web = defaultWebService();
+
+    // Model-facing tools over services that exist only after statePaths:
+    // session/run history (read-only) and browserless web access.
+    this.tools.registerToolPack(historyPack(this.sessionQuery));
+    this.tools.registerToolPack(webPack(this.web));
   }
+
+  /**
+   * Mount a profile on the plugin host: its composed plugins (dependencies
+   * first), with every built-in service plugin backed by THIS agent's live
+   * instance — a plugin that looks up the job/subagent/compaction/session
+   * services gets the ones the agent actually uses, not detached copies —
+   * plus the hook engine. Profile settings are applied to SettingsService.
+   * An unknown profile falls back to nexum-cli.
+   */
+  private mountProfile(requested: string): void {
+    const id = this.profiles.has(requested) ? requested : "nexum-cli";
+    if (id !== requested) this.emit("onStatus", `unknown profile "${requested}"; using nexum-cli`);
+    const closure: string[] = [];
+    const visit = (pid: string) => {
+      if (closure.includes(pid) || !this.profiles.has(pid)) return;
+      for (const dep of this.profiles.get(pid)?.bundle.dependsOn ?? []) visit(dep);
+      closure.push(pid);
+    };
+    visit(id);
+    const resolved = ProfileResolver.resolve(ProfileComposer.compose(this.profiles, closure));
+
+    const live: Record<string, () => NexumPlugin> = {
+      "job-service": () => jobServicePlugin({ service: this.jobs }),
+      "subagent-service": () => subagentServicePlugin({ service: this.subagents }),
+      "compaction-service": () => compactionServicePlugin({ service: this.compaction }),
+      "session-query-service": () => sessionQueryServicePlugin({ service: this.sessionQuery }),
+      "tool-registry": () => toolRegistryPlugin({ catalog: this.tools.kernelCatalog }),
+      "model-registry": () => modelRegistryPlugin({ registry: this.stack.modelProfiles }),
+    };
+    const seen = new Set<string>();
+    const plugins: NexumPlugin[] = [];
+    for (const plugin of [...resolved.plugins, hookEnginePlugin(this.hooks)]) {
+      const pid = plugin.manifest.id;
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      plugins.push(live[pid]?.() ?? plugin);
+    }
+    this.pluginHost.registerAll(plugins);
+
+    for (const [key, value] of Object.entries(resolved.settings)) {
+      try {
+        this.settings.set(key, value, `profile:${id}`);
+      } catch (err) {
+        this.emit("onStatus", `profile ${id}: setting ${key} ignored (${err instanceof Error ? err.message : err})`);
+      }
+    }
+    this.activeProfile = id;
+  }
+
+  /** Profile mounted on the plugin host (see mountProfile). */
+  activeProfile = "nexum-cli";
 
   /**
    * Start the plugin host and all mounted services. Must be called before
@@ -633,6 +738,8 @@ export class Agent {
         })),
       );
     }
+
+    await this.injectProviderContext(userMessage);
 
     this.learning.learning.recorder.begin(
       userMessage,
@@ -785,7 +892,9 @@ export class Agent {
       selectTools: async () => {
         const activeTools = await this.toolSelector.selectTools(
           userMessage,
-          this.conversation.getMessages(),
+          // Context notes describe the environment, not the task: keep them
+          // out of the selector's recent-history keyword window.
+          this.conversation.getMessages().filter((m) => !m.content.startsWith(CONTEXT_NOTE_PREFIX)),
           this.tools.registry.getTools(),
         );
         // escalate_task must always be offered while still on the local model —
@@ -1058,7 +1167,8 @@ export class Agent {
       unattended: this.autoApproveFlag,
     };
     const context = createExecutionContext(request, {
-      runId: this.sessions.sessionId,
+      // One run id per message: each run gets its own seq-ordered event log.
+      runId: newRunId(),
       sessionId: this.sessions.sessionId,
       signal: this.execution.signal,
       context: new AgentConversationContext(this.conversation),
@@ -1093,6 +1203,46 @@ export class Agent {
     } finally {
       for (const skill of activatedSkills) this.learning.recordSkillUse(skill.id, success);
     }
+  }
+
+  /** Provider context last injected (minus the clock), to inject only on change. */
+  private lastProviderContextKey = "";
+  private lastProviderContextNote = "";
+
+  /**
+   * Context providers (git branch, files the request names, runtime state,
+   * time) as one context note before the user message — not in the system
+   * prompt, whose prefix must stay stable for the model server's KV cache.
+   * Injected only when something other than the clock changed.
+   */
+  private async injectProviderContext(prompt: string): Promise<void> {
+    const referencedFiles = [...new Set(prompt.match(/[\w@./-]+\.[A-Za-z0-9]{1,8}\b/g) ?? [])].slice(0, 5);
+    let assembled;
+    try {
+      assembled = await this.contextProviders.assemble({
+        prompt,
+        workspaceRoot: this.workspaceRoot,
+        sessionId: this.sessions.sessionId,
+        agentId: "devagent",
+        referencedFiles,
+      });
+    } catch (err) {
+      this.emit("onStatus", `context providers failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    if (!assembled.fragments.length) return;
+    const key = assembled.fragments
+      .filter((f) => f.kind !== "time")
+      .map((f) => `${f.provider}:${f.content}`)
+      .join("\n");
+    // Re-inject when the previous note is gone (reset, resume, prune, compaction).
+    const stillPresent =
+      this.lastProviderContextNote !== "" &&
+      this.conversation.getMessages().some((m) => m.content === this.lastProviderContextNote);
+    if (key === this.lastProviderContextKey && stillPresent) return;
+    this.lastProviderContextKey = key;
+    this.lastProviderContextNote = `${CONTEXT_NOTE_PREFIX}\n${assembled.content}`;
+    this.conversation.pushSystemMessage(this.lastProviderContextNote);
   }
 
   /** Issues from the most recent rejected critique (read right after critiqueQuickAnswer). */
@@ -1169,8 +1319,8 @@ export class Agent {
   }
 
   /** What the host needs to run MCP servers once for all sessions: the config and the trust policy built from it. */
-  mcpHostConfig(): { servers: McpCliServerConfig[]; trust?: McpTrustPolicy } {
-    return { servers: this.mcpServerConfigs, trust: this.mcpTrust };
+  mcpHostConfig(): { servers: McpCliServerConfig[]; trust?: McpTrustPolicy; credentials: CredentialService } {
+    return { servers: this.mcpServerConfigs, trust: this.mcpTrust, credentials: this.credentials };
   }
 
   flushLearning(): Promise<void> {
@@ -1491,8 +1641,10 @@ export class Agent {
     for (const server of this.mcpServerConfigs) {
       const start = Date.now();
       try {
+        const env = await resolveMcpEnv(server.env, this.credentials);
         const tools = await this.tools.registerMcpServer(server.command, server.args ?? [], {
           serverName: server.name,
+          ...(env ? { env } : {}),
           ...(this.mcpTrust ? { trust: this.mcpTrust } : {}),
           elicitation: { request: (request) => this.requestMcpElicitation(request) },
         });
@@ -1510,6 +1662,9 @@ export class Agent {
     return results;
   }
 }
+
+/** Prefix of the provider context note injected before a user message. */
+const CONTEXT_NOTE_PREFIX = "[context]";
 
 /** Keep at most `budget` tools, never dropping pinned ones (they count toward it). */
 export function capTools<T extends { name: string }>(tools: T[], budget: number, pinned: Set<string>): T[] {

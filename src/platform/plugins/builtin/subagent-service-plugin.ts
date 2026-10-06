@@ -21,6 +21,8 @@ export interface SubagentServicePluginOptions {
   maxTotalPerSession?: number;
   /** Optional backends beyond in-process; each is registered only when configured. */
   providers?: Omit<DefaultSubagentProvidersOptions, "runtime" | "agents">;
+  /** Provide this existing (already-configured) service instead of creating one. */
+  service?: SubagentService;
 }
 
 export function subagentServicePlugin(opts: SubagentServicePluginOptions = {}) {
@@ -34,6 +36,11 @@ export function subagentServicePlugin(opts: SubagentServicePluginOptions = {}) {
       requires: [],
     },
     setup(ctx) {
+      if (opts.service) {
+        ctx.provide(SUBAGENT_SERVICE.id, opts.service);
+        ctx.declareCapability("subagents");
+        return;
+      }
       const service = new SubagentService({
         maxConcurrent: opts.maxConcurrent,
         maxTotalPerSession: opts.maxTotalPerSession,

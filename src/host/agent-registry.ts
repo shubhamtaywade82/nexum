@@ -110,8 +110,8 @@ export class HostAgentRegistry {
    */
   private async attachMcp(agent: Agent): Promise<void> {
     if (!this.mcpHub) {
-      const { servers, trust } = agent.mcpHostConfig();
-      this.mcpHub = new McpHub(servers, trust);
+      const { servers, trust, credentials } = agent.mcpHostConfig();
+      this.mcpHub = new McpHub(servers, trust, credentials);
       this.mcpReady = this.mcpHub.start();
     }
     await this.mcpReady;

@@ -112,6 +112,8 @@ export interface CliConfig {
    * `cloud`, the decision plane stays disabled automatically (System One is
    * local-only — see contracts/overlays/systemone.yaml in the upstream SDK). */
   enableDecision?: boolean;
+  /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
+  profile?: string;
   /** Dedicated model used for bounded decisions (classification/scoring/
    * gating/routing). Independent of the primary generation `model` — the
    * primary model handles reasoning/coding/generation; the decision model
@@ -131,6 +133,8 @@ export interface McpCliServerConfig {
   trust?: McpServerTrustConfig["trust"];
   tools?: McpToolRule;
   maxRisk?: McpServerTrustConfig["maxRisk"];
+  /** Extra environment for the server process; `credential:NAME` values resolve via CredentialService. */
+  env?: Record<string, string>;
 }
 
 interface ConfigFile {
@@ -168,6 +172,8 @@ interface ConfigFile {
   pricing?: { inputPerMillion: number; outputPerMillion: number };
   mcpServers?: McpCliServerConfig[];
   enableDecision?: boolean;
+  /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
+  profile?: string;
   decisionModel?: string;
 }
 
@@ -461,6 +467,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     // tier (System One is local-only — the gateway itself enforces this
     // too, but disabling at config time means no adapter is even built).
     enableDecision: readEnvFlag("DECISION", file.enableDecision ?? false),
+    profile: readEnv("PROFILE") || file.profile || "nexum-cli",
     decisionModel: readEnv("DECISION_MODEL") || file.decisionModel || "tev1",
     workspaceTrust: {
       status: trust.status,

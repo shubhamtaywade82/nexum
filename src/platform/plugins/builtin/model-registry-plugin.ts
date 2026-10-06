@@ -19,7 +19,7 @@ export const MODEL_CAPABILITY_REGISTRY = defineCapabilityToken<ModelCapabilityRe
   "nexum:models:capability-registry",
 );
 
-export function modelRegistryPlugin() {
+export function modelRegistryPlugin(opts: { registry?: ModelCapabilityRegistry } = {}) {
   return definePlugin({
     manifest: {
       id: "model-registry",
@@ -38,7 +38,7 @@ export function modelRegistryPlugin() {
       // app via `host.register` override or direct `provide()`), we don't
       // overwrite it.
       if (!ctx.host.provides(MODEL_CAPABILITY_REGISTRY.id)) {
-        ctx.provide(MODEL_CAPABILITY_REGISTRY.id, new ModelCapabilityRegistry());
+        ctx.provide(MODEL_CAPABILITY_REGISTRY.id, opts.registry ?? new ModelCapabilityRegistry());
       }
       ctx.declareCapability("models");
       ctx.log.debug("model registry declared");

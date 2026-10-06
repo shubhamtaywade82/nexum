@@ -113,3 +113,17 @@ describe("BrowserCloseTool", () => {
     expect(result).toEqual({ closed: true });
   });
 });
+
+describe("BrowserScreenshotTool with an attachment sink", () => {
+  it("stores the PNG and returns an attachment URI instead of base64", async () => {
+    const { AttachmentStore } = await import("../../src/attachments/index.js");
+    const store = new AttachmentStore({ rootDir: "/unused", inMemory: true });
+    const tool = new BrowserScreenshotTool(fakeManager(), () => store);
+    const result = await tool.call({});
+    expect(result.pngBase64).toBeUndefined();
+    expect(String(result.attachment)).toMatch(/^attachment:\/\//);
+    const id = store.fromUri(String(result.attachment))!;
+    expect(store.read(id)?.toString()).toBe("fake-png");
+    expect(store.stat(id)?.mediaType).toBe("image/png");
+  });
+});

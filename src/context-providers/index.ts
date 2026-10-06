@@ -34,8 +34,9 @@
  * "this is the current time".
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { isSensitivePath } from "../safety/path-policy.js";
 
 // ── Contracts ───────────────────────────────────────────────────────────────
 
@@ -220,8 +221,8 @@ export class FileReferenceProvider implements ContextProvider {
 
     const fragments: ContextFragment[] = [];
     for (const file of input.referencedFiles.slice(0, 5)) {
-      const path = file.startsWith("/") ? file : join(input.workspaceRoot, file);
-      if (!existsSync(path)) continue;
+      const path = workspaceFile(input.workspaceRoot, file);
+      if (!path) continue;
       try {
         const content = readFileSync(path, "utf8");
         fragments.push({
@@ -355,6 +356,31 @@ export class DomainContextProvider implements ContextProvider {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+const MAX_REFERENCE_BYTES = 256 * 1024;
+
+/**
+ * Resolve a referenced file to a real path inside the workspace, or null.
+ * File references are injected into the model's context (possibly a cloud
+ * model), so they get the same boundary as file tools: no absolute paths,
+ * no escape (symlinks included), no sensitive files (.env, keys, ...).
+ */
+export function workspaceFile(workspaceRoot: string, file: string): string | null {
+  if (!file || isAbsolute(file) || isSensitivePath(file)) return null;
+  try {
+    const root = realpathSync(workspaceRoot);
+    const candidate = resolve(root, file);
+    if (!existsSync(candidate)) return null;
+    const real = realpathSync(candidate);
+    const rel = relative(root, real);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel) || isSensitivePath(rel)) return null;
+    const st = statSync(real);
+    if (!st.isFile() || st.size > MAX_REFERENCE_BYTES) return null;
+    return real;
+  } catch {
+    return null;
+  }
+}
 
 const CHARS_PER_TOKEN = 4;
 

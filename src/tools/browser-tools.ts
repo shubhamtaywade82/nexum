@@ -104,9 +104,28 @@ export class BrowserGetTextTool extends BrowserTool {
   }
 }
 
+/** Where screenshots go instead of the model context (AttachmentStore satisfies it). */
+export interface ScreenshotSink {
+  store(content: Buffer, mediaType: "image/png", meta: { filename: string }): { id: string; size: number };
+  toUri(id: string): string;
+}
+
 export class BrowserScreenshotTool extends BrowserTool {
   name = "browser_screenshot";
-  description = "Take a PNG screenshot of the current page, returned as base64";
+
+  /** `sink` resolves lazily: the attachment store is created after the tool packs. */
+  constructor(
+    browser: BrowserManager,
+    private readonly sink?: () => ScreenshotSink | undefined,
+  ) {
+    super(browser);
+  }
+
+  get description(): string {
+    return this.sink
+      ? "Take a PNG screenshot of the current page; it is saved as an attachment and the attachment URI is returned"
+      : "Take a PNG screenshot of the current page, returned as base64";
+  }
 
   get parameters(): Record<string, unknown> {
     return { type: "object", properties: {}, required: [] };
@@ -115,6 +134,13 @@ export class BrowserScreenshotTool extends BrowserTool {
   async call(): Promise<Record<string, unknown>> {
     try {
       const buffer = await this.browser.screenshot();
+      // Base64 PNG text is useless to a text model and floods its context:
+      // persist it and hand back a reference when a sink is available.
+      const sink = this.sink?.();
+      if (sink) {
+        const record = sink.store(buffer, "image/png", { filename: `screenshot-${Date.now()}.png` });
+        return { attachment: sink.toUri(record.id), mediaType: "image/png", sizeBytes: record.size };
+      }
       return { pngBase64: buffer.toString("base64"), sizeBytes: buffer.length };
     } catch (e) {
       return { error: "ScreenshotError", message: (e as Error).message };
