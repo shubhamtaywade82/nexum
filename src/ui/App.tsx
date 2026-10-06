@@ -245,6 +245,11 @@ export function App({
   const { width, height, listener: sizeListener } = useTerminalSize(columns, rows);
   const [ui, uiDispatch] = useReducer(uiReduce, undefined, initialUiState);
   const [prompt, setPrompt] = useState("");
+  const [cursor, setCursor] = useState(0);
+  const promptRef = useRef(prompt);
+  promptRef.current = prompt;
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
   const [busy, setBusy] = useState(false);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [history] = useState(() => {
@@ -469,7 +474,7 @@ export function App({
     return () => clearInterval(interval);
   }, [ui.overlay, models, agent]);
 
-  const completionItems = completions(prompt, commandRegistry);
+  const completionItems = completions(prompt, commandRegistry, undefined, history.all());
   // A list whose only entry is the command the user already typed in full is
   // not an actionable completion — treating it as one made Enter re-insert the
   // same text instead of submitting, so every zero-argument slash command
@@ -601,9 +606,11 @@ export function App({
           if (activeCompletion) {
             // Dismiss completion by clearing the trigger prefix
             setPrompt("");
+            setCursor(0);
             setCompletionIndex(0);
           } else {
             setPrompt("");
+            setCursor(0);
             setCompletionIndex(0);
             history.stopBrowsing();
           }
@@ -630,6 +637,7 @@ export function App({
       lastCtrlCTimeRef.current = now;
       if (prompt.length > 0) {
         setPrompt("");
+        setCursor(0);
         setCompletionIndex(0);
         history.stopBrowsing();
       }
@@ -656,7 +664,11 @@ export function App({
 
     // Prompt editing.
     if (key.return && key.shift) {
-      setPrompt((p) => p + "\n");
+      setPrompt((p) => {
+        const next = p.slice(0, cursor) + "\n" + p.slice(cursor);
+        setCursor(cursor + 1);
+        return next;
+      });
       return;
     }
     if (key.return && gapSincePrev < FAST_INPUT_MS) {
@@ -669,7 +681,11 @@ export function App({
       }
       if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
       burstTimerRef.current = setTimeout(finalizeBurst, BURST_IDLE_MS);
-      setPrompt((p) => p + "\n");
+      const next = promptRef.current + "\n";
+      promptRef.current = next;
+      cursorRef.current = next.length;
+      setPrompt(next);
+      setCursor(next.length);
       return;
     }
     if (key.return && burstActiveRef.current) {
@@ -679,49 +695,95 @@ export function App({
       burstActiveRef.current = false;
     }
     if (key.return) {
-      const item = activeCompletion
-        ? completionItems[Math.min(completionIndex, completionItems.length - 1)]
-        : undefined;
+      const isExplicitTrigger = prompt.startsWith("/") || prompt.startsWith("@");
+      const hasUserNavigated = completionIndex > 0;
+      const item =
+        (isExplicitTrigger || hasUserNavigated) && activeCompletion
+          ? completionItems[Math.min(completionIndex, completionItems.length - 1)]
+          : undefined;
       // Guard the selected entry too, not just the list: a prefix can be both
       // an exact command and a prefix of others (e.g. "/test" alongside
       // "/tests"), which would otherwise leave Enter permanently stuck on the
       // no-op entry.
       if (item && !isNoOpCompletion(prompt, item)) {
         setPrompt(item.insert);
+        setCursor(item.insert.length);
         setCompletionIndex(0);
         return;
       }
       submitPrompt(prompt);
+      setCursor(0);
       return;
     }
-    if (key.backspace || key.delete) {
-      setPrompt((p) => p.slice(0, -1));
+    if (key.backspace) {
+      if (cursor > 0) {
+        setPrompt((p) => p.slice(0, cursor - 1) + p.slice(cursor));
+        setCursor((c) => Math.max(0, c - 1));
+      }
       setCompletionIndex(0);
       history.stopBrowsing();
+      return;
+    }
+    if (key.delete) {
+      if (cursor < prompt.length) {
+        setPrompt((p) => p.slice(0, cursor) + p.slice(cursor + 1));
+      }
+      setCompletionIndex(0);
+      history.stopBrowsing();
+      return;
+    }
+    // Home / Ctrl+A: jump to start of line
+    if ((key.ctrl && input === "a") || input === "\x1b[H" || input === "\x1b[1~") {
+      setCursor(0);
+      return;
+    }
+    // End / Ctrl+E: jump to end of line
+    if ((key.ctrl && input === "e") || input === "\x1b[F" || input === "\x1b[4~") {
+      setCursor(prompt.length);
+      return;
+    }
+    if (key.leftArrow) {
+      setCursor((c) => Math.max(0, c - 1));
+      return;
+    }
+    if (key.rightArrow) {
+      if (cursor === prompt.length && ghost) {
+        const accepted = acceptWord(ghost).accepted;
+        setPrompt((p) => p + accepted);
+        setCursor((c) => c + accepted.length);
+      } else {
+        setCursor((c) => Math.min(prompt.length, c + 1));
+      }
       return;
     }
     if (key.tab) {
       if (activeCompletion) {
         const item = completionItems[Math.min(completionIndex, completionItems.length - 1)];
         setPrompt(item.insert);
+        setCursor(item.insert.length);
         setCompletionIndex(0);
       } else if (ghost) {
         setPrompt(prompt + ghost);
+        setCursor(prompt.length + ghost.length);
       }
-      return;
-    }
-    if (key.rightArrow && ghost) {
-      setPrompt(prompt + acceptWord(ghost).accepted);
       return;
     }
     if (key.upArrow) {
       if (activeCompletion) setCompletionIndex((i) => Math.max(0, i - 1));
-      else setPrompt(history.up(prompt));
+      else {
+        const next = history.up(prompt);
+        setPrompt(next);
+        setCursor(next.length);
+      }
       return;
     }
     if (key.downArrow) {
       if (activeCompletion) setCompletionIndex((i) => Math.min(completionItems.length - 1, i + 1));
-      else setPrompt(history.down(prompt));
+      else {
+        const next = history.down(prompt);
+        setPrompt(next);
+        setCursor(next.length);
+      }
       return;
     }
     if (input && !key.ctrl && !key.meta) {
@@ -731,7 +793,22 @@ export function App({
       // some encode that break as bare \r rather than \n — normalize (not
       // strip) so it's still detected and collapses the same way.
       const cleaned = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      setPrompt((p) => (cleaned.includes("\n") ? appendPasted(p, cleaned) : p + cleaned));
+      if (cleaned.includes("\n")) {
+        const next = appendPasted(promptRef.current, cleaned);
+        promptRef.current = next;
+        cursorRef.current = next.length;
+        setPrompt(next);
+        setCursor(next.length);
+      } else {
+        const curPrompt = promptRef.current;
+        const curCursor = cursorRef.current;
+        const next = curPrompt.slice(0, curCursor) + cleaned + curPrompt.slice(curCursor);
+        const nextCursor = curCursor + cleaned.length;
+        promptRef.current = next;
+        cursorRef.current = nextCursor;
+        setPrompt(next);
+        setCursor(nextCursor);
+      }
       setCompletionIndex(0);
     }
   });
@@ -997,7 +1074,7 @@ export function App({
           {activeCompletion && (
             <CompletionSurface items={completionItems} selectedIndex={completionIndex} width={width} />
           )}
-          <PromptBar text={prompt} ghost={ghost} width={width} busy={busy} focused={focused} />
+          <PromptBar text={prompt} cursor={cursor} ghost={ghost} width={width} busy={busy} focused={focused} />
           <Box height={1}>
             <Text color={activeTheme.colors.mutedForeground} dimColor>
               {"─".repeat(Math.max(0, width - 1))}

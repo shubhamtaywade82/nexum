@@ -37,6 +37,15 @@ describe("completions", () => {
     expect(completions("/model qwen", registry)).toEqual([]);
   });
 
+  it("offers historical prompt suggestions for matching words in history", () => {
+    const history = ["how do I build a react app", "tell me about rails models", "run unit tests"];
+    const items = completions("rails models", registry, undefined, history);
+    expect(items.length).toBe(1);
+    expect(items[0].kind).toBe("history");
+    expect(items[0].insert).toBe("tell me about rails models");
+    expect(items[0].group).toBe("History");
+  });
+
   it("offers subcommand values for commands that declare argValues", () => {
     const modeItems = completions("/mode a", registry);
     expect(modeItems.map((i) => i.label)).toEqual(["ask", "architect", "autonomous"]);

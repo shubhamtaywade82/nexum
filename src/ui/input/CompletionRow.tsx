@@ -19,6 +19,8 @@ const KIND_GLYPH: Record<NonNullable<CompletionItem["kind"]>, string> = {
   command: "⌘",
   argument: "→",
   template: "@",
+  history: "⏱",
+  prompt: "✦",
 };
 
 export function CompletionRow({ item, selected, width }: CompletionRowProps): React.JSX.Element {

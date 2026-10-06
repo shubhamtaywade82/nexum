@@ -280,14 +280,16 @@ export function ConversationView({ state, width, rows, detail: _detail }: ViewPr
                   <Box key={`think-${entry.at}-${idx}`} flexDirection="column">
                     {showHeader ? (
                       <Box height={1}>
-                        <Text color={themeColors().accent}>▸ Thinking...</Text>
+                        <Text color={themeColors().mutedForeground} dimColor>
+                          ▸ Thinking...
+                        </Text>
                       </Box>
                     ) : null}
                     {visibleLines.map((line, li) => (
                       <Box key={bodyStart + li} height={1}>
                         <Box width={2} />
                         {line.indent ? <Box width={line.indent} /> : null}
-                        <SpanText spans={line.spans} />
+                        <SpanText spans={line.spans} color={themeColors().mutedForeground} dimColor />
                       </Box>
                     ))}
                   </Box>
@@ -712,7 +714,9 @@ export function ConversationView({ state, width, rows, detail: _detail }: ViewPr
 
   return (
     <Box flexDirection="column" height={rows} width={width}>
-      {visibleBlocks.map(({ block, startRow, endRow }) => block.render(startRow, endRow))}
+      {visibleBlocks.map(({ block, startRow, endRow }) => (
+        <React.Fragment key={block.key}>{block.render(startRow, endRow)}</React.Fragment>
+      ))}
     </Box>
   );
 }
