@@ -134,6 +134,12 @@ export interface CriticPolicy {
   minSeverity?: CriticSeverity;
   /** Capability used to route critique calls (default "reasoning"). */
   capability?: Capability;
+  /**
+   * Cheap pre-check before the critic (e.g. DecisionVerificationGate). When it
+   * says `escalate: false` the answer is accepted without critique; any
+   * failure inside the gate must surface as `escalate: true`.
+   */
+  gate?: { shouldEscalate(task: { goal: string; input?: string }): Promise<{ escalate: boolean }> };
 }
 
 // ── ReAct strategy ──────────────────────────────────────────────────────────
@@ -220,6 +226,16 @@ export class ReActStrategy implements ExecutionStrategy {
             // loop regenerate it — all inside THIS execution.
             if (!this.criticPolicy || ctx.signal.aborted) {
               return { output: answer, terminal: "answered" };
+            }
+            if (
+              this.criticPolicy.gate &&
+              !(await this.criticPolicy.gate.shouldEscalate({ goal: ctx.task.goal, input: answer })).escalate
+            ) {
+              return {
+                output: answer,
+                terminal: "answered",
+                metadata: { critique: { attempts: 0, verdict: "gated" } },
+              };
             }
             const correction = await this.selfCorrect(ctx, answer);
             return {

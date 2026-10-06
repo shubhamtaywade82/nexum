@@ -37,6 +37,10 @@ import { preservingTrust, WorkspaceTrustStore } from "./workspace-trust.js";
 import { AgentIntelligence } from "./agent-intelligence.js";
 import { AgentLearning } from "./agent-learning.js";
 import { DynamicToolSelector } from "../tools/discovery.js";
+import { DecisionToolSelector } from "../tools/decision-tool-selector.js";
+import { DecisionRoutingHintResolver } from "../models/router/decision-routing-hint.js";
+import { HeuristicRouter } from "../models/router/heuristic-router.js";
+import { DecisionVerificationGate } from "../runtime/critic/decision-gate.js";
 import { join } from "node:path";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
@@ -115,6 +119,8 @@ type AgentEventHandler<E extends AgentEventName> = NonNullable<AgentEvents[E]>;
 
 export interface AgentOptions {
   config?: Partial<CliConfig>;
+  /** Inject a Decision Plane gateway (tests); honored only when enableDecision is on. */
+  decisionGateway?: import("../models/decision/index.js").DecisionGateway;
   events?: AgentEvents;
   skillsHomeDir?: string;
 }
@@ -130,7 +136,10 @@ export class Agent {
   readonly railsIndex: AgentIntelligence["railsIndex"];
   readonly browser: BrowserManager;
   readonly binanceStream: BinanceStreamManager;
-  private readonly toolSelector: DynamicToolSelector;
+  private readonly toolSelector: Pick<DynamicToolSelector, "selectTools">;
+  /** Decision plane (System One), present only when enableDecision is on and local. */
+  private readonly routingHints?: DecisionRoutingHintResolver;
+  private readonly answerGate?: DecisionVerificationGate;
 
   // ── services (review item 1): the god class's extracted concerns ──────
   /** Model plane: providers, catalog, routing, hybrid components. */
@@ -229,7 +238,9 @@ export class Agent {
     // ── services (review item 1) ─────────────────────────────────────────
     // ModelStack owns the providers/catalog/router/hybrid composition that
     // used to be 80 lines of constructor here.
-    this.stack = new ModelStack(cfg, (msg) => this.emit("onStatus", msg));
+    this.stack = new ModelStack(cfg, (msg) => this.emit("onStatus", msg), {
+      ...(opts.decisionGateway ? { decisionGateway: opts.decisionGateway } : {}),
+    });
 
     // ApprovalManager owns the human-in-the-loop gates (approvals +
     // clarifications) that used to be pending-promise maps here.
@@ -339,7 +350,7 @@ export class Agent {
       projectLanguage,
     });
 
-    this.toolSelector = new DynamicToolSelector({
+    const dynamicSelector = new DynamicToolSelector({
       mode: cfg.toolSelectionMode,
       maxActiveTools: cfg.maxActiveTools,
       provider: this.stack.provider,
@@ -355,6 +366,28 @@ export class Agent {
         return this.stack.routeWithFallback("quick", messages, { stream: false });
       },
     });
+
+    // Decision plane (System One): bounded-choice consumers replace the
+    // free-form "small model lists tool names" path, resolve ambiguous
+    // routing, and gate the critic. Each falls back to deterministic
+    // behavior on any DecisionError — System One is never the authority.
+    const decisionGateway = this.stack.decisionGateway;
+    if (decisionGateway) {
+      const decisionModel = this.stack.decisionModel ?? "tev1";
+      this.toolSelector = new DecisionToolSelector({
+        decisionGateway,
+        decisionModel,
+        maxActiveTools: cfg.maxActiveTools,
+      });
+      this.routingHints = new DecisionRoutingHintResolver({
+        heuristicRouter: this.stack.heuristicRouter ?? new HeuristicRouter(),
+        decisionGateway,
+        decisionModel,
+      });
+      this.answerGate = new DecisionVerificationGate({ decisionGateway, decisionModel });
+    } else {
+      this.toolSelector = dynamicSelector;
+    }
 
     // ── Kernel wiring: gateways, broker, runtime ────────────────────────
     this.modelGateway = new DefaultModelGateway({
@@ -633,12 +666,22 @@ export class Agent {
     // proof/multi-step/etc.) skips the quick-model attempt entirely instead of
     // waiting for the quick model to discover it's out of its depth and call
     // escalate_task.
-    if (this.stack.heuristicRouter && !escalated) {
-      const heuristic = this.stack.heuristicRouter.classify(userMessage);
+    const routing = this.routingHints
+      ? await this.routingHints.resolve(userMessage).then((h) => ({
+          decision: h.decision,
+          why: h.via === "decision" ? "decision plane classified it as cloud-tier" : "heuristic pre-filter",
+        }))
+      : this.stack.heuristicRouter
+        ? ((h) => ({ decision: h.decision, why: `heuristic pre-filter matched "${h.trigger}"` }))(
+            this.stack.heuristicRouter.classify(userMessage),
+          )
+        : undefined;
+    if (routing && !escalated) {
+      const heuristic = routing;
       if (heuristic.decision === "cloud") {
         escalated = true;
         injectDelegationAddendum();
-        this.emit("onStatus", `escalating to primary model: heuristic pre-filter matched "${heuristic.trigger}"`);
+        this.emit("onStatus", `escalating to primary model: ${heuristic.why}`);
       } else if (heuristic.decision === "unknown" && !requiresToolEvidence && this.stack.selfConsistency) {
         // Self-consistency, not verbalized self-confidence: measures agreement
         // across independent samples rather than asking the model to judge its
@@ -767,7 +810,12 @@ export class Agent {
         const verifyingRecovery = !escalated && previousTurnHadToolError;
         previousTurnHadToolError = false;
         const verifying = verifyingLookup || verifyingRecovery;
-        let buffered: string[] | null = verifying ? [] : null;
+        // Opt-in critic pass (NEXUM_VERIFIER) on quick-model final answers.
+        // Off by default for the reason above: a small model judging its own
+        // output is weak evidence. When on, the answer is buffered so a
+        // rejected draft never reaches the UI.
+        const critiquing = !escalated && !!this.stack.verifier;
+        let buffered: string[] | null = verifying || critiquing ? [] : null;
         const makeChatOpts = (): ChatOptions => ({
           stream: true,
           tools: opts.tools as ChatOptions["tools"],
@@ -807,6 +855,22 @@ export class Agent {
           );
           escalated = true;
           injectDelegationAddendum();
+          buffered = null;
+          chatOpts = makeChatOpts();
+          chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
+        } else if (
+          critiquing &&
+          !(assistantMessage.tool_calls ?? []).length &&
+          (assistantMessage.content ?? "").trim() &&
+          (await this.critiqueQuickAnswer(userMessage, assistantMessage.content ?? "")) !== null
+        ) {
+          const issues = this.lastCritique ?? [];
+          this.emit("onStatus", `escalating to primary model: critic rejected the quick-model answer`);
+          escalated = true;
+          injectDelegationAddendum();
+          this.conversation.pushSystemMessage(
+            `[system] A reviewer rejected the previous draft answer:\n${issues.map((i) => `- ${i}`).join("\n")}\nAddress these issues in your answer.`,
+          );
           buffered = null;
           chatOpts = makeChatOpts();
           chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
@@ -990,6 +1054,35 @@ export class Agent {
       throw e;
     } finally {
       for (const skill of activatedSkills) this.learning.recordSkillUse(skill.id, success);
+    }
+  }
+
+  /** Issues from the most recent rejected critique (read right after critiqueQuickAnswer). */
+  private lastCritique: string[] | null = null;
+
+  /**
+   * Critic pass on a quick-model draft. The decision gate (when the decision
+   * plane is on) first decides whether critique is warranted at all; the
+   * Verifier then judges. Returns the issues on REJECT, null to accept.
+   * A critic outage accepts the draft — this is a quality pass, not a
+   * safety boundary (policy and sandbox still gate every action).
+   */
+  private async critiqueQuickAnswer(goal: string, draft: string): Promise<string[] | null> {
+    this.lastCritique = null;
+    const verifier = this.stack.verifier;
+    if (!verifier) return null;
+    if (this.answerGate) {
+      const gate = await this.answerGate.shouldEscalate({ goal, input: draft });
+      if (!gate.escalate) return null;
+    }
+    try {
+      const result = await verifier.verify(goal, draft);
+      if (result.verdict === "VERIFIED") return null;
+      this.lastCritique = result.issues ?? [];
+      return this.lastCritique;
+    } catch (err) {
+      this.emit("onStatus", `critic unavailable, accepting draft: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
     }
   }
 
