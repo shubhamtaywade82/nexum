@@ -18,19 +18,24 @@ The interactive UI asks the first time it meets an untrusted workspace; other co
 
 ## Environment Variables
 
-| Variable                    | Description                                                                                      | Default                  |
-| :-------------------------- | :----------------------------------------------------------------------------------------------- | :----------------------- |
-| `NEXUM_MODEL`               | Default Ollama model                                                                             | `qwen2.5-coder:14b`      |
-| `NEXUM_HOST`                | Ollama host endpoint                                                                             | `http://localhost:11434` |
-| `NEXUM_TIER`                | Execution tier (`local` or `cloud`)                                                              | `local`                  |
-| `OLLAMA_API_KEY`            | Ollama Cloud API Key                                                                             | `undefined`              |
-| `OLLAMA_API_KEYS`           | Comma-separated API Key rotation pool                                                            | `undefined`              |
-| `NEXUM_SHELL_IMAGE`         | Sandbox Docker image                                                                             | `nexum-sandbox:latest`   |
-| `NEXUM_TIMEOUT_MS`          | LLM turn timeout in milliseconds                                                                 | `120000`                 |
-| `NEXUM_TOOL_SELECTION_MODE` | Dynamic tool pruning mode (`heuristic`, `hybrid`, `all`)                                         | `hybrid`                 |
-| `NEXUM_AUTO_PLAN`           | Route multi-step requests to the plan orchestrator (`ask`, `always`, `off`)                      | `ask`                    |
-| `NEXUM_DECISION`            | Enable the bounded Decision Plane (System One). `true` / `false`. Auto-disabled in a cloud tier. | `false`                  |
-| `NEXUM_DECISION_MODEL`      | Dedicated decision model (independent of the primary generation model).                          | `tev1`                   |
+| Variable                            | Description                                                                                                                | Default                  |
+| :---------------------------------- | :------------------------------------------------------------------------------------------------------------------------- | :----------------------- |
+| `NEXUM_MODEL`                       | Default Ollama model                                                                                                       | `qwen2.5-coder:14b`      |
+| `NEXUM_HOST`                        | Ollama host endpoint                                                                                                       | `http://localhost:11434` |
+| `NEXUM_TIER`                        | Execution tier (`local` or `cloud`)                                                                                        | `local`                  |
+| `OLLAMA_API_KEY`                    | Ollama Cloud API Key                                                                                                       | `undefined`              |
+| `OLLAMA_API_KEYS`                   | Comma-separated API Key rotation pool                                                                                      | `undefined`              |
+| `NEXUM_SHELL_IMAGE`                 | Sandbox Docker image                                                                                                       | `nexum-sandbox:latest`   |
+| `NEXUM_TIMEOUT_MS`                  | LLM turn timeout in milliseconds                                                                                           | `120000`                 |
+| `NEXUM_TOOL_SELECTION_MODE`         | Dynamic tool pruning mode (`heuristic`, `hybrid`, `all`)                                                                   | `hybrid`                 |
+| `NEXUM_AUTO_PLAN`                   | Route multi-step requests to the plan orchestrator (`ask`, `always`, `off`)                                                | `ask`                    |
+| `NEXUM_DECISION`                    | Enable the bounded Decision Plane (System One). `true` / `false`. Auto-disabled in a cloud tier.                           | `false`                  |
+| `NEXUM_DECISION_MODEL`              | Dedicated decision model (independent of the primary generation model).                                                    | `tev1`                   |
+| `NEXUM_PROFILE`                     | Plugin/settings profile mounted on the agent host (`nexum-cli`, `nexum-server`, `nexum-crypto-bot`, or a user profile id). | `nexum-cli`              |
+| `NEXUM_TOKEN_BUDGET`                | Session token budget (prompt + completion). Each run is capped at the remainder; `0` = unlimited.                          | `0`                      |
+| `NEXUM_VERIFIER`                    | Critic pass on quick-model final answers; a rejection escalates to the primary model.                                      | `false`                  |
+| `NEXUM_TELEMETRY_ENABLED`           | Process-wide spans + metrics (`0` disables). The host serves Prometheus text at `GET /metrics`.                            | enabled                  |
+| `NEXUM_OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP traces endpoint for span export.                                                                                 | unset                    |
 
 ---
 
@@ -69,3 +74,16 @@ Run `/doctor` in the TUI or `npm run doctor` from the terminal to verify:
 3. Docker daemon connectivity and sandbox image status.
 4. Installed Language Servers for your workspace languages.
 5. Workspace root resolution and `.git` boundaries.
+
+### MCP server credentials
+
+`mcpServers[].env` passes environment variables to a server process. A value
+of the form `credential:NAME` is resolved through the credential service (process
+env, then `.nexum/credentials.json` in a **trusted** workspace) at connect time,
+so tokens never need to be written into `config.json`:
+
+```json
+{
+  "mcpServers": [{ "name": "github", "command": "github-mcp", "env": { "GITHUB_TOKEN": "credential:GITHUB_TOKEN" } }]
+}
+```
