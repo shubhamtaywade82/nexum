@@ -21,6 +21,16 @@ import type { NexumRunEvent } from "../protocol/types.js";
 import type { McpElicitationResponse } from "../core/user-input.js";
 import type { SessionMeta } from "../runtime/session.js";
 import type { ShellAgent } from "./App.js";
+import { readFileSync } from "node:fs";
+import { EditTracker } from "./edit-tracker.js";
+import { parseTestSummary } from "./test-summary.js";
+import { workspaceFile } from "../context-providers/index.js";
+
+/** Tools whose effect is a whole-file change the bridge diffs itself. */
+const SNAPSHOT_TOOLS = new Set(["write_file", "patch_file", "append_file"]);
+/** Tools whose result already carries a unified diff. */
+const DIFF_RESULT_TOOLS = new Set(["apply_patch", "edit_file_lines"]);
+const TEST_TOOLS = new Set(["run_tests", "run_rspec"]);
 
 // PlanStep tracks a fine-grained ASL (analyzing/planning/implementing/
 // testing/reviewing/...); the TUI only renders the coarse 5-state model.
@@ -51,8 +61,38 @@ export interface BridgeableAgent {
   getSkillsRegistry?(): { list(): SkillMeta[] };
 }
 
-export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
+export interface BridgeOptions {
+  /** Enables diff previews for file edits (files are read through workspaceFile's boundary). */
+  workspaceRoot?: string;
+}
+
+function readWorkspaceText(root: string | undefined, path: unknown): string | null {
+  if (!root || typeof path !== "string") return null;
+  const real = workspaceFile(root, path);
+  if (!real) return null;
+  try {
+    return readFileSync(real, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function toUnifiedText(path: string, tracker: EditTracker, after: string): string {
+  const body = tracker
+    .diff(path, after)
+    .filter((l) => l.type !== "context")
+    .flatMap((l) =>
+      l.text
+        .replace(/\n$/, "")
+        .split("\n")
+        .map((t) => `${l.type === "add" ? "+" : "-"}${t}`),
+    );
+  return body.length ? [`--- a/${path}`, `+++ b/${path}`, ...body].join("\n") : "";
+}
+
+export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus, opts: BridgeOptions = {}): void {
   let toolSeq = 0;
+  const edits = new EditTracker();
   interface OpenCall {
     id: string;
     args: Record<string, unknown>;
@@ -71,6 +111,10 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
     const stack = openCalls.get(name) ?? [];
     stack.push({ id, args });
     openCalls.set(name, stack);
+    // Snapshot before the tool runs (onToolCall fires just before execution).
+    if (SNAPSHOT_TOOLS.has(name) && typeof args.path === "string") {
+      edits.snapshot(args.path, readWorkspaceText(opts.workspaceRoot, args.path) ?? "");
+    }
     bus.publish({ type: "tool.started", id, name, args });
     bus.publish({ type: "conversation.tool_call", id, name, args, status: "running" });
     bus.publish({ type: "logs.appended", level: "info", source: "tool", message: `${name} started` });
@@ -91,8 +135,36 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
       bus.publish({ type: "tool.completed", id, result: resultObj });
       bus.publish({ type: "conversation.tool_call", id, name, args, status: "completed", result: resultStr });
       bus.publish({ type: "logs.appended", level: "info", source: "tool", message: `${name} completed` });
+      publishDiff(name, args, resultObj);
+      publishTestResult(name, resultObj);
     }
   });
+  function publishDiff(name: string, args: Record<string, unknown>, result: Record<string, unknown>): void {
+    const path = typeof args.path === "string" ? args.path : undefined;
+    if (!path || result.dry_run === true) return;
+    let diff = "";
+    if (DIFF_RESULT_TOOLS.has(name) && typeof result.diff === "string") {
+      diff = result.diff;
+    } else if (SNAPSHOT_TOOLS.has(name) && edits.hasSnapshot(path)) {
+      const after = readWorkspaceText(opts.workspaceRoot, path);
+      if (after !== null) diff = toUnifiedText(path, edits, after);
+    }
+    if (diff) bus.publish({ type: "conversation.diff", filePath: path, diff, status: "approved" });
+  }
+
+  function publishTestResult(name: string, result: Record<string, unknown>): void {
+    if (!TEST_TOOLS.has(name)) return;
+    const output = [result.stdout, result.stderr].filter((p) => typeof p === "string").join("\n");
+    const summary = parseTestSummary(output);
+    if (!summary) return;
+    bus.publish({
+      type: "conversation.test_result",
+      command: typeof result.command === "string" ? result.command : name,
+      ...summary,
+      durationMs: typeof result.duration === "number" ? Math.round(result.duration * 1000) : 0,
+    });
+  }
+
   agent.on("onStatus", (status: string) => {
     bus.publish({ type: "status.changed", status });
     // Model-routing decisions (which tier/model handled this turn) matter after

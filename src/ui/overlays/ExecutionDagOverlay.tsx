@@ -24,56 +24,8 @@ export function ExecutionDagOverlay({
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const theme = useTheme();
 
-  const flatNodes =
-    nodes.length > 0
-      ? nodes
-      : [
-          {
-            id: "root-1",
-            kind: "intent" as const,
-            title: "Intent Analysis",
-            status: "completed" as const,
-            startTime: Date.now() - 3000,
-            durationMs: 120,
-            details: { prompt: "Migrate Provider Layer", rationale: "Analyzed request intent and targets." },
-          },
-          {
-            id: "node-2",
-            kind: "planner" as const,
-            title: "Planner & Task Graph",
-            status: "completed" as const,
-            startTime: Date.now() - 2800,
-            durationMs: 450,
-            details: { prompt: "Decomposed goal into 9 tasks", rationale: "Created DAG dependencies." },
-          },
-          {
-            id: "node-3",
-            kind: "router" as const,
-            title: "Model Router Selection",
-            status: "completed" as const,
-            startTime: Date.now() - 2300,
-            durationMs: 80,
-            details: { model: "qwen3.5:122b", rationale: "Selected for code understanding" },
-          },
-          {
-            id: "node-4",
-            kind: "tool" as const,
-            title: "Tool Execution (ReadFile / Ripgrep)",
-            status: "completed" as const,
-            startTime: Date.now() - 2000,
-            durationMs: 310,
-            details: { toolName: "read_file", toolArgs: { path: "src/provider/provider.ts" }, durationMs: 18 },
-          },
-          {
-            id: "node-5",
-            kind: "verification" as const,
-            title: "Verification Pipeline (Jest & ESLint)",
-            status: "completed" as const,
-            startTime: Date.now() - 1200,
-            durationMs: 850,
-            details: { diagnostics: [{ severity: "info", message: "All 485 tests passed" }] },
-          },
-        ];
+  // Real nodes only (see executionNodesFromState) — never placeholder activity.
+  const flatNodes = nodes;
 
   const clampedIndex = Math.min(index, Math.max(0, flatNodes.length - 1));
   const selectedNode = flatNodes[clampedIndex];
@@ -117,6 +69,11 @@ export function ExecutionDagOverlay({
         <Text color={theme.colors.info} bold>
           Execution Node History (Enter/→ Expand, ← Collapse):
         </Text>
+        {flatNodes.length === 0 && (
+          <Text color={theme.colors.mutedForeground}>
+            No execution recorded yet — run a task to populate the trace.
+          </Text>
+        )}
         {flatNodes.map((node, i) => {
           const isSelected = i === clampedIndex;
           const isActiveNode = node.status === "running";

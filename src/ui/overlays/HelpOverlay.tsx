@@ -9,6 +9,7 @@ const KEYS: Shortcut[] = [
   { key: "Tab / Shift+Tab", description: "Next / previous view" },
   { key: "Ctrl+P", description: "Command palette" },
   { key: "Ctrl+B", description: "Actors overlay" },
+  { key: "Ctrl+Y", description: "Execution DAG trace" },
   { key: "Ctrl+M", description: "Switch model" },
   { key: "Ctrl+F", description: "Search everywhere" },
   { key: "z", description: "Zoom active view" },

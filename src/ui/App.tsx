@@ -53,6 +53,8 @@ import { SkillsOverlay } from "./overlays/SkillsOverlay.js";
 import { SessionHistory } from "./overlays/SessionHistory.js";
 import { SessionMeta } from "../runtime/session.js";
 import { ToolPaletteOverlay, ToolInfo } from "./overlays/ToolPaletteOverlay.js";
+import { ExecutionDagOverlay } from "./overlays/ExecutionDagOverlay.js";
+import { executionNodesFromState } from "../runtime/event-node.js";
 import { Sidebar, ToolCategoryCount } from "./zones/Sidebar.js";
 import { SkillsRegistry } from "../skills/registry.js";
 import { useCommandEffects } from "./hooks/useCommandEffects.js";
@@ -943,6 +945,14 @@ export function App({
                   uiDispatch({ type: "close-overlay" });
                   applyEffect({ kind: "resume-session-by-id", id });
                 }}
+              />
+            ) : ui.overlay === "dag" ? (
+              <ExecutionDagOverlay
+                nodes={executionNodesFromState(state)}
+                width={width}
+                rows={contentRows}
+                active={true}
+                onClose={() => uiDispatch({ type: "close-overlay" })}
               />
             ) : ui.overlay === "tools" ? (
               <ToolPaletteOverlay

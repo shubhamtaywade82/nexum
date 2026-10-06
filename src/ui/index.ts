@@ -214,7 +214,7 @@ const cfg = loadConfig();
       });
     }
     agent.setProjectInfo(detectedProject);
-    wireAgentBridge(agent as unknown as BridgeableAgent, bus);
+    wireAgentBridge(agent as unknown as BridgeableAgent, bus, { workspaceRoot: agent.workspaceRoot });
     agent
       .connectConfiguredMcpServers()
       .then((servers) => bus.publish({ type: "mcp.changed", servers }))
