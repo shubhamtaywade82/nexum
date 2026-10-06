@@ -59,6 +59,15 @@ export class RedisEventBus {
     };
   }
 
+  async ping(): Promise<boolean> {
+    try {
+      const res = await this.publisher.ping();
+      return res === "PONG";
+    } catch {
+      return false;
+    }
+  }
+
   async close(): Promise<void> {
     await Promise.all([this.publisher.quit(), this.subscriber.quit()]);
   }

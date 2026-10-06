@@ -11,6 +11,8 @@ import { pgTable, text, timestamp, integer } from "drizzle-orm/pg-core";
 export const sessions = pgTable("sessions", {
   id: text("id").primaryKey(),
   title: text("title"),
+  /** Caller-chosen key (e.g. an Open WebUI chat id) that maps a foreign conversation onto this session. */
+  externalKey: text("external_key").unique(),
   workspaceRoot: text("workspace_root").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

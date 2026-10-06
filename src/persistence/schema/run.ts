@@ -10,6 +10,7 @@ export const runs = pgTable("runs", {
   goal: text("goal").notNull(),
   status: text("status").notNull(), // queued | running | completed | failed | cancelled
   output: text("output"),
+  outputFormat: text("output_format"),
   error: text("error"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),

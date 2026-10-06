@@ -972,6 +972,11 @@ export class Agent {
     return this.learning.getSkillsRegistry();
   }
 
+  /** What the host needs to run MCP servers once for all sessions: the config and the trust policy built from it. */
+  mcpHostConfig(): { servers: McpCliServerConfig[]; trust?: McpTrustPolicy } {
+    return { servers: this.mcpServerConfigs, trust: this.mcpTrust };
+  }
+
   flushLearning(): Promise<void> {
     return this.learning.flushLearning();
   }
@@ -1135,6 +1140,13 @@ export class Agent {
 
   async listModels(): Promise<string[]> {
     return this.stack.listModels();
+  }
+
+  /** One plain model reply: no tools, memory or session. For clients' housekeeping prompts (titles, tags). */
+  async completeOnce(messages: ChatMessage[]): Promise<string> {
+    await this.stack.ensureCatalog();
+    const reply = await this.stack.routeWithFallback("quick", messages, { stream: false });
+    return reply.message.content;
   }
 
   modelAvailability(models: string[]): Record<string, boolean> {
