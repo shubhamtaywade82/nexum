@@ -55,6 +55,10 @@ jobs:
 
       - name: Install npm dependencies
         run: npm ci --legacy-peer-deps
+        env:
+          # Skip husky hook installation in CI — hooks are a local-dev convenience
+          # and would otherwise run on `npm ci` after checkout.
+          HUSKY: "0"
 
       - name: Lint code
         run: npm run lint

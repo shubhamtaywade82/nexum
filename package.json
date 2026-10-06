@@ -65,7 +65,7 @@
     "package:check": "node scripts/check-package.mjs",
     "release:check": "npm run lint && npm run format:check && npm run build && npm test && npm run package:check",
     "prepack": "npm run build",
-    "prepare": "npm run build"
+    "prepare": "husky"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -82,8 +82,10 @@
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.7.0",
     "globals": "^17.7.0",
+    "husky": "^9.1.7",
     "ink-testing-library": "^4.0.0",
     "jest": "^30.4.2",
+    "lint-staged": "^17.6.0",
     "openai": "^7.27.0",
     "prettier": "^3.9.5",
     "ts-jest": "^29.2.0",
@@ -201,5 +203,8 @@
     "esbuild@0.21.5": true,
     "esbuild@0.28.1": true,
     "unrs-resolver@1.12.2": true
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}": "prettier --write"
   }
 }
