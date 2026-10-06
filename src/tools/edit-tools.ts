@@ -4,6 +4,7 @@ import { Tool, ToolError } from "./tool.js";
 import { guardPath, toGuard, type WorkspaceBoundary } from "./path-utils.js";
 import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
 import { readVerified, writeVerified } from "./verified-fs.js";
+import { enforceEditSyntax } from "../validation/edit-check.js";
 
 export class PatchTool extends Tool {
   private readonly guard: WorkspaceGuard;
@@ -33,8 +34,9 @@ export class PatchTool extends Tool {
     const content = (await readVerified(this.guard, "patch", path)).toString("utf-8");
     if (!content.includes(find)) throw new ToolError(`search block not found in ${path}`);
     const next = content.replace(find, replace);
+    const syntaxWarning = enforceEditSyntax(path, content, next);
     await writeVerified(this.guard, path, next);
-    return { path, bytesWritten: Buffer.byteLength(next, "utf-8") };
+    return { path, bytesWritten: Buffer.byteLength(next, "utf-8"), ...(syntaxWarning ? { syntaxWarning } : {}) };
   }
 }
 
@@ -69,8 +71,9 @@ export class AppendTool extends Tool {
       throw e;
     });
     const next = Buffer.concat([existing, Buffer.from(content, "utf-8")]);
+    const syntaxWarning = enforceEditSyntax(path, existing.toString("utf-8"), next.toString("utf-8"));
     await writeVerified(this.guard, path, next);
-    return { path, size: next.byteLength };
+    return { path, size: next.byteLength, ...(syntaxWarning ? { syntaxWarning } : {}) };
   }
 }
 
@@ -116,9 +119,16 @@ export class ApplyPatchTool extends Tool {
     const expectedHash = args.expected_hash as string;
     const dryRun = args.dry_run === true;
     try {
-      const result = await this.editor.applyUnifiedDiff(path, expectedHash, patch);
+      const result = await this.editor.applyUnifiedDiff(path, expectedHash, patch, { dryRun });
       if (dryRun) {
-        return { path, dry_run: true, diff: result.diff, new_hash_preview: result.newHash, bytes: result.bytesWritten };
+        return {
+          path,
+          dry_run: true,
+          diff: result.diff,
+          new_hash_preview: result.newHash,
+          bytes: result.bytesWritten,
+          ...(result.syntaxWarning ? { syntax_warning: result.syntaxWarning } : {}),
+        };
       }
       return {
         path,
@@ -127,6 +137,7 @@ export class ApplyPatchTool extends Tool {
         new_hash: result.newHash,
         diff: result.diff,
         bytes_written: result.bytesWritten,
+        ...(result.syntaxWarning ? { syntax_warning: result.syntaxWarning } : {}),
       };
     } catch (e) {
       if (e instanceof ExpectedHashMismatchError) {
@@ -189,17 +200,28 @@ export class EditFileLinesTool extends Tool {
       };
     }
     try {
-      const result = await this.editor.editLines(path, expectedHash, (lines) => {
-        if (to > lines.length) {
-          throw Object.assign(new Error(`to_line ${to} exceeds file length ${lines.length}`), {
-            name: "ValidationError",
-          });
-        }
-        const next = [...lines.slice(0, from - 1), ...newLines, ...lines.slice(to)];
-        return next;
-      });
+      const result = await this.editor.editLines(
+        path,
+        expectedHash,
+        (lines) => {
+          if (to > lines.length) {
+            throw Object.assign(new Error(`to_line ${to} exceeds file length ${lines.length}`), {
+              name: "ValidationError",
+            });
+          }
+          const next = [...lines.slice(0, from - 1), ...newLines, ...lines.slice(to)];
+          return next;
+        },
+        { dryRun },
+      );
       if (dryRun) {
-        return { path, dry_run: true, diff: result.diff, new_hash_preview: result.newHash };
+        return {
+          path,
+          dry_run: true,
+          diff: result.diff,
+          new_hash_preview: result.newHash,
+          ...(result.syntaxWarning ? { syntax_warning: result.syntaxWarning } : {}),
+        };
       }
       return {
         path,
@@ -208,6 +230,7 @@ export class EditFileLinesTool extends Tool {
         new_hash: result.newHash,
         diff: result.diff,
         bytes_written: result.bytesWritten,
+        ...(result.syntaxWarning ? { syntax_warning: result.syntaxWarning } : {}),
       };
     } catch (e) {
       if (e instanceof ExpectedHashMismatchError) {
