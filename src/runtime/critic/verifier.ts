@@ -96,3 +96,33 @@ export function expectMinLength(minChars: number, id = "min-length"): Verificati
     },
   };
 }
+
+/** Outcome of a command run through the sandbox (ShellTool, a script runner, CI). */
+export interface CommandOutcome {
+  exitCode: number;
+  output?: string;
+}
+
+/**
+ * The command must exit 0. The runner is injected (normally the Docker
+ * sandbox), so pass/fail comes from the process exit code — never from a
+ * model reading the output. The answer under verification is ignored.
+ */
+export function expectCommandSucceeds(
+  id: string,
+  description: string,
+  run: () => Promise<CommandOutcome>,
+  maxDetailChars = 500,
+): VerificationCheck {
+  return {
+    id,
+    description,
+    async run() {
+      const { exitCode, output } = await run();
+      if (!Number.isInteger(exitCode)) return { pass: false, detail: `invalid exit code: ${String(exitCode)}` };
+      if (exitCode === 0) return { pass: true };
+      const tail = output ? output.trim().slice(-maxDetailChars) : "";
+      return { pass: false, detail: `exit ${exitCode}${tail ? `: ${tail}` : ""}` };
+    },
+  };
+}

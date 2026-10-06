@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added — model-aware Context Compiler & verification gate
+
+- **`budgetForProfile`** (`src/models/profiles/context-budget.ts`): derives a
+  per-call context/tool budget from a `ModelProfile` (small / standard /
+  frontier size classes), clamped to the real context window minus an output
+  reserve. `ModelConstraints` gains optional `preferredContextTokens` and
+  `maxToolCount`.
+- **`ContextCompiler`** (`src/context/compiler.ts`): compiles task node,
+  constraints, success criteria, evidence (via `ContextPacker`), failures,
+  decisions, facts, artifact references and a ranked tool pack into one
+  budgeted, deterministic prompt block with a full exclusion manifest.
+- **`gateTaskCompletion`** (`src/runtime/verification-gate.ts`) and
+  **`expectCommandSucceeds`**: a task moves `running → completed` only when
+  its deterministic verification contract passes.
+
+See `docs/guide/context-compiler.md`.
+
 ### Added — ink-ui (termcn) component layer & theme system (`src/tui/ui/`)
 
 Nexum's TUI presentation layer migrates from hand-rolled Ink primitives onto
@@ -11,10 +28,10 @@ component registry (shadcn-style copy-paste install via
 keybindings, picker/prompt engines — stays put.
 
 - **Theme system**: 15 built-in semantic themes (default/midnight/solarized
-  + dracula, nord, github, gruvbox, tokyo-night, monokai, catppuccin,
-  one-dark, vercel, high-contrast, high-contrast-light, matrix), a
-  compiler-enforced `ThemeName → Theme` registry, and a `ThemeProvider`
-  wired to the runtime's `theme.changed` event for instant live switching.
+  - dracula, nord, github, gruvbox, tokyo-night, monokai, catppuccin,
+    one-dark, vercel, high-contrast, high-contrast-light, matrix), a
+    compiler-enforced `ThemeName → Theme` registry, and a `ThemeProvider`
+    wired to the runtime's `theme.changed` event for instant live switching.
 - **`/theme`**: no-arg now opens an interactive picker with per-theme color
   swatches; direct names Tab-complete. Selections persist to
   `.nexum/config.json`; `NEXUM_THEME` and config `theme` bootstrap the
