@@ -31,14 +31,7 @@ export function promptBarRows(text: string): 1 | 2 {
 }
 
 /** Prompt input with multiline and caret navigation support. Shift+Enter inserts a newline. */
-export function PromptBar({
-  text,
-  cursor,
-  ghost,
-  width,
-  busy,
-  focused = true,
-}: PromptBarProps): React.JSX.Element {
+export function PromptBar({ text, cursor, ghost, width, busy, focused = true }: PromptBarProps): React.JSX.Element {
   const theme = useTheme();
   const promptGlyph = busy ? "◌" : ">";
   const lines = text.split("\n");
@@ -57,8 +50,7 @@ export function PromptBar({
   const afterCaret = lineCaret < lastLine.length ? lastLine.slice(lineCaret + 1) : "";
 
   const ghostRoom = available - lastLine.length - 1;
-  const visibleGhost =
-    ghostRoom > 0 && !text.endsWith("\n") && caret === text.length ? ghost.slice(0, ghostRoom) : "";
+  const visibleGhost = ghostRoom > 0 && !text.endsWith("\n") && caret === text.length ? ghost.slice(0, ghostRoom) : "";
   const showMultiline = isPasted ? hiddenCount > 0 : lines.length > 1;
   return (
     <Box flexDirection="column">
@@ -80,7 +72,8 @@ export function PromptBar({
             <Text>
               {focused ? <Text inverse> </Text> : <Text color={theme.colors.success}>│</Text>}
               <Text color={theme.colors.mutedForeground} dimColor>
-                {" "}Type a message or / for commands...
+                {" "}
+                Type a message or / for commands...
               </Text>
             </Text>
           ) : (
