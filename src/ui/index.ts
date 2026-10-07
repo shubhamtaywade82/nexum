@@ -169,6 +169,9 @@ const cfg = loadConfig();
       validateModel: () => agent.validateModel(),
       getSkillsRegistry: () => agent.getSkillsRegistry(),
       pinSkill: (id: string | null) => agent.pinSkill(id),
+      usage: (range?: "24h" | "7d" | "30d") => agent.usage(range),
+      balance: () => agent.balance(),
+      importGguf: (model: string, path: string) => agent.importGguf(model, path),
     };
   }
 
