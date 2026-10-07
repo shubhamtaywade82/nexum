@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventBus } from "../../runtime/events/bus.js";
+import type { BalanceResponse, UsageResponse } from "@nemesis-oss/ollama-sdk";
 import { Store } from "../../runtime/store.js";
 import { CommandEffect } from "../../interaction/slash-commands.js";
 import { runDoctor } from "../../cli/doctor.js";
@@ -289,6 +290,60 @@ export function useCommandEffects(
             );
           break;
         }
+        case "usage": {
+          if (!agent?.usage) {
+            bus.publish({ type: "notification", kind: "error", text: "Usage is unavailable — no agent connected" });
+            break;
+          }
+          bus.publish({ type: "notification", kind: "info", text: "Fetching Ollama Cloud usage…" });
+          agent
+            .usage(effect.range)
+            .then((usage) => bus.publish({ type: "conversation.message", role: "assistant", text: formatUsage(usage) }))
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Usage failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
+        case "balance": {
+          if (!agent?.balance) {
+            bus.publish({ type: "notification", kind: "error", text: "Balance is unavailable — no agent connected" });
+            break;
+          }
+          bus.publish({ type: "notification", kind: "info", text: "Fetching Ollama Cloud balance…" });
+          agent
+            .balance()
+            .then((b) => bus.publish({ type: "conversation.message", role: "assistant", text: formatBalance(b) }))
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Balance failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
+        case "import-gguf": {
+          if (!agent?.importGguf) {
+            bus.publish({ type: "notification", kind: "error", text: "GGUF import is unavailable" });
+            break;
+          }
+          bus.publish({ type: "notification", kind: "info", text: `Importing ${effect.model}…` });
+          agent
+            .importGguf(effect.model, effect.path)
+            .then(() => bus.publish({ type: "notification", kind: "success", text: `Model ${effect.model} created` }))
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Import failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
         case "evolve":
           await handleEvolveEffect(bus, workspaceRoot, effect.action, effect.target);
           break;
@@ -344,4 +399,42 @@ async function handleEvolveEffect(
   } finally {
     registry.close();
   }
+}
+
+const usd = (n: number): string => `$${n.toFixed(n > 0 && n < 0.01 ? 4 : 2)}`;
+
+function formatUsage(u: UsageResponse): string {
+  const t = u.totals;
+  const tokens =
+    t.input_tokens !== undefined
+      ? `\n• Tokens: ${t.input_tokens.toLocaleString()} in (${(t.cached_input_tokens ?? 0).toLocaleString()} cached)` +
+        ` / ${(t.output_tokens ?? 0).toLocaleString()} out`
+      : "";
+  // `partial` marks the in-progress bucket — including it would report a
+  // half-elapsed hour as a real drop in traffic.
+  const recent = u.buckets.filter((b) => !b.partial && b.request_count > 0).slice(-3);
+  const rows = recent.length
+    ? `\n\nRecent ${u.granularity}s:\n` +
+      recent.map((b) => `• ${b.from} — ${b.request_count} req, ${usd(b.usage_usd ?? 0)}`).join("\n")
+    : "";
+  return (
+    `**Ollama Cloud usage** (${u.range}, ${u.scope})\n\n` +
+    `• Requests: ${t.request_count.toLocaleString()}\n` +
+    `• Spend: ${usd(t.usage_usd ?? 0)}${tokens}${rows}`
+  );
+}
+
+function formatBalance(b: BalanceResponse): string {
+  const lines =
+    "balance_usd" in b.included
+      ? [
+          `• Included: ${usd(b.included.balance_usd)} of ${usd(b.included.allowance_usd)}`,
+          `• Period: ${b.included.period.from} → ${b.included.period.until}`,
+        ]
+      : [
+          `• Session limit: ${b.included.session.remaining_percent}% left (resets ${b.included.session.resets_at})`,
+          `• Weekly limit: ${b.included.weekly.remaining_percent}% left (resets ${b.included.weekly.resets_at})`,
+        ];
+  lines.push(`• Purchased: ${usd(b.purchased.balance_usd)}`);
+  return `**Ollama Cloud balance**\n\n${lines.join("\n")}`;
 }

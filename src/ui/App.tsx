@@ -88,6 +88,12 @@ export interface ShellAgent {
   getSkillsRegistry?(): SkillsRegistry;
   pinSkill?(id: string | null): void;
   addLearning?(category: string, context: string, lesson: string): void;
+  /** Ollama Cloud request counts + spend for this API key (cloud tier only). */
+  usage?(range?: "24h" | "7d" | "30d"): Promise<import("@nemesis-oss/ollama-sdk").UsageResponse>;
+  /** Ollama Cloud remaining included + purchased credits. */
+  balance?(): Promise<import("@nemesis-oss/ollama-sdk").BalanceResponse>;
+  /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */
+  importGguf?(model: string, path: string): Promise<unknown>;
 }
 
 export interface AppProps {

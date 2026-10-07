@@ -32,6 +32,9 @@ export type CommandEffect =
   | { kind: "learn"; rule: string }
   | { kind: "replay-session"; id?: string }
   | { kind: "doctor" }
+  | { kind: "usage"; range?: "24h" | "7d" | "30d" }
+  | { kind: "balance" }
+  | { kind: "import-gguf"; model: string; path: string }
   | { kind: "capabilities"; action: "show" | "fix" }
   | { kind: "evolve"; action: "diagnose" | "history" | "rollback" | "benchmark"; target?: string }
   | { kind: "error"; text: string };
@@ -390,6 +393,38 @@ export function builtinCommands(): SlashCommandRegistry {
       return { kind: "error", text: "Usage: /capabilities [fix]" };
     },
     argValues: ["show", "fix"],
+  });
+  registry.register({
+    name: "usage",
+    aliases: ["spend"],
+    description: "Ollama Cloud request counts and spend: /usage [24h|7d|30d]",
+    category: "General",
+    execute: (args) => {
+      const range = args.trim();
+      if (range === "") return { kind: "usage" };
+      if (range === "24h" || range === "7d" || range === "30d") return { kind: "usage", range };
+      return { kind: "error", text: "Usage: /usage [24h|7d|30d]" };
+    },
+    argValues: ["24h", "7d", "30d"],
+  });
+  registry.register({
+    name: "balance",
+    aliases: ["credits"],
+    description: "Show remaining Ollama Cloud credits",
+    category: "General",
+    execute: () => ({ kind: "balance" }),
+  });
+  registry.register({
+    name: "import-gguf",
+    aliases: ["gguf"],
+    description: "Publish a local GGUF file as an Ollama model: /import-gguf <model> <path>",
+    category: "General",
+    execute: (args) => {
+      const [model, path] = args.trim().split(/\s+/);
+      return model && path
+        ? { kind: "import-gguf", model, path }
+        : { kind: "error", text: "Usage: /import-gguf <model> <path-to-gguf>" };
+    },
   });
   registry.register({
     name: "evolve",

@@ -433,3 +433,107 @@ describe("Provider host resolution", () => {
     expect(provider.currentHost).toBe("http://proxy.internal");
   });
 });
+
+// ── ollama-sdk 1.9 surfaces ────────────────────────────────────────────────
+
+const okChat = () =>
+  jest.fn().mockResolvedValue(
+    new Response(JSON.stringify({ model: "m", message: { role: "assistant", content: "ok" }, done: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+
+describe("Provider context window sizing", () => {
+  it("sizes one request from ChatOptions.contextLength", async () => {
+    const fakeFetch = okChat();
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", host: "http://127.0.0.1:1" });
+    await provider.chat([{ role: "user", content: "hi" }], { contextLength: 28_096 });
+
+    const body = JSON.parse(fakeFetch.mock.calls[0][1].body as string);
+    expect(body.options.num_ctx).toBe(28_096);
+  });
+
+  it("keeps the local default window when the request sizes none", async () => {
+    const fakeFetch = okChat();
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", host: "http://127.0.0.1:1" });
+    await provider.chat([{ role: "user", content: "hi" }]);
+
+    const body = JSON.parse(fakeFetch.mock.calls[0][1].body as string);
+    expect(body.options.num_ctx).toBe(16_384);
+  });
+
+  it("leaves cloud window sizing to the caller", async () => {
+    const fakeFetch = okChat();
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "cloud", model: "m", apiKey: "k", host: "https://x" });
+    await provider.chat([{ role: "user", content: "hi" }]);
+
+    const body = JSON.parse(fakeFetch.mock.calls[0][1].body as string);
+    expect(body.options).toBeUndefined();
+  });
+
+  it("rejects client-side when the estimate overflows a throw-on-overflow client", async () => {
+    (globalThis as any).fetch = okChat();
+    const provider = new Provider({
+      tier: "local",
+      model: "m",
+      host: "http://127.0.0.1:1",
+      contextLength: 64,
+      onContextOverflow: "throw",
+    });
+
+    await expect(provider.chat([{ role: "user", content: "word ".repeat(2000) }])).rejects.toThrow(ProviderError);
+  });
+});
+
+describe("Provider vision passthrough", () => {
+  it("lets the SDK resolve data-URI images down to raw base64", async () => {
+    const fakeFetch = okChat();
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", host: "http://127.0.0.1:1" });
+    await provider.chat([{ role: "user", content: "look", images: ["data:image/png;base64,AAAA"] }]);
+
+    const body = JSON.parse(fakeFetch.mock.calls[0][1].body as string);
+    expect(body.messages[0].images).toEqual(["AAAA"]);
+  });
+});
+
+describe("Provider Ollama Cloud account ops", () => {
+  it("refuses usage() with no API key configured", async () => {
+    const provider = new Provider({ tier: "local", model: "m" });
+    await expect(provider.usage()).rejects.toThrow(ProviderError);
+  });
+
+  it("targets ollama.com/api/usage with the configured key", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(
+      new Response(JSON.stringify({ range: "7d", scope: "self", granularity: "day", totals: { request_count: 0 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", apiKey: "acct_key" });
+    await provider.usage();
+
+    const reqUrl = new URL(fakeFetch.mock.calls[0][0] as string);
+    expect(reqUrl.hostname).toBe("ollama.com");
+    expect(reqUrl.pathname).toBe("/api/usage");
+    const headers = new Headers((fakeFetch.mock.calls[0][1] as RequestInit | undefined)?.headers);
+    expect(headers.get("authorization")).toBe("Bearer acct_key");
+  });
+});
+
+describe("Provider GGUF publishing", () => {
+  it("refuses importGguf on the cloud tier", async () => {
+    const provider = new Provider({ tier: "cloud", model: "m", apiKey: "k" });
+    await expect(provider.importGguf("local-model", "/tmp/a.gguf")).rejects.toThrow(/local tier/);
+  });
+});

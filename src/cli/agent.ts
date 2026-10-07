@@ -998,6 +998,10 @@ export class Agent {
         const makeChatOpts = (): ChatOptions => ({
           stream: true,
           tools: opts.tools as ChatOptions["tools"],
+          // Window on the wire = the budget the transcript was just compacted
+          // against, plus the output reserve. Without this Ollama falls back to
+          // its server default (2048–4096) and silently truncates the prompt.
+          ...(turnBudget ? { contextLength: turnBudget.contextTokens + turnBudget.reserveOutputTokens } : {}),
           onChunk: (chunk: ChatResponse) => {
             const delta = chunk.message?.content;
             if (typeof delta === "string" && delta) {
@@ -1577,6 +1581,21 @@ export class Agent {
 
   async modelCapabilities(models: string[]): Promise<Record<string, Capability[]>> {
     return this.stack.modelCapabilities(models);
+  }
+
+  /** Ollama Cloud request counts + spend for this API key. Cloud-only. */
+  usage(range?: "24h" | "7d" | "30d") {
+    return this.stack.provider.usage(range ? { range } : undefined);
+  }
+
+  /** Ollama Cloud remaining included + purchased credits. Cloud-only. */
+  balance() {
+    return this.stack.provider.balance();
+  }
+
+  /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */
+  importGguf(model: string, path: string) {
+    return this.stack.provider.importGguf(model, path);
   }
 
   resetContext(): void {
