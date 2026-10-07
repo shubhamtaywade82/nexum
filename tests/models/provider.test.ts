@@ -506,28 +506,77 @@ describe("Provider vision passthrough", () => {
 });
 
 describe("Provider Ollama Cloud account ops", () => {
-  it("refuses usage() with no API key configured", async () => {
+  const usageBody = JSON.stringify({
+    range: "7d",
+    scope: "self",
+    granularity: "day",
+    totals: { request_count: 3, usage_usd: 0.42 },
+    buckets: [],
+  });
+  const usageOk = () => new Response(usageBody, { status: 200, headers: { "content-type": "application/json" } });
+  const authOf = (call: unknown[]) => new Headers((call[1] as RequestInit | undefined)?.headers).get("authorization");
+
+  it("reports no accounts when no API key is configured", async () => {
     const provider = new Provider({ tier: "local", model: "m" });
-    await expect(provider.usage()).rejects.toThrow(ProviderError);
+    await expect(provider.usageAll()).resolves.toEqual([]);
+    await expect(provider.balanceAll()).resolves.toEqual([]);
   });
 
   it("targets ollama.com/api/usage with the configured key", async () => {
-    const fakeFetch = jest.fn().mockResolvedValue(
-      new Response(JSON.stringify({ range: "7d", scope: "self", granularity: "day", totals: { request_count: 0 } }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    const fakeFetch = jest.fn().mockResolvedValue(usageOk());
     (globalThis as any).fetch = fakeFetch;
 
     const provider = new Provider({ tier: "local", model: "m", apiKey: "acct_key" });
-    await provider.usage();
+    const [account] = await provider.usageAll();
 
+    expect(account.error).toBeUndefined();
+    expect(account.usage?.totals.request_count).toBe(3);
     const reqUrl = new URL(fakeFetch.mock.calls[0][0] as string);
     expect(reqUrl.hostname).toBe("ollama.com");
     expect(reqUrl.pathname).toBe("/api/usage");
-    const headers = new Headers((fakeFetch.mock.calls[0][1] as RequestInit | undefined)?.headers);
-    expect(headers.get("authorization")).toBe("Bearer acct_key");
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer acct_key");
+  });
+
+  it("queries every key in the pool as its own account", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(usageOk());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", apiKeys: ["key_aaa1", "key_bbb2"] });
+    const accounts = await provider.usageAll();
+
+    expect(accounts.map((a) => a.label)).toEqual(["Key 1 (…aaa1)", "Key 2 (…bbb2)"]);
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(new Set(fakeFetch.mock.calls.map(authOf))).toEqual(new Set(["Bearer key_aaa1", "Bearer key_bbb2"]));
+  });
+
+  it("de-duplicates a repeated key instead of reporting one account twice", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(usageOk());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", apiKeys: ["same_key", "same_key"] });
+    await expect(provider.usageAll()).resolves.toHaveLength(1);
+  });
+
+  it("keeps one dead account from hiding the healthy ones", async () => {
+    const fakeFetch = jest.fn((url: unknown, init?: RequestInit) => {
+      const dead = new Headers(init?.headers).get("authorization") === "Bearer dead_bbbb";
+      return Promise.resolve(
+        dead
+          ? new Response(JSON.stringify({ error: "invalid api key" }), {
+              status: 401,
+              headers: { "content-type": "application/json" },
+            })
+          : usageOk(),
+      );
+    });
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", apiKeys: ["live_aaaa", "dead_bbbb"] });
+    const accounts = await provider.usageAll();
+
+    expect(accounts).toHaveLength(2);
+    expect(accounts.find((a) => a.label.includes("aaaa"))?.usage?.totals.request_count).toBe(3);
+    expect(accounts.find((a) => a.label.includes("bbbb"))?.error).toBeDefined();
   });
 });
 

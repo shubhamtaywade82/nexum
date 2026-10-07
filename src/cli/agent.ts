@@ -1583,14 +1583,14 @@ export class Agent {
     return this.stack.modelCapabilities(models);
   }
 
-  /** Ollama Cloud request counts + spend for this API key. Cloud-only. */
-  usage(range?: "24h" | "7d" | "30d") {
-    return this.stack.provider.usage(range ? { range } : undefined);
+  /** Ollama Cloud request counts + spend, one row per pooled API key. */
+  usageAll(range?: "24h" | "7d" | "30d") {
+    return this.stack.provider.usageAll(range ? { range } : undefined);
   }
 
-  /** Ollama Cloud remaining included + purchased credits. Cloud-only. */
-  balance() {
-    return this.stack.provider.balance();
+  /** Ollama Cloud remaining included + purchased credits, one row per key. */
+  balanceAll() {
+    return this.stack.provider.balanceAll();
   }
 
   /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */

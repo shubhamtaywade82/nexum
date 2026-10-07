@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventBus } from "../../runtime/events/bus.js";
 import type { BalanceResponse, UsageResponse } from "@nemesis-oss/ollama-sdk";
+import type { AccountBalance, AccountUsage } from "../../models/adapters/provider.js";
 import { Store } from "../../runtime/store.js";
 import { CommandEffect } from "../../interaction/slash-commands.js";
 import { runDoctor } from "../../cli/doctor.js";
@@ -291,14 +292,16 @@ export function useCommandEffects(
           break;
         }
         case "usage": {
-          if (!agent?.usage) {
+          if (!agent?.usageAll) {
             bus.publish({ type: "notification", kind: "error", text: "Usage is unavailable — no agent connected" });
             break;
           }
           bus.publish({ type: "notification", kind: "info", text: "Fetching Ollama Cloud usage…" });
           agent
-            .usage(effect.range)
-            .then((usage) => bus.publish({ type: "conversation.message", role: "assistant", text: formatUsage(usage) }))
+            .usageAll(effect.range)
+            .then((accounts) =>
+              bus.publish({ type: "conversation.message", role: "assistant", text: formatUsage(accounts) }),
+            )
             .catch((err: unknown) =>
               bus.publish({
                 type: "notification",
@@ -309,14 +312,16 @@ export function useCommandEffects(
           break;
         }
         case "balance": {
-          if (!agent?.balance) {
+          if (!agent?.balanceAll) {
             bus.publish({ type: "notification", kind: "error", text: "Balance is unavailable — no agent connected" });
             break;
           }
           bus.publish({ type: "notification", kind: "info", text: "Fetching Ollama Cloud balance…" });
           agent
-            .balance()
-            .then((b) => bus.publish({ type: "conversation.message", role: "assistant", text: formatBalance(b) }))
+            .balanceAll()
+            .then((accounts) =>
+              bus.publish({ type: "conversation.message", role: "assistant", text: formatBalance(accounts) }),
+            )
             .catch((err: unknown) =>
               bus.publish({
                 type: "notification",
@@ -403,11 +408,11 @@ async function handleEvolveEffect(
 
 const usd = (n: number): string => `$${n.toFixed(n > 0 && n < 0.01 ? 4 : 2)}`;
 
-function formatUsage(u: UsageResponse): string {
+function usageLines(u: UsageResponse): string {
   const t = u.totals;
   const tokens =
     t.input_tokens !== undefined
-      ? `\n• Tokens: ${t.input_tokens.toLocaleString()} in (${(t.cached_input_tokens ?? 0).toLocaleString()} cached)` +
+      ? `\u2022 Tokens: ${t.input_tokens.toLocaleString()} in (${(t.cached_input_tokens ?? 0).toLocaleString()} cached)` +
         ` / ${(t.output_tokens ?? 0).toLocaleString()} out`
       : "";
   // `partial` marks the in-progress bucket — including it would report a
@@ -415,26 +420,60 @@ function formatUsage(u: UsageResponse): string {
   const recent = u.buckets.filter((b) => !b.partial && b.request_count > 0).slice(-3);
   const rows = recent.length
     ? `\n\nRecent ${u.granularity}s:\n` +
-      recent.map((b) => `• ${b.from} — ${b.request_count} req, ${usd(b.usage_usd ?? 0)}`).join("\n")
+      recent.map((b) => `\u2022 ${b.from} \u2014 ${b.request_count} req, ${usd(b.usage_usd ?? 0)}`).join("\n")
     : "";
   return (
-    `**Ollama Cloud usage** (${u.range}, ${u.scope})\n\n` +
-    `• Requests: ${t.request_count.toLocaleString()}\n` +
-    `• Spend: ${usd(t.usage_usd ?? 0)}${tokens}${rows}`
+    `(${u.range}, ${u.scope})\n\n\u2022 Requests: ${t.request_count.toLocaleString()}\n` +
+    `\u2022 Spend: ${usd(t.usage_usd ?? 0)}${tokens}${rows}`
   );
 }
 
-function formatBalance(b: BalanceResponse): string {
+function formatUsage(accounts: AccountUsage[]): string {
+  if (accounts.length === 0) return "**Ollama Cloud usage**\n\nNo Ollama Cloud API key configured.";
+  const sections = accounts.map((a) =>
+    a.usage ? `**${a.label}**\n${usageLines(a.usage)}` : `**${a.label}**\n\u2022 \u2717 ${a.error ?? "unavailable"}`,
+  );
+  // Pools exist for availability, so the pool's real cost has to be visible
+  // without adding the per-key numbers up by hand.
+  const ok = accounts.flatMap((a) => (a.usage ? [a.usage] : []));
+  if (ok.length > 1) {
+    const requests = ok.reduce((n, u) => n + u.totals.request_count, 0);
+    const spend = ok.reduce((n, u) => n + (u.totals.usage_usd ?? 0), 0);
+    sections.unshift(
+      `**${ok.length} accounts**\n\n\u2022 Requests: ${requests.toLocaleString()}\n\u2022 Spend: ${usd(spend)}`,
+    );
+  }
+  return `**Ollama Cloud usage**\n\n${sections.join("\n\n---\n\n")}`;
+}
+
+function balanceLines(b: BalanceResponse): string {
   const lines =
     "balance_usd" in b.included
       ? [
-          `• Included: ${usd(b.included.balance_usd)} of ${usd(b.included.allowance_usd)}`,
-          `• Period: ${b.included.period.from} → ${b.included.period.until}`,
+          `\u2022 Included: ${usd(b.included.balance_usd)} of ${usd(b.included.allowance_usd)}`,
+          `\u2022 Period: ${b.included.period.from} \u2192 ${b.included.period.until}`,
         ]
       : [
-          `• Session limit: ${b.included.session.remaining_percent}% left (resets ${b.included.session.resets_at})`,
-          `• Weekly limit: ${b.included.weekly.remaining_percent}% left (resets ${b.included.weekly.resets_at})`,
+          `\u2022 Session limit: ${b.included.session.remaining_percent}% left (resets ${b.included.session.resets_at})`,
+          `\u2022 Weekly limit: ${b.included.weekly.remaining_percent}% left (resets ${b.included.weekly.resets_at})`,
         ];
-  lines.push(`• Purchased: ${usd(b.purchased.balance_usd)}`);
-  return `**Ollama Cloud balance**\n\n${lines.join("\n")}`;
+  lines.push(`\u2022 Purchased: ${usd(b.purchased.balance_usd)}`);
+  return lines.join("\n");
+}
+
+function formatBalance(accounts: AccountBalance[]): string {
+  if (accounts.length === 0) return "**Ollama Cloud balance**\n\nNo Ollama Cloud API key configured.";
+  const sections = accounts.map((a) =>
+    a.balance
+      ? `**${a.label}**\n${balanceLines(a.balance)}`
+      : `**${a.label}**\n\u2022 \u2717 ${a.error ?? "unavailable"}`,
+  );
+  const ok = accounts.flatMap((a) => (a.balance ? [a.balance] : []));
+  if (ok.length > 1) {
+    // Purchased credits are the only figure that sums across accounts —
+    // legacy plans report percentages, which don't add up.
+    const purchased = ok.reduce((n, b) => n + b.purchased.balance_usd, 0);
+    sections.unshift(`**${ok.length} accounts**\n\n\u2022 Purchased: ${usd(purchased)}`);
+  }
+  return `**Ollama Cloud balance**\n\n${sections.join("\n\n---\n\n")}`;
 }

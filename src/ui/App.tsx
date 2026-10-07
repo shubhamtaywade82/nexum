@@ -88,10 +88,10 @@ export interface ShellAgent {
   getSkillsRegistry?(): SkillsRegistry;
   pinSkill?(id: string | null): void;
   addLearning?(category: string, context: string, lesson: string): void;
-  /** Ollama Cloud request counts + spend for this API key (cloud tier only). */
-  usage?(range?: "24h" | "7d" | "30d"): Promise<import("@nemesis-oss/ollama-sdk").UsageResponse>;
-  /** Ollama Cloud remaining included + purchased credits. */
-  balance?(): Promise<import("@nemesis-oss/ollama-sdk").BalanceResponse>;
+  /** Ollama Cloud request counts + spend for every configured API key. */
+  usageAll?(range?: "24h" | "7d" | "30d"): Promise<Array<import("../models/adapters/provider.js").AccountUsage>>;
+  /** Ollama Cloud remaining included + purchased credits, one row per key. */
+  balanceAll?(): Promise<Array<import("../models/adapters/provider.js").AccountBalance>>;
   /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */
   importGguf?(model: string, path: string): Promise<unknown>;
 }

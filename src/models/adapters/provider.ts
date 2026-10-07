@@ -107,6 +107,25 @@ export interface ChatOptions {
 /** A Responses request whose `model` defaults to the provider's configured one. */
 export type ResponsesRequest = Omit<ResponsesCreateRequest, "model"> & { model?: string };
 
+/** One pooled Ollama Cloud key's usage. Exactly one of `usage`/`error` is set. */
+export interface AccountUsage {
+  label: string;
+  usage?: UsageResponse;
+  error?: string;
+}
+
+/** One pooled Ollama Cloud key's credits. Exactly one of `balance`/`error`. */
+export interface AccountBalance {
+  label: string;
+  balance?: BalanceResponse;
+  error?: string;
+}
+
+/** Identifies which pooled key a report row belongs to without exposing it. */
+function accountLabel(apiKey: string, index: number): string {
+  return `Key ${index + 1} (${apiKey.length > 4 ? "…" + apiKey.slice(-4) : "••••"})`;
+}
+
 export interface ProviderOptions {
   tier: Tier;
   model: string;
@@ -494,28 +513,58 @@ export class Provider {
     return this.mapErrors(() => this.buildClient().modelsClient.createModelFromGguf(model, gguf, opts), model);
   }
 
-  /** Ollama Cloud request counts/spend (`GET ollama.com/api/usage`). Always a
-   * cloud-host call regardless of this provider's host, so it builds its own
-   * client: an endpoint-pool client carries its key under `endpoints[]`, which
-   * the SDK's fixed-cloud-host pipeline does not read. */
-  usage(req?: UsageRequestOptions): Promise<UsageResponse> {
-    return this.mapErrors(() => this.accountClient().usage(req), this.model);
+  /** Ollama Cloud request counts/spend (`GET ollama.com/api/usage`) for **every**
+   * key in the pool — one row per account, so several accounts for availability
+   * each get their own numbers. Always a cloud-host call regardless of this
+   * provider's host, so each key needs its own client: an endpoint-pool client
+   * carries its key under `endpoints[]`, which the SDK's fixed-cloud-host
+   * pipeline does not read. Never rejects — a dead account reports its error
+   * inline rather than hiding the healthy ones. */
+  usageAll(req?: UsageRequestOptions): Promise<AccountUsage[]> {
+    return Promise.all(
+      this.accountKeys().map(async (apiKey, index) => {
+        const label = accountLabel(apiKey, index);
+        try {
+          return { label, usage: await this.accountClient(apiKey).usage(req) };
+        } catch (err) {
+          return { label, error: this.accountError(err) };
+        }
+      }),
+    );
   }
 
-  /** Ollama Cloud remaining credits (`GET ollama.com/api/balance`). */
-  balance(req?: BalanceRequestOptions): Promise<BalanceResponse> {
-    return this.mapErrors(() => this.accountClient().balance(req), this.model);
+  /** Ollama Cloud remaining credits (`GET ollama.com/api/balance`) per key. */
+  balanceAll(req?: BalanceRequestOptions): Promise<AccountBalance[]> {
+    return Promise.all(
+      this.accountKeys().map(async (apiKey, index) => {
+        const label = accountLabel(apiKey, index);
+        try {
+          return { label, balance: await this.accountClient(apiKey).balance(req) };
+        } catch (err) {
+          return { label, error: this.accountError(err) };
+        }
+      }),
+    );
   }
 
-  private accountClient(): OllamaClient {
-    const apiKey = this.apiKeys[0];
-    if (!apiKey) throw new ProviderError("missing apiKey for Ollama Cloud account query");
+  /** Deduped key pool: the same key twice is one account, not two. */
+  private accountKeys(): string[] {
+    return [...new Set(this.apiKeys)];
+  }
+
+  private accountClient(apiKey: string): OllamaClient {
     return new OllamaClient({
       baseUrl: DEFAULT_CLOUD_HOST,
       apiKey,
       timeoutMs: this.timeoutMs || 30_000,
       retries: 1,
     });
+  }
+
+  /** Routes an account failure through the shared mapper so its message is
+   * redacted (these bodies carry the Authorization header we just sent). */
+  private accountError(err: unknown): string {
+    return mapSdkError(err, this.tier, this.model, this.apiKeys.length).message;
   }
 
   private async mapErrors<T>(fn: () => Promise<T>, model: string): Promise<T> {
