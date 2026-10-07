@@ -46,6 +46,43 @@ describe("loadConfig apiKeys pool", () => {
     expect(loadConfig().apiKeys).toEqual(["primary_key", "second_key", "third_key"]);
   });
 
+  it("pairs structured accounts with the labels /usage and /balance print", () => {
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      JSON.stringify({
+        apiKeys: ["acct_one"],
+        accounts: [
+          { apiKey: "acct_one", label: "me@example.com" },
+          { apiKey: "acct_two", label: "  work  " },
+          { apiKey: "acct_three" },
+        ],
+      }),
+    );
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    const cfg = loadConfig({ trustStore });
+
+    // the flat list stays the ordered pool; accounts contribute their keys too
+    expect(cfg.apiKeys).toEqual(["acct_one", "acct_two", "acct_three"]);
+    expect(cfg.accountLabels).toEqual({ acct_one: "me@example.com", acct_two: "work" });
+    // no label -> no entry, so the provider falls back to a masked key suffix
+    expect(cfg.accountLabels).not.toHaveProperty("acct_three");
+  });
+
+  // Credentials are not WORKSPACE_SAFE_KEYS: a checked-in config cannot inject
+  // an API key (or redirect usage reporting) before the workspace is trusted.
+  it("ignores accounts from an untrusted workspace", () => {
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      JSON.stringify({ accounts: [{ apiKey: "untrusted_key", label: "intruder" }] }),
+    );
+    const cfg = loadConfig({ trustStore: WorkspaceTrustStore.inMemory() });
+    expect(cfg.apiKeys).toBeUndefined();
+    expect(cfg.accountLabels).toBeUndefined();
+  });
+
   it("loads API keys and config from workspace .env files", () => {
     delete process.env.DEVAGENT_TEST_NO_GLOBAL;
     delete process.env.NEXUM_TEST_NO_GLOBAL;

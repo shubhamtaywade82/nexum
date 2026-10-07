@@ -549,6 +549,22 @@ describe("Provider Ollama Cloud account ops", () => {
     expect(new Set(fakeFetch.mock.calls.map(authOf))).toEqual(new Set(["Bearer key_aaa1", "Bearer key_bbb2"]));
   });
 
+  it("names a row after its configured account label", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(usageOk());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({
+      tier: "local",
+      model: "m",
+      apiKeys: ["key_aaa1", "key_bbb2"],
+      accountLabels: { key_aaa1: "me@example.com" },
+    });
+    const accounts = await provider.usageAll();
+
+    // labelled account wins; the other keeps the masked-key fallback
+    expect(accounts.map((a) => a.label)).toEqual(["me@example.com", "Key 2 (…bbb2)"]);
+  });
+
   it("de-duplicates a repeated key instead of reporting one account twice", async () => {
     const fakeFetch = jest.fn().mockResolvedValue(usageOk());
     (globalThis as any).fetch = fakeFetch;

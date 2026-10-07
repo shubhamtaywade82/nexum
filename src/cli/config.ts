@@ -47,6 +47,10 @@ export interface CliConfig {
   /** Pool of Ollama Cloud API keys (e.g. separate accounts) — Provider rotates to the
    * next key on a 429 before giving up. Ollama Cloud only, not a multi-vendor router. */
   apiKeys?: string[];
+  /** apiKey → display label, resolved from the config file's structured
+   * `accounts`. Names the rows /usage and /balance print; keys without a
+   * label fall back to a masked suffix of the key itself. */
+  accountLabels?: Record<string, string>;
   /** Preferred local model name (substring match) for the "quick" capability,
    * e.g. "minicpm5" — see ModelCatalog.modelsFor. */
   quickModel?: string;
@@ -155,6 +159,10 @@ interface ConfigFile {
   toolSelectionMode?: string;
   maxActiveTools?: number;
   apiKeys?: string[];
+  /** Structured form of `apiKeys`: each key paired with the name shown by
+   * /usage and /balance. Preferred over the flat list — the pairing cannot
+   * drift — but both may be present. */
+  accounts?: Array<{ apiKey: string; label?: string }>;
   quickModel?: string;
   enableLocalWorker?: boolean;
   enableVerifier?: boolean;
@@ -388,6 +396,16 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     .filter(Boolean);
   const apiKeys = [...new Set([...(primaryApiKey ? [primaryApiKey] : []), ...envKeys, ...(file.apiKeys ?? [])])];
 
+  // Structured `accounts` pair each key with the name /usage and /balance
+  // print. Labels are keyed by apiKey — not by position — so a key listed
+  // twice, or through both forms, resolves to exactly one label.
+  const accountLabels: Record<string, string> = {};
+  for (const account of file.accounts ?? []) {
+    const label = typeof account?.label === "string" ? account.label.trim() : "";
+    if (account?.apiKey && label) accountLabels[account.apiKey] = label;
+    if (account?.apiKey && !apiKeys.includes(account.apiKey)) apiKeys.push(account.apiKey);
+  }
+
   // Number() on a malformed value yields NaN, which is not nullish and so
   // sails straight past every `?? default` downstream. Validate here instead.
   const positiveNumber = (raw: string | undefined, fallback: number): number => {
@@ -445,6 +463,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     toolSelectionMode,
     maxActiveTools,
     apiKeys: apiKeys.length ? apiKeys : undefined,
+    accountLabels: Object.keys(accountLabels).length ? accountLabels : undefined,
     quickModel: readEnv("QUICK_MODEL") || file.quickModel,
     // Hybrid architecture flags
     enableLocalWorker: readEnvFlag("LOCAL_WORKER", file.enableLocalWorker ?? true),

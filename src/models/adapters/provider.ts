@@ -121,8 +121,10 @@ export interface AccountBalance {
   error?: string;
 }
 
-/** Identifies which pooled key a report row belongs to without exposing it. */
-function accountLabel(apiKey: string, index: number): string {
+/** Fallback row name when the config gave an account no label: identifies the
+ * key by position and last 4 chars, enough to tell accounts apart by eye
+ * without printing the secret. */
+function maskedKeyLabel(apiKey: string, index: number): string {
   return `Key ${index + 1} (${apiKey.length > 4 ? "…" + apiKey.slice(-4) : "••••"})`;
 }
 
@@ -136,6 +138,10 @@ export interface ProviderOptions {
    * giving up — this is for availability across your own accounts, not
    * multi-vendor routing. */
   apiKeys?: string[];
+  /** apiKey → display name for /usage and /balance rows (from the config
+   * file's structured `accounts`). Unlabelled keys fall back to a masked
+   * suffix of the key. */
+  accountLabels?: Record<string, string>;
   timeoutMs?: number;
   /** Chooses which cloud API key serves each request (e.g. KeyManager's
    * model→key binding that keeps each key's model warm in Ollama Cloud
@@ -225,6 +231,7 @@ export class Provider {
   /** Explicitly configured host, or undefined to track the tier default. */
   private hostOverride: string | undefined;
   private readonly apiKeys: string[];
+  private readonly accountLabels: Record<string, string>;
   private readonly timeoutMs: number;
   private readonly keySelector: CloudKeySelector | undefined;
   private readonly contextLength: number | undefined;
@@ -245,6 +252,7 @@ export class Provider {
     this.model = opts.model;
     this.hostOverride = opts.host;
     this.apiKeys = opts.apiKeys && opts.apiKeys.length > 0 ? opts.apiKeys : opts.apiKey ? [opts.apiKey] : [];
+    this.accountLabels = opts.accountLabels ?? {};
     // Cloud has a 60s connect timeout; local has no timeout — never kill a running generation.
     this.timeoutMs = opts.timeoutMs ?? (opts.tier === "cloud" ? 60_000 : 0);
     this.keySelector = opts.keySelector;
@@ -523,7 +531,7 @@ export class Provider {
   usageAll(req?: UsageRequestOptions): Promise<AccountUsage[]> {
     return Promise.all(
       this.accountKeys().map(async (apiKey, index) => {
-        const label = accountLabel(apiKey, index);
+        const label = this.accountLabels[apiKey] ?? maskedKeyLabel(apiKey, index);
         try {
           return { label, usage: await this.accountClient(apiKey).usage(req) };
         } catch (err) {
@@ -537,7 +545,7 @@ export class Provider {
   balanceAll(req?: BalanceRequestOptions): Promise<AccountBalance[]> {
     return Promise.all(
       this.accountKeys().map(async (apiKey, index) => {
-        const label = accountLabel(apiKey, index);
+        const label = this.accountLabels[apiKey] ?? maskedKeyLabel(apiKey, index);
         try {
           return { label, balance: await this.accountClient(apiKey).balance(req) };
         } catch (err) {
