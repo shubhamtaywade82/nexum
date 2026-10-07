@@ -196,6 +196,8 @@
     "dist/",
     "bin/",
     "docker/nexum-sandbox/",
+    ".env.example",
+    "config.example.jsonc",
     "README.md",
     "LICENSE"
   ],

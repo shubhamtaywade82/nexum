@@ -196,15 +196,54 @@ const GLOBAL_CONFIG_DIR = globalStateDir();
 // Legacy DevAgent-era global state — read as a deprecated fallback, never written.
 const LEGACY_GLOBAL_CONFIG_DIR = legacyGlobalStateDir();
 
-/** Parse a config JSON file, tolerating absence and malformed content. */
+/** Remove `//` and `/* *`/ comments, leaving string literals (URLs, prompts)
+ * untouched. Only ever applied after a strict JSON.parse has already failed,
+ * so a valid config is never handed to it. */
+function stripJsonComments(raw: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (inString) {
+      out += c;
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+    } else if (c === "/" && raw[i + 1] === "/") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      out += "\n"; // keep the line count stable
+    } else if (c === "/" && raw[i + 1] === "*") {
+      i += 2;
+      while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
+      i++;
+      out += " ";
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+/** Parse a config JSON file, tolerating absence and malformed content.
+ * `//` comments are accepted (config.example.jsonc ships with them), but only
+ * once plain JSON.parse has rejected the file — a comment typo then costs you
+ * the whole file, exactly as any other syntax error would. */
 function readConfigFile(p: string): ConfigFile {
   if (!existsSync(p)) return {};
-  try {
-    const raw = readFileSync(p, "utf8");
-    const parsed = JSON.parse(raw) as ConfigFile;
-    if (parsed && typeof parsed === "object") return parsed;
-  } catch {
-    // skip malformed config file
+  const raw = readFileSync(p, "utf8");
+  for (const candidate of [raw, stripJsonComments(raw)]) {
+    try {
+      const parsed = JSON.parse(candidate) as ConfigFile;
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      // try the next candidate
+    }
   }
   return {};
 }

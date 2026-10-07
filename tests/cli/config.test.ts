@@ -1,7 +1,8 @@
 import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/cli/config.js";
 import { trustWorkspace, WorkspaceTrustStore } from "../../src/cli/workspace-trust.js";
 
@@ -254,5 +255,67 @@ describe("parseAutoPlan", () => {
     expect(parseAutoPlan(undefined, "0")).toBe("off");
     expect(parseAutoPlan("nonsense")).toBe("ask");
     expect(parseAutoPlan(undefined)).toBe("ask");
+  });
+});
+
+describe("commented config file (config.example.jsonc)", () => {
+  const originalEnv = { ...process.env };
+  let workspaceRoot: string;
+
+  beforeEach(async () => {
+    workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), "config-jsonc-")));
+    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    // anything the example sets must not be shadowed by the shell's own config
+    for (const key of ["MODEL", "TIER", "HOST", "SHELL_TIMEOUT_SEC", "MAX_ACTIVE_TOOLS", "SANDBOX"]) {
+      delete process.env[`NEXUM_${key}`];
+      delete process.env[`DEVAGENT_${key}`];
+    }
+    delete process.env.OLLAMA_HOST;
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("accepts // and /* */ comments and keeps // inside string literals", () => {
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      `{
+        // project default model
+        "model": "commented-model", // trailing comment
+        /* block comment */
+        "host": "http://127.0.0.1:11434",
+        "writeScope": "src"
+      }`,
+    );
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    const cfg = loadConfig({ trustStore });
+
+    expect(cfg.model).toBe("commented-model");
+    expect(cfg.writeScope).toBe(join(workspaceRoot, "src"));
+    // the "//" inside the URL was not mistaken for a comment
+    expect(cfg.host).toBe("http://127.0.0.1:11434");
+  });
+
+  it("still falls back to defaults when the file is genuinely malformed", () => {
+    writeFileSync(join(workspaceRoot, ".nexum", "config.json"), '{ "model": "broken" ');
+    const cfg = loadConfig({ trustStore: WorkspaceTrustStore.inMemory() });
+    expect(cfg.model).toBe("qwen3.5:4b");
+  });
+
+  it("ships a config.example.jsonc that actually parses", () => {
+    const example = fileURLToPath(new URL("../../config.example.jsonc", import.meta.url));
+    copyFileSync(example, join(workspaceRoot, ".nexum", "config.json"));
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    const cfg = loadConfig({ trustStore });
+
+    // these are unset unless the example's values were read
+    expect(cfg.shellTimeoutSec).toBe(30);
+    expect(cfg.maxActiveTools).toBe(8);
+    expect(cfg.autoApprove).toBe(false);
+    expect(cfg.sandbox).toBe(true);
   });
 });

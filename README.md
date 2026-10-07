@@ -322,6 +322,14 @@ asks on first run, or run `nexum trust` (`nexum trust status` shows what the
 workspace ships). Until then only harmless keys such as `model` and `theme`
 apply. See `SECURITY.md` §8.
 
+Annotated templates for both formats ship with the repo — copy one and edit:
+
+- `.env.example` — every supported environment variable, tagged `[required]` /
+  `[optional]` with its default.
+- `config.example.jsonc` — every `config.json` key, tagged `[required]` /
+  `[optional]` with its default, and `[until trust]` when a workspace copy needs
+  `nexum trust` first. Config files accept `//` and `/* */` comments.
+
 Every `NEXUM_*` variable above has a config-file equivalent using the camelCase
 key name (`NEXUM_MODEL` → `model`, `NEXUM_AUTO_APPROVE` → `autoApprove`, ...).
 Boolean env values accept `true`/`1` and `false`/`0`, and win over the file in both
