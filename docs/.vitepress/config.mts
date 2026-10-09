@@ -64,6 +64,7 @@ export default defineConfig({
           { text: "Agent Evaluation Framework", link: "/guide/evaluation" },
           { text: "LLM-as-a-Judge", link: "/guide/llm-judge" },
           { text: "In-Loop Critic & Self-Correction", link: "/guide/critic" },
+          { text: "Context Compiler & Verification Gate", link: "/guide/context-compiler" },
         ],
       },
       {

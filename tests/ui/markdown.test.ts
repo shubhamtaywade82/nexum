@@ -1,11 +1,4 @@
-import {
-  parseInline,
-  highlightCodeBlock,
-  parseTable,
-  renderTable,
-  renderSimpleMarkdown,
-  renderMarkdown,
-} from "../../src/ui/markdown.js";
+import { parseInline, highlightCodeBlock, renderTable, renderSimpleMarkdown } from "../../src/ui/markdown.js";
 
 describe("TUI Markdown Rendering Engine", () => {
   describe("parseInline", () => {
@@ -42,26 +35,16 @@ describe("TUI Markdown Rendering Engine", () => {
     });
   });
 
-  describe("parseTable & renderTable", () => {
-    it("parses GFM Markdown table headers, alignments, and rows", () => {
-      const markdownTable = [
-        "| Name | Role | Status |",
-        "| :--- | :---: | ---: |",
-        "| Alice | Dev | Active |",
-        "| Bob | Ops | Offline |",
-      ];
-      const parsed = parseTable(markdownTable);
-      expect(parsed).not.toBeNull();
-      expect(parsed?.headers).toEqual(["Name", "Role", "Status"]);
-      expect(parsed?.alignments).toEqual(["left", "center", "right"]);
-      expect(parsed?.rows).toEqual([
-        ["Alice", "Dev", "Active"],
-        ["Bob", "Ops", "Offline"],
-      ]);
-    });
-
+  describe("renderTable", () => {
     it("renders aligned Unicode box-drawing borders for tables", () => {
-      const parsed = parseTable(["| Metric | Value |", "| --- | --- |", "| CPU | 45% |", "| Memory | 2.1GB |"])!;
+      const parsed = {
+        headers: ["Metric", "Value"],
+        alignments: ["left", "left"] as const,
+        rows: [
+          ["CPU", "45%"],
+          ["Memory", "2.1GB"],
+        ],
+      };
 
       const rendered = renderTable(parsed, 60);
       expect(rendered.length).toBe(6); // top, header, mid, row1, row2, bottom
@@ -101,16 +84,6 @@ describe("TUI Markdown Rendering Engine", () => {
       expect(formatted.length).toBe(2);
       expect(formatted[0].spans[0].text).toContain("✓ ");
       expect(formatted[1].spans[0].text).toContain("○ ");
-    });
-  });
-
-  describe("renderMarkdown", () => {
-    it("produces RichLine items with appropriate role tags", () => {
-      const lines = renderMarkdown("# Title\nSome text", "assistant", 60);
-      expect(lines.length).toBe(2);
-      expect(lines[0].role).toBe("assistant");
-      expect(lines[0].first).toBe(true);
-      expect(lines[1].first).toBe(false);
     });
   });
 });

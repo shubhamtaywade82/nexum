@@ -1,5 +1,7 @@
-import "dotenv/config";
+// No `import "dotenv/config"`: a workspace .env is repository content and is
+// loaded by loadConfig() only once the workspace is trusted (workspace-trust.ts).
 import * as readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -646,5 +648,15 @@ export async function startTui(opts?: { config?: Partial<CliConfig> }): Promise<
 
   rl.on("SIGINT", () => {
     rl.close();
+  });
+}
+
+// `npm run dev:legacy` runs this file directly: start the readline REPL.
+// (Imported as a module, it only exports startTui.)
+const isDirectRun = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+if (isDirectRun) {
+  startTui().catch((err) => {
+    console.error(err);
+    process.exit(1);
   });
 }

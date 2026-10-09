@@ -7,6 +7,7 @@ import type { LocalWorker } from "../models/local-worker.js";
 import type { ClarificationRequester } from "../tools/ask-user-tool.js";
 import type { LspManager } from "../lsp/manager.js";
 import type { BrowserManager } from "../browser/manager.js";
+import type { ScreenshotSink } from "../tools/browser-tools.js";
 import type { BinanceStreamManager } from "../domains/trading/binance-stream.js";
 import type { SemanticIndex } from "../domains/rails/index.js";
 import type { DocsStore } from "../docs/store.js";
@@ -179,8 +180,8 @@ export class AgentToolManager {
     this.registerToolPack(lspPack(lsp));
   }
 
-  registerBrowserTools(browser: BrowserManager): void {
-    this.registerToolPack(browserPack(browser));
+  registerBrowserTools(browser: BrowserManager, screenshots?: () => ScreenshotSink | undefined): void {
+    this.registerToolPack(browserPack(browser, screenshots));
   }
 
   registerRailsTools(rails: SemanticIndex): void {
@@ -199,7 +200,7 @@ export class AgentToolManager {
   /** Options for MCP registration with trust gating (P2 trust tier).
    * Without opts the connect-freely legacy path is used unchanged. */
   async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<Tool[]> {
-    if (!opts.trust && !opts.security && !opts.elicitation) {
+    if (!opts.trust && !opts.security && !opts.elicitation && !opts.env) {
       // Legacy path — no policy, no overrides, and no protocol callbacks; behavior identical to before.
       const tools = await connectMcpServer(command, args);
       for (const tool of tools) this.registerTool(tool, "MCP");

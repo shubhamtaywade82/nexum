@@ -18,9 +18,26 @@ export class PostgresHarness {
     return this.nexumDb.db;
   }
 
+  /**
+   * Empty every table between tests. The host finishes some work after the
+   * HTTP response is sent (e.g. an OpenAI-compat temporary session is evicted
+   * and deleted in a `finally`), so the previous test's trailing DELETE can
+   * hold row locks while this TRUNCATE wants an exclusive lock. Postgres then
+   * aborts one side with deadlock_detected (40P01); when it aborts the
+   * TRUNCATE, the DELETE completes and a retry succeeds.
+   */
   async cleanTables(): Promise<void> {
     if (!this.nexumDb) return;
-    await this.nexumDb.db.execute(sql`TRUNCATE TABLE execution_events, messages, runs, sessions CASCADE;`);
+    const maxAttempts = 5;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.nexumDb.db.execute(sql`TRUNCATE TABLE execution_events, messages, runs, sessions CASCADE;`);
+        return;
+      } catch (err) {
+        if (attempt >= maxAttempts || !isDeadlock(err)) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 50 * attempt));
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -29,4 +46,12 @@ export class PostgresHarness {
       this.nexumDb = null;
     }
   }
+}
+
+/** SQLSTATE 40P01, on the error itself or on the driver error drizzle wraps. */
+function isDeadlock(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
+    if ((e as { code?: unknown }).code === "40P01") return true;
+  }
+  return false;
 }

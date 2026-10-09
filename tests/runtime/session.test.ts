@@ -147,3 +147,28 @@ describe("SessionStore", () => {
     expect(store.load(listed[0].id)).toEqual(legacyMessages);
   });
 });
+
+describe("SessionStore redaction", () => {
+  it("never writes credentials to disk", async () => {
+    const { mkdtempSync, readFileSync, readdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { SessionStore } = await import("../../src/runtime/session.js");
+    const dir = mkdtempSync(join(tmpdir(), "sess-"));
+    const store = new SessionStore(dir);
+    store.save("s1", [
+      { role: "user", content: "my key is sk-live-abcdefghijklmnopqrstu and Bearer abcdefghijklmnopqrstuvwxyz" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ function: { name: "http", arguments: { password: "hunter2hunter2" } } }],
+      },
+    ]);
+    const file = readdirSync(dir).find((f) => f.startsWith("s1"))!;
+    const raw = readFileSync(join(dir, file), "utf8");
+    expect(raw).not.toContain("sk-live-abcdefghijklmnopqrstu");
+    expect(raw).not.toContain("abcdefghijklmnopqrstuvwxyz");
+    expect(raw).not.toContain("hunter2hunter2");
+    expect(raw).toContain("[REDACTED]");
+  });
+});

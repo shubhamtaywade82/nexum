@@ -13,6 +13,8 @@ export interface McpServerToolsOptions {
   /** Per-server security overrides applied to every tool. */
   security?: McpSecurityOverride;
   elicitation?: McpElicitationHandler;
+  /** Resolved environment for the server process (merged over the SDK's safe defaults). */
+  env?: Record<string, string>;
 }
 
 export interface ConnectedMcpServer {
@@ -34,6 +36,7 @@ export async function connectMcpServerTools(
     kind: "stdio",
     command,
     args,
+    ...(opts.env ? { env: opts.env } : {}),
     ...(opts.elicitation ? { elicitation: opts.elicitation } : {}),
   });
 

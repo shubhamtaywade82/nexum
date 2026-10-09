@@ -130,7 +130,3 @@ export class ContextPacker {
     };
   }
 }
-
-export function packTaskContext(input: TaskContextInput, opts?: ContextPackerOptions): PackedContext {
-  return new ContextPacker().pack(input, opts);
-}

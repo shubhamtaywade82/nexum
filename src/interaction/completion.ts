@@ -35,7 +35,7 @@ export interface CompletionItem {
   detail: string;
   insert: string;
   /** Completion kind for icon/grouping in future versions. */
-  kind?: "command" | "argument" | "template";
+  kind?: "command" | "argument" | "template" | "history" | "prompt";
   /** Optional category/group label shown in the right column. */
   group?: string;
 }
@@ -57,15 +57,63 @@ export function isNoOpCompletion(input: string, item: CompletionItem): boolean {
 
 /**
  * Autocomplete candidates for the prompt: slash commands when the input
- * starts with "/", prompt templates when it starts with "@".
+ * starts with "/", prompt templates when it starts with "@", or historical
+ * prompts and template matches for natural language queries (2+ chars).
  */
 export function completions(
   input: string,
   registry: SlashCommandRegistry,
   templates: PromptTemplate[] = BUILTIN_TEMPLATES,
+  history: string[] = [],
 ): CompletionItem[] {
   if (input.startsWith("@")) return templateCompletions(input, templates);
-  if (!input.startsWith("/")) return [];
+  if (!input.startsWith("/")) {
+    const trimmed = input.trim().toLowerCase();
+    if (trimmed.length < 2) return [];
+
+    const items: CompletionItem[] = [];
+    const seen = new Set<string>();
+
+    // 1. Check history matches (match all typed words)
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    for (let i = history.length - 1; i >= 0; i--) {
+      const h = history[i]!;
+      if (!h || h.startsWith("/")) continue;
+      const hLow = h.toLowerCase();
+      if (hLow !== trimmed && words.every((w) => hLow.includes(w)) && !seen.has(hLow)) {
+        seen.add(hLow);
+        items.push({
+          label: h.length > 28 ? h.slice(0, 25) + "..." : h,
+          detail: h,
+          insert: h,
+          kind: "history",
+          group: "History",
+        });
+        if (items.length >= 4) break;
+      }
+    }
+
+    // 2. Check template matches if room
+    if (items.length < 5) {
+      for (const t of templates) {
+        const tLow = t.name.toLowerCase();
+        const dLow = t.description.toLowerCase();
+        if (words.some((w) => tLow.includes(w) || dLow.includes(w)) && !seen.has(tLow)) {
+          seen.add(tLow);
+          items.push({
+            label: `@${t.name}`,
+            detail: t.description,
+            insert: t.insert,
+            kind: "template",
+            group: "Template",
+          });
+          if (items.length >= 6) break;
+        }
+      }
+    }
+
+    return items;
+  }
 
   const spaceIdx = input.indexOf(" ");
   if (spaceIdx === -1) {

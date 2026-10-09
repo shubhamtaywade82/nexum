@@ -169,6 +169,9 @@ const cfg = loadConfig();
       validateModel: () => agent.validateModel(),
       getSkillsRegistry: () => agent.getSkillsRegistry(),
       pinSkill: (id: string | null) => agent.pinSkill(id),
+      usageAll: (range?: "24h" | "7d" | "30d") => agent.usageAll(range),
+      balanceAll: () => agent.balanceAll(),
+      importGguf: (model: string, path: string) => agent.importGguf(model, path),
     };
   }
 
@@ -214,7 +217,7 @@ const cfg = loadConfig();
       });
     }
     agent.setProjectInfo(detectedProject);
-    wireAgentBridge(agent as unknown as BridgeableAgent, bus);
+    wireAgentBridge(agent as unknown as BridgeableAgent, bus, { workspaceRoot: agent.workspaceRoot });
     agent
       .connectConfiguredMcpServers()
       .then((servers) => bus.publish({ type: "mcp.changed", servers }))

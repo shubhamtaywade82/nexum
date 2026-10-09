@@ -81,6 +81,7 @@ export {
   type StoreListener,
 } from "./store.js";
 export { applyTaskTransition, canTransition, readyTasks } from "./task-machine.js";
+export { gateTaskCompletion, type GateResult, type GateOutcome, type GateOptions } from "./verification-gate.js";
 export { SessionStore, type SessionMeta } from "./session.js";
 export { CheckpointStore, sanitizeResumedSteps, type CheckpointData } from "./checkpoint.js";
 export { ConcurrencyGate, GateSaturatedError, GateAbortedError } from "../core/concurrency/gate.js";

@@ -5,6 +5,7 @@ import { Tool } from "./tool.js";
 import { guardPath, toGuard, PathEscapeError, SensitivePathError, type WorkspaceBoundary } from "./path-utils.js";
 import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
 import { readVerified, writeVerified } from "./verified-fs.js";
+import { enforceEditSyntax } from "../validation/edit-check.js";
 
 export { PathEscapeError, SensitivePathError };
 
@@ -110,8 +111,17 @@ export class WriteFileTool extends Tool {
     const relPath = args.path as string;
     const content = args.content as string;
     const path = guardPath(this.guard, "write", relPath);
+    const before = await readVerified(this.guard, "read", relPath).then(
+      (b) => b.toString("utf-8"),
+      () => null,
+    );
+    const syntaxWarning = enforceEditSyntax(relPath, before, content);
     await mkdir(dirname(path), { recursive: true });
     await writeVerified(this.guard, relPath, content);
-    return { path: relPath, bytesWritten: Buffer.byteLength(content, "utf-8") };
+    return {
+      path: relPath,
+      bytesWritten: Buffer.byteLength(content, "utf-8"),
+      ...(syntaxWarning ? { syntaxWarning } : {}),
+    };
   }
 }

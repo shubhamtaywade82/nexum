@@ -21,6 +21,12 @@ export interface PlanStep {
   status: StepStatus;
   dependencies: string[];
   rollbackCommand?: string;
+  /**
+   * Shell command that exits 0 only when this step is actually done (e.g. a
+   * focused test run). When present, the step completes only through the
+   * verification gate — the model saying it finished is not enough.
+   */
+  verify?: string;
   retryCount: number;
   priority?: "low" | "medium" | "high" | "critical";
 }

@@ -155,9 +155,27 @@ export class WebhookService {
     return [...this.endpoints.values()].find((e) => e.path === path && e.active);
   }
 
-  /** Add a rule (filter/transform/handler). */
-  addRule(rule: WebhookRule): this {
-    this.rules.push(rule);
+  /**
+   * Compiles JSON rule specs (no `handle` function — e.g. from RPC/config)
+   * into executable rules; returns undefined for unsupported specs.
+   */
+  private actionCompiler?: (spec: unknown) => WebhookRule | undefined;
+
+  setActionCompiler(compile: (spec: unknown) => WebhookRule | undefined): this {
+    this.actionCompiler = compile;
+    return this;
+  }
+
+  /** Add a rule (filter/transform/handler), or a declarative spec the action compiler understands. */
+  addRule(rule: WebhookRule | Record<string, unknown>): this {
+    if (typeof (rule as WebhookRule).handle === "function") {
+      this.rules.push(rule as WebhookRule);
+      return this;
+    }
+    const compiled = this.actionCompiler?.(rule);
+    // A handler-less rule could never deliver anything: refuse it loudly.
+    if (!compiled) throw new Error("webhook rule needs a handle() function or a supported action");
+    this.rules.push(compiled);
     return this;
   }
 

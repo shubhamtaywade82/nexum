@@ -25,10 +25,15 @@ OLLAMA_API_KEYS=key_b,key_c,key_d          # comma-separated pool
 
 ```json
 // .nexum/config.json
-{ "apiKeys": ["key_e"] }
+{
+  "apiKeys": ["key_e"],
+  "accounts": [{ "apiKey": "key_f", "label": "me@example.com" }]
+}
 ```
 
 `OLLAMA_*` names are provider-convention variables and keep their upstream names (see `docs/REBRANDING.md`). A single key still works exactly as before — the pool machinery only engages with **two or more** keys.
+
+`accounts` is the preferred form when you run several keys: it pairs each key with a `label` naming your account, which `/usage` and `/balance` print instead of a masked key suffix (Ollama's API returns no email or org, so the name has to come from here). Both forms may be present; keys are deduped and a label always follows its key.
 
 ## Layer 1 — automatic rotation in the SDK client
 

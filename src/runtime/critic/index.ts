@@ -20,4 +20,11 @@ export type { SelfCorrectionResult, SelfCorrectionOptions } from "./reflection.j
 export { SelfCorrectionLoop } from "./reflection.js";
 
 export type { VerificationCheck, VerificationResult, VerificationReport } from "./verifier.js";
-export { VerifierService, expectOutputContains, expectNoPlaceholders, expectMinLength } from "./verifier.js";
+export type { CommandOutcome } from "./verifier.js";
+export {
+  VerifierService,
+  expectOutputContains,
+  expectNoPlaceholders,
+  expectMinLength,
+  expectCommandSucceeds,
+} from "./verifier.js";

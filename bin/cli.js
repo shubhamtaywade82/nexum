@@ -46,6 +46,7 @@ Usage:
   nexum migrate                 Migrate legacy .devagent state to .nexum
   nexum trust [status|revoke]   Review and trust this workspace's settings and .env
   nexum asl [validate|graph]    Architecture definition commands
+  nexum eval <dataset.json>     Score real agent runs against an evaluation dataset
   nexum evolve [options]        Harness evolution and self-development commands
   nexum plugins sandbox <file>  Trial-run a plugin in the worker sandbox
   nexum plugins verify [id…]    Re-verify installed marketplace plugins
@@ -85,6 +86,11 @@ if (command === 'doctor') {
   console.log('=== Nexum Doctor ===');
   console.log(report.lines.join('\n'));
   process.exit(report.ok ? 0 : 1);
+}
+
+if (command === 'eval') {
+  const { runEvalCommand } = await import('../dist/evaluation/cli.js');
+  process.exit(await runEvalCommand(process.argv.slice(3)));
 }
 
 if (command === 'evolve') {

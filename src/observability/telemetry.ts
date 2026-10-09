@@ -38,7 +38,7 @@ export class TelemetryService {
   private readonly flushIntervalMs: number;
   private readonly onError?: (error: string) => void;
   private readonly bus?: EventBus;
-  private mapper?: SpanEventMapper;
+  private readonly mapper: SpanEventMapper;
   private detachBus?: () => void;
   private flushTimer?: ReturnType<typeof setInterval>;
   private started = false;
@@ -50,21 +50,20 @@ export class TelemetryService {
     this.flushIntervalMs = opts.flushIntervalMs ?? 5000;
     this.onError = opts.onError;
     this.bus = opts.bus;
-    if (opts.bus) {
-      this.mapper = new SpanEventMapper(this.tracer, {
-        onMetric: (name, labels, value) => {
-          if (value === 1) this.metrics.inc(name, labels);
-          else if (value !== undefined) this.metrics.observe(name, labels, value);
-        },
-      });
-    }
+    // Always built: it also serves bus-less embedding through record().
+    this.mapper = new SpanEventMapper(this.tracer, {
+      onMetric: (name, labels, value) => {
+        if (value === 1) this.metrics.inc(name, labels);
+        else if (value !== undefined) this.metrics.observe(name, labels, value);
+      },
+    });
   }
 
   /** Start: attach the bus listener (constructor bus, or this call's) and the flush timer. */
   start(bus?: EventBus): this {
     const target = bus ?? this.bus;
     if (target && this.mapper) {
-      this.detachBus = target.subscribe((event) => this.mapper?.consume(event));
+      this.detachBus = target.subscribe((event) => this.mapper.consume(event));
     }
     if (this.exporter && this.flushIntervalMs > 0) {
       this.flushTimer = setInterval(() => void this.flush(), this.flushIntervalMs);
@@ -102,7 +101,7 @@ export class TelemetryService {
 
   /** Feed a single event manually (bus-less embedding). */
   record(event: Parameters<SpanEventMapper["consume"]>[0]): void {
-    this.mapper?.consume(event);
+    this.mapper.consume(event);
   }
 }
 

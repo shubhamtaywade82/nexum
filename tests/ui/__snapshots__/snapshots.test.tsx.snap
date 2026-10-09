@@ -5,19 +5,19 @@ exports[`layout snapshots dashboard view at 140x40 1`] = `
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 [Chat] │  Plan  │  Tasks  │  Changes  │  Logs  │ Ctrl+P Palette
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-MISSION                        │ You                                                                        │ FILES (2 CHANGED)
-add authentication             │   create filesystem tool                                                   │ M src/tools/fs.ts
- ✓ Understand                  │                                                                            │ A src/tools/index.ts
- ✓ Inspect                     │ Nexum · local/qwen3:30b                                                    │
- ✓ Plan                        │   Analyzing project structure and existing patterns...                     │
- ▶ Execute              0m 00s │     • Reading package.json                                                 │
- ○ Complete                    │     • Found TypeScript project                                             │
-   ── ✓ Create User model      │ ◆ Execute > Add Devise gem                                                 │
-   ── ▶ Add Devise gem         │                                                                            │
-                               │ 📄 Gemfile (pending_review) +1 -0                                          │
+MISSION                        │ > create filesystem tool                                                   │ FILES (2 CHANGED)
+add authentication             │                                                                            │ M src/tools/fs.ts
+ ✓ Understand                  │ ◆ Nexum · local/qwen3:30b                                                  │ A src/tools/index.ts
+ ✓ Inspect                     │   Analyzing project structure and existing patterns...                     │
+ ✓ Plan                        │     • Reading package.json                                                 │
+ ▶ Execute              0m 00s │     • Found TypeScript project                                             │
+ ○ Complete                    │ ◆ Execute > Add Devise gem                                                 │
+   ── ✓ Create User model      │                                                                            │
+   ── ▶ Add Devise gem         │ 📄 Gemfile (pending_review) +1 -0                                          │
                                │   +gem 'devise'                                                            │
                                │   ✓ Gemfile  +1 −0                                                         │
                                │   1 file · +1 −0                                                           │
+                               │                                                                            │
                                │                                                                            │
                                │                                                                            │
                                │                                                                            │
@@ -38,7 +38,7 @@ View all tools... (/tools)     │                                              
                                │ ────────────────────────────────────────────────────────────────────────── │
                                │ 1 file changed · +1 −0 · Ctrl+D open diff                                  │
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
->   Type a message or / for commands...
+>   Type a message or / for commands...                                                                       Tab complete · Shift+↵ newline
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ● Connected │ 🔀 Git main │ Context: 48k / 71k tokens │ ⏱ 0m"
 `;
@@ -48,10 +48,9 @@ exports[`layout snapshots same structure, density-only changes at 80x24 1`] = `
 ───────────────────────────────────────────────────────────────────────────────
 [Chat] │  Plan  │  Tasks  │  Changes  │  Logs  │ Ctrl+P Palette
 ────────────────────────────────────────────────────────────────────────────────
-You
-  create filesystem tool
+> create filesystem tool
 
-Nexum · local/qwen3:30b
+◆ Nexum · local/qwen3:30b
   Analyzing project structure and existing patterns...
     • Reading package.json
     • Found TypeScript project
@@ -64,8 +63,9 @@ Nexum · local/qwen3:30b
 
 
 
+
 ───────────────────────────────────────────────────────────────────────────────
->   Type a message or / for commands...
+>   Type a message or / for commands...           Tab complete · Shift+↵ newline
 ───────────────────────────────────────────────────────────────────────────────
 ● Connected │ 🔀 Git main │ Context: 48k / 71k tokens │ ⏱ 0m"
 `;
@@ -75,10 +75,9 @@ exports[`layout snapshots same structure, density-only changes at 100x30 1`] = `
 ───────────────────────────────────────────────────────────────────────────────────────────────────
 [Chat] │  Plan  │  Tasks  │  Changes  │  Logs  │ Ctrl+P Palette
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-You
-  create filesystem tool
+> create filesystem tool
 
-Nexum · local/qwen3:30b
+◆ Nexum · local/qwen3:30b
   Analyzing project structure and existing patterns...
     • Reading package.json
     • Found TypeScript project
@@ -97,8 +96,9 @@ Nexum · local/qwen3:30b
 
 
 
+
 ───────────────────────────────────────────────────────────────────────────────────────────────────
->   Type a message or / for commands...
+>   Type a message or / for commands...                               Tab complete · Shift+↵ newline
 ───────────────────────────────────────────────────────────────────────────────────────────────────
 ● Connected │ 🔀 Git main │ Context: 48k / 71k tokens │ ⏱ 0m"
 `;
@@ -108,10 +108,9 @@ exports[`layout snapshots same structure, density-only changes at 120x30 1`] = `
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 [Chat] │  Plan  │  Tasks  │  Changes  │  Logs  │ Ctrl+P Palette
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-You
-  create filesystem tool
+> create filesystem tool
 
-Nexum · local/qwen3:30b
+◆ Nexum · local/qwen3:30b
   Analyzing project structure and existing patterns...
     • Reading package.json
     • Found TypeScript project
@@ -130,8 +129,9 @@ Nexum · local/qwen3:30b
 
 
 
+
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
->   Type a message or / for commands...
+>   Type a message or / for commands...                                                   Tab complete · Shift+↵ newline
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ● Connected │ 🔀 Git main │ Context: 48k / 71k tokens │ ⏱ 0m"
 `;
@@ -141,10 +141,9 @@ exports[`layout snapshots same structure, density-only changes at 160x45 1`] = `
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 [Chat] │  Plan  │  Tasks  │  Changes  │  Logs  │ Ctrl+P Palette
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-You
-  create filesystem tool
+> create filesystem tool
 
-Nexum · local/qwen3:30b
+◆ Nexum · local/qwen3:30b
   Analyzing project structure and existing patterns...
     • Reading package.json
     • Found TypeScript project
@@ -178,8 +177,9 @@ Nexum · local/qwen3:30b
 
 
 
+
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
->   Type a message or / for commands...
+>   Type a message or / for commands...                                                                                           Tab complete · Shift+↵ newline
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ● Connected │ 🔀 Git main │ Context: 48k / 71k tokens │ ⏱ 0m"
 `;
@@ -189,10 +189,9 @@ exports[`layout snapshots same structure, density-only changes at 220x60 1`] = `
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 [Chat] │  Plan  │  Tasks  │  Changes  │  Logs  │ Ctrl+P Palette
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-You
-  create filesystem tool
+> create filesystem tool
 
-Nexum · local/qwen3:30b
+◆ Nexum · local/qwen3:30b
   Analyzing project structure and existing patterns...
     • Reading package.json
     • Found TypeScript project
@@ -241,8 +240,9 @@ Nexum · local/qwen3:30b
 
 
 
+
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
->   Type a message or / for commands...
+>   Type a message or / for commands...                                                                                                                                                       Tab complete · Shift+↵ newline
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ● Connected │ 🔀 Git main │ Context: 48k / 71k tokens │ ⏱ 0m"
 `;

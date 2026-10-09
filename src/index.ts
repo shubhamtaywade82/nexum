@@ -729,7 +729,9 @@ export {
   expectOutputContains,
   expectNoPlaceholders,
   expectMinLength,
+  expectCommandSucceeds,
   severityAtLeast,
+  type CommandOutcome,
   type Critique,
   type CritiqueWeakness,
   type CriticOptions,
@@ -739,6 +741,36 @@ export {
   type VerificationReport,
 } from "./runtime/critic/index.js";
 export type { CriticPolicy } from "./runtime/strategies/execution-strategy.js";
+export {
+  gateTaskCompletion,
+  type GateResult,
+  type GateOutcome,
+  type GateOptions,
+} from "./runtime/verification-gate.js";
+
+// Model-aware context compilation
+export {
+  ContextCompiler,
+  compileContext,
+  type CompileInput,
+  type CompileStep,
+  type CompileFact,
+  type CompileArtifact,
+  type CompileTool,
+  type CompilerOptions,
+  type CompiledContext,
+  type CompiledSection,
+  type CompiledSectionName,
+  type CompileExclusion,
+} from "./context/compiler.js";
+export {
+  budgetForProfile,
+  sizeClassFor,
+  type ModelBudget,
+  type ModelBudgetOverrides,
+  type ModelSizeClass,
+  type ReasoningBudget,
+} from "./models/profiles/context-budget.js";
 
 // Artifacts (versioned, provenance-carrying outputs)
 export {

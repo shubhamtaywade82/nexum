@@ -74,6 +74,12 @@ function TurnSeparator({ width }: { width: number }): React.JSX.Element {
   );
 }
 
+function summarizeThinking(text: string, maxWidth: number): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "Thought";
+  return truncate(cleaned, maxWidth);
+}
+
 function getToolOutputLines(text: string | undefined, maxLines = 4, maxWidth = 80): string[] {
   if (!text) return [];
   const lines = text
@@ -254,48 +260,93 @@ export function ConversationView({ state, width, rows, detail: _detail }: ViewPr
 
       if (entry.kind === "text") {
         if (entry.role === "thinking") {
-          const preview = entry.text.slice(0, bodyWidth - 6).replace(/\n.*$/s, "") || "Thinking...";
-          b.push({
-            key: `think-${entry.at}-${idx}`,
-            height: 1,
-            render: () => (
-              <Box key={`think-${entry.at}-${idx}`} flexDirection="column">
-                <Box height={1}>
-                  <Text color={themeColors().accent} dimColor wrap="truncate">
-                    ▸ {preview}
+          const isCurrentActive =
+            idx === state.conversation.length - 1 &&
+            (state.actors.conversation.health === "thinking" || state.actors.conversation.health === "active");
+
+          if (isCurrentActive) {
+            const lines = renderSimpleMarkdown(entry.text || "Thinking...", bodyWidth - 4);
+            const headerHeight = 1;
+            const contentHeight = Math.max(1, lines.length);
+            b.push({
+              key: `think-${entry.at}-${idx}`,
+              height: headerHeight + contentHeight,
+              render: (startRow, endRow) => {
+                const showHeader = startRow === 0;
+                const bodyStart = Math.max(0, startRow - headerHeight);
+                const bodyEnd = Math.max(0, endRow - headerHeight);
+                const visibleLines = lines.slice(bodyStart, bodyEnd);
+                return (
+                  <Box key={`think-${entry.at}-${idx}`} flexDirection="column">
+                    {showHeader ? (
+                      <Box height={1}>
+                        <Text color={themeColors().mutedForeground} dimColor>
+                          ▸ Thinking...
+                        </Text>
+                      </Box>
+                    ) : null}
+                    {visibleLines.map((line, li) => (
+                      <Box key={bodyStart + li} height={1}>
+                        <Box width={2} />
+                        {line.indent ? <Box width={line.indent} /> : null}
+                        <SpanText spans={line.spans} color={themeColors().mutedForeground} dimColor />
+                      </Box>
+                    ))}
+                  </Box>
+                );
+              },
+            });
+          } else {
+            const summary = summarizeThinking(entry.text, bodyWidth - 14);
+            b.push({
+              key: `think-${entry.at}-${idx}`,
+              height: 1,
+              render: () => (
+                <Box key={`think-${entry.at}-${idx}`} flexDirection="row" height={1}>
+                  <Text color={themeColors().mutedForeground} dimColor wrap="truncate">
+                    {"▸ Thought "}
+                  </Text>
+                  <Text color={themeColors().mutedForeground} dimColor wrap="truncate">
+                    ({summary})
                   </Text>
                 </Box>
-              </Box>
-            ),
-          });
+              ),
+            });
+          }
         } else if (entry.role === "user") {
           const lines = renderSimpleMarkdown(entry.text, bodyWidth - 2);
-          const showSpeaker = lastSpeaker !== "user";
           lastSpeaker = "user";
           b.push({
             key: `user-${entry.at}-${idx}`,
-            height: lines.length + (showSpeaker ? 1 : 0),
+            height: Math.max(1, lines.length),
             render: (startRow, endRow) => {
-              const speakerVisible = showSpeaker && startRow === 0;
-              const bodyStart = showSpeaker ? Math.max(0, startRow - 1) : startRow;
-              const bodyEnd = showSpeaker ? endRow - 1 : endRow;
-              const visibleLines = lines.slice(bodyStart, bodyEnd);
+              const visibleLines = lines.slice(startRow, endRow);
               return (
                 <Box key={`user-${entry.at}`} flexDirection="column">
-                  {speakerVisible ? (
+                  {visibleLines.length === 0 ? (
                     <Box height={1}>
                       <Text bold color={themeColors().success}>
-                        You
+                        {"> "}
                       </Text>
                     </Box>
-                  ) : null}
-                  {visibleLines.map((line, li) => (
-                    <Box key={bodyStart + li} height={1}>
-                      <Box width={2} />
-                      {line.indent ? <Box width={line.indent} /> : null}
-                      <SpanText spans={line.spans} />
-                    </Box>
-                  ))}
+                  ) : (
+                    visibleLines.map((line, li) => {
+                      const lineIdx = startRow + li;
+                      return (
+                        <Box key={lineIdx} height={1}>
+                          {lineIdx === 0 ? (
+                            <Text bold color={themeColors().success}>
+                              {"> "}
+                            </Text>
+                          ) : (
+                            <Box width={2} />
+                          )}
+                          {line.indent ? <Box width={line.indent} /> : null}
+                          <SpanText spans={line.spans} />
+                        </Box>
+                      );
+                    })
+                  )}
                 </Box>
               );
             },
@@ -318,7 +369,7 @@ export function ConversationView({ state, width, rows, detail: _detail }: ViewPr
                   {speakerVisible ? (
                     <Box height={1}>
                       <Text bold color={themeColors().info}>
-                        Nexum
+                        ◆ Nexum
                       </Text>
                       {entry.model ? (
                         <Text color={themeColors().mutedForeground} dimColor>
@@ -663,7 +714,9 @@ export function ConversationView({ state, width, rows, detail: _detail }: ViewPr
 
   return (
     <Box flexDirection="column" height={rows} width={width}>
-      {visibleBlocks.map(({ block, startRow, endRow }) => block.render(startRow, endRow))}
+      {visibleBlocks.map(({ block, startRow, endRow }) => (
+        <React.Fragment key={block.key}>{block.render(startRow, endRow)}</React.Fragment>
+      ))}
     </Box>
   );
 }

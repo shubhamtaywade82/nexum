@@ -47,6 +47,10 @@ export interface CliConfig {
   /** Pool of Ollama Cloud API keys (e.g. separate accounts) — Provider rotates to the
    * next key on a 429 before giving up. Ollama Cloud only, not a multi-vendor router. */
   apiKeys?: string[];
+  /** apiKey → display label, resolved from the config file's structured
+   * `accounts`. Names the rows /usage and /balance print; keys without a
+   * label fall back to a masked suffix of the key itself. */
+  accountLabels?: Record<string, string>;
   /** Preferred local model name (substring match) for the "quick" capability,
    * e.g. "minicpm5" — see ModelCatalog.modelsFor. */
   quickModel?: string;
@@ -112,6 +116,8 @@ export interface CliConfig {
    * `cloud`, the decision plane stays disabled automatically (System One is
    * local-only — see contracts/overlays/systemone.yaml in the upstream SDK). */
   enableDecision?: boolean;
+  /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
+  profile?: string;
   /** Dedicated model used for bounded decisions (classification/scoring/
    * gating/routing). Independent of the primary generation `model` — the
    * primary model handles reasoning/coding/generation; the decision model
@@ -131,6 +137,8 @@ export interface McpCliServerConfig {
   trust?: McpServerTrustConfig["trust"];
   tools?: McpToolRule;
   maxRisk?: McpServerTrustConfig["maxRisk"];
+  /** Extra environment for the server process; `credential:NAME` values resolve via CredentialService. */
+  env?: Record<string, string>;
 }
 
 interface ConfigFile {
@@ -151,6 +159,10 @@ interface ConfigFile {
   toolSelectionMode?: string;
   maxActiveTools?: number;
   apiKeys?: string[];
+  /** Structured form of `apiKeys`: each key paired with the name shown by
+   * /usage and /balance. Preferred over the flat list — the pairing cannot
+   * drift — but both may be present. */
+  accounts?: Array<{ apiKey: string; label?: string }>;
   quickModel?: string;
   enableLocalWorker?: boolean;
   enableVerifier?: boolean;
@@ -168,6 +180,8 @@ interface ConfigFile {
   pricing?: { inputPerMillion: number; outputPerMillion: number };
   mcpServers?: McpCliServerConfig[];
   enableDecision?: boolean;
+  /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
+  profile?: string;
   decisionModel?: string;
 }
 
@@ -182,15 +196,54 @@ const GLOBAL_CONFIG_DIR = globalStateDir();
 // Legacy DevAgent-era global state — read as a deprecated fallback, never written.
 const LEGACY_GLOBAL_CONFIG_DIR = legacyGlobalStateDir();
 
-/** Parse a config JSON file, tolerating absence and malformed content. */
+/** Remove `//` and `/* *`/ comments, leaving string literals (URLs, prompts)
+ * untouched. Only ever applied after a strict JSON.parse has already failed,
+ * so a valid config is never handed to it. */
+function stripJsonComments(raw: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (inString) {
+      out += c;
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+    } else if (c === "/" && raw[i + 1] === "/") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      out += "\n"; // keep the line count stable
+    } else if (c === "/" && raw[i + 1] === "*") {
+      i += 2;
+      while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
+      i++;
+      out += " ";
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+/** Parse a config JSON file, tolerating absence and malformed content.
+ * `//` comments are accepted (config.example.jsonc ships with them), but only
+ * once plain JSON.parse has rejected the file — a comment typo then costs you
+ * the whole file, exactly as any other syntax error would. */
 function readConfigFile(p: string): ConfigFile {
   if (!existsSync(p)) return {};
-  try {
-    const raw = readFileSync(p, "utf8");
-    const parsed = JSON.parse(raw) as ConfigFile;
-    if (parsed && typeof parsed === "object") return parsed;
-  } catch {
-    // skip malformed config file
+  const raw = readFileSync(p, "utf8");
+  for (const candidate of [raw, stripJsonComments(raw)]) {
+    try {
+      const parsed = JSON.parse(candidate) as ConfigFile;
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      // try the next candidate
+    }
   }
   return {};
 }
@@ -382,6 +435,16 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     .filter(Boolean);
   const apiKeys = [...new Set([...(primaryApiKey ? [primaryApiKey] : []), ...envKeys, ...(file.apiKeys ?? [])])];
 
+  // Structured `accounts` pair each key with the name /usage and /balance
+  // print. Labels are keyed by apiKey — not by position — so a key listed
+  // twice, or through both forms, resolves to exactly one label.
+  const accountLabels: Record<string, string> = {};
+  for (const account of file.accounts ?? []) {
+    const label = typeof account?.label === "string" ? account.label.trim() : "";
+    if (account?.apiKey && label) accountLabels[account.apiKey] = label;
+    if (account?.apiKey && !apiKeys.includes(account.apiKey)) apiKeys.push(account.apiKey);
+  }
+
   // Number() on a malformed value yields NaN, which is not nullish and so
   // sails straight past every `?? default` downstream. Validate here instead.
   const positiveNumber = (raw: string | undefined, fallback: number): number => {
@@ -439,6 +502,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     toolSelectionMode,
     maxActiveTools,
     apiKeys: apiKeys.length ? apiKeys : undefined,
+    accountLabels: Object.keys(accountLabels).length ? accountLabels : undefined,
     quickModel: readEnv("QUICK_MODEL") || file.quickModel,
     // Hybrid architecture flags
     enableLocalWorker: readEnvFlag("LOCAL_WORKER", file.enableLocalWorker ?? true),
@@ -461,6 +525,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     // tier (System One is local-only — the gateway itself enforces this
     // too, but disabling at config time means no adapter is even built).
     enableDecision: readEnvFlag("DECISION", file.enableDecision ?? false),
+    profile: readEnv("PROFILE") || file.profile || "nexum-cli",
     decisionModel: readEnv("DECISION_MODEL") || file.decisionModel || "tev1",
     workspaceTrust: {
       status: trust.status,

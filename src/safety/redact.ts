@@ -54,13 +54,3 @@ export function redactObject<T>(value: T): T {
   }
   return value;
 }
-
-/** Detect names of secret patterns present in text. */
-export function detectSecretPatterns(text: string): string[] {
-  const hits: string[] = [];
-  for (const { name, re } of SECRET_PATTERNS) {
-    re.lastIndex = 0;
-    if (re.test(text)) hits.push(name);
-  }
-  return hits;
-}

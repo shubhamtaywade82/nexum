@@ -68,10 +68,6 @@ export function setActiveTheme(name: ThemeName): void {
   activeThemeName = name;
 }
 
-export function getActiveTheme(): ThemeName {
-  return activeThemeName;
-}
-
 export function semanticColor(health: ActorHealth): string {
   return paletteFor(getTheme(activeThemeName))[health];
 }

@@ -20,12 +20,12 @@ await telemetry.stop(); // flush remaining spans
 
 Environment:
 
-| Variable | Effect |
-|---|---|
-| `NEXUM_TELEMETRY_ENABLED=0` | Disable entirely |
+| Variable                            | Effect                                                             |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| `NEXUM_TELEMETRY_ENABLED=0`         | Disable entirely                                                   |
 | `NEXUM_OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP traces endpoint (e.g. `http://collector:4318/v1/traces`) |
-| `NEXUM_OTEL_SERVICE_NAME` | Resource `service.name` (default `nexum`) |
-| `NEXUM_OTEL_EXPORT_INTERVAL_MS` | Span batch flush interval (default 5000) |
+| `NEXUM_OTEL_SERVICE_NAME`           | Resource `service.name` (default `nexum`)                          |
+| `NEXUM_OTEL_EXPORT_INTERVAL_MS`     | Span batch flush interval (default 5000)                           |
 
 ## Tracing
 
@@ -37,12 +37,12 @@ Exporters: `OtlpHttpExporter` (OTLP/HTTP JSON with resource + scope + Unix-nano 
 
 `MetricsRegistry` — counters, gauges, histograms with label dimensions and default latency buckets. Standard metrics wired from execution events:
 
-| Metric | Labels |
-|---|---|
-| `nexum_runs_total` | `status` |
-| `nexum_runs_started_total` | — |
-| `nexum_tool_calls_total` | `tool`, `ok` |
-| `nexum_model_calls_total` | `tier`, `model` |
+| Metric                         | Labels            |
+| ------------------------------ | ----------------- |
+| `nexum_runs_total`             | `status`          |
+| `nexum_runs_started_total`     | —                 |
+| `nexum_tool_calls_total`       | `tool`, `ok`      |
+| `nexum_model_calls_total`      | `tier`, `model`   |
 | `nexum_policy_decisions_total` | `allowed`, `tool` |
 
 `renderPrometheus(registry)` renders the Prometheus text exposition format (TYPE/HELP lines, `_bucket`/`_sum`/`_count` for histograms, escaped labels) — mount it behind any HTTP handler for scraping.
@@ -52,3 +52,13 @@ Exporters: `OtlpHttpExporter` (OTLP/HTTP JSON with resource + scope + Unix-nano 
 - Hand-rolled OTLP JSON instead of the OTel SDK: the runtime gains collector compatibility without new dependencies; the span model matches OTel semantics so a future SDK swap is mechanical.
 - Telemetry failures are **reported, never thrown** — observation must not break the observed runtime.
 - The control plane's `MetricSpec`/health system remains the ops view; this registry is the time-series view. Both can coexist on the same process.
+
+## Wiring in the CLI and host
+
+Every `Agent` records its runs through an `ExecutionRecorder` whose live sink
+feeds one **process-wide** `TelemetryService` (`processTelemetry()` in
+`src/observability/process-telemetry.ts`) — the host runs an agent per
+session, and a shared registry keeps `/metrics` whole and exports through a
+single OTLP exporter. `nexum serve` exposes the registry at `GET /metrics`
+(Prometheus text, same auth as the other routes); pending spans are flushed
+on `Agent.stopHost()`.

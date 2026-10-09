@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+### Wired — previously unreachable implementation
+
+A reachability audit (entry points: `bin/cli.js`, npm scripts, TUI, host;
+package `exports` as SDK roots) found ~15.6K lines of implementation no
+entry point reached, plus services constructed on every `Agent` and never
+called. Everything is now either wired into a live path or removed; the
+audit reports **0 dead modules**. 13 modules remain SDK-only package exports
+(product agents, multiagent, kernel planner/executor/step runners, judge
+calibration, event families).
+
+- **Turn path**: per-turn model budget (tool cap + token-aware compaction),
+  plan steps via `VerifiedStepRunner` (compiled briefs, `verify` commands
+  through the verification gate, escalation policy on retry), decision-plane
+  consumers (`enableDecision`), opt-in critic (`NEXUM_VERIFIER`), HookEngine
+  (prompt/pre-tool/post-tool, exposed to plugins), provider context notes.
+- **Persistence & audit**: durable run logs per message (`.nexum/runs`),
+  session/run history tools (`session_search`, `session_events`,
+  `session_trace`), oversized tool outputs as artifacts (`artifact_read`),
+  screenshots as attachments, credential redaction for persisted
+  transcripts and memory.
+- **Tools**: `web_fetch` + `internet_search` (SSRF-guarded WebService),
+  edit syntax checks on every file mutation.
+- **Ops**: process-wide telemetry + `GET /metrics`, `NEXUM_TOKEN_BUDGET`
+  enforced, webhook `agent.run` actions on a durable job queue,
+  `mcpServers[].env` `credential:NAME` references, `NEXUM_PROFILE`, built-in
+  plugins backed by the agent's live services.
+- **CLI/TUI**: `nexum eval`, kernel-supervised `nexum evolve --strategy agent`,
+  diff previews + test results in the conversation, Ctrl+Y execution DAG.
+- **Fixes found while wiring**: `apply_patch`/`edit_file_lines` wrote files on
+  `dry_run`; `CompactionPolicy` ignored `minMessagesToCompact`; the DAG
+  overlay showed hard-coded demo nodes; the workspace credentials file
+  overrode env credentials in untrusted workspaces; `FileReferenceProvider`
+  read absolute/sensitive paths; handler-less webhook rules were accepted and
+  never delivered.
+- **Removed (superseded)**: `intelligence/{router,provider,context-builder}`
+  (WorkspaceKnowledgeEngine), `validation/patch-safety` & co (WorkspaceGuard +
+  edit-check), `session-replay` + `ExecutionNodeGraph` (run logs), unused
+  conversation cards (ConversationView), `tools/mutations/transactional`
+  (CAS editor + git), `evolution/plane`, compat shims and dead barrels, and 32
+  unused vendored termcn components (re-vendor on demand with
+  `node scripts/vendor-termcn.mjs <name>`; the registry cache is checked in).
+
+### Added — model-aware Context Compiler & verification gate
+
+- **`budgetForProfile`** (`src/models/profiles/context-budget.ts`): derives a
+  per-call context/tool budget from a `ModelProfile` (small / standard /
+  frontier size classes), clamped to the real context window minus an output
+  reserve. `ModelConstraints` gains optional `preferredContextTokens` and
+  `maxToolCount`.
+- **`ContextCompiler`** (`src/context/compiler.ts`): compiles task node,
+  constraints, success criteria, evidence (via `ContextPacker`), failures,
+  decisions, facts, artifact references and a ranked tool pack into one
+  budgeted, deterministic prompt block with a full exclusion manifest.
+- **`gateTaskCompletion`** (`src/runtime/verification-gate.ts`) and
+  **`expectCommandSucceeds`**: a task moves `running → completed` only when
+  its deterministic verification contract passes.
+
+See `docs/guide/context-compiler.md`.
+
 ### Added — ink-ui (termcn) component layer & theme system (`src/tui/ui/`)
 
 Nexum's TUI presentation layer migrates from hand-rolled Ink primitives onto
@@ -11,10 +70,10 @@ component registry (shadcn-style copy-paste install via
 keybindings, picker/prompt engines — stays put.
 
 - **Theme system**: 15 built-in semantic themes (default/midnight/solarized
-  + dracula, nord, github, gruvbox, tokyo-night, monokai, catppuccin,
-  one-dark, vercel, high-contrast, high-contrast-light, matrix), a
-  compiler-enforced `ThemeName → Theme` registry, and a `ThemeProvider`
-  wired to the runtime's `theme.changed` event for instant live switching.
+  - dracula, nord, github, gruvbox, tokyo-night, monokai, catppuccin,
+    one-dark, vercel, high-contrast, high-contrast-light, matrix), a
+    compiler-enforced `ThemeName → Theme` registry, and a `ThemeProvider`
+    wired to the runtime's `theme.changed` event for instant live switching.
 - **`/theme`**: no-arg now opens an interactive picker with per-theme color
   swatches; direct names Tab-complete. Selections persist to
   `.nexum/config.json`; `NEXUM_THEME` and config `theme` bootstrap the

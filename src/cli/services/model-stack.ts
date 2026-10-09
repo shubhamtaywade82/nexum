@@ -145,6 +145,7 @@ export class ModelStack {
       host: cfg.host,
       apiKey: cfg.apiKey,
       apiKeys: cfg.apiKeys,
+      accountLabels: cfg.accountLabels,
       keySelector,
       ...(cfg.timeoutMs ? { timeoutMs: cfg.timeoutMs } : {}),
     });

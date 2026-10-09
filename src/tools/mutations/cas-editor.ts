@@ -24,9 +24,10 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { createTwoFilesPatch, diffLines } from "diff";
+import { createTwoFilesPatch } from "diff";
 import { WorkspaceGuard } from "../../core/fs/workspace-guard.js";
 import { readVerifiedWith, writeVerifiedWith } from "../verified-fs.js";
+import { enforceEditSyntax } from "../../validation/edit-check.js";
 
 export class ExpectedHashMismatchError extends Error {
   constructor(
@@ -58,7 +59,8 @@ export function contentHash(content: string): string {
 
 export interface MutationResult {
   path: string;
-  applied: true;
+  /** false for a dry run (validated + diffed, nothing written). */
+  applied: boolean;
   /** sha256 before the mutation. */
   previousHash: string;
   /** sha256 after the mutation. */
@@ -66,6 +68,8 @@ export interface MutationResult {
   /** Unified diff of the change. */
   diff: string;
   bytesWritten: number;
+  /** The edit likely broke the file's structure (see validation/edit-check). */
+  syntaxWarning?: string;
 }
 
 export interface CasEditorOptions {
@@ -99,6 +103,7 @@ export class CasEditor {
     relativePath: string,
     expectedHash: string,
     edit: (lines: string[]) => string[],
+    opts: { dryRun?: boolean } = {},
   ): Promise<MutationResult> {
     const { absolute, content } = await this.readIfCurrent(relativePath, expectedHash);
     const observed = content.split("\n");
@@ -114,7 +119,7 @@ export class CasEditor {
       };
     }
     const nextContent = next.join("\n");
-    return this.applyAtomic(relativePath, absolute, content, nextContent, expectedHash);
+    return this.applyAtomic(relativePath, absolute, content, nextContent, expectedHash, opts.dryRun);
   }
 
   /**
@@ -123,7 +128,12 @@ export class CasEditor {
    * content; `expectedHash` pins the version the diff was generated
    * against.
    */
-  async applyUnifiedDiff(relativePath: string, expectedHash: string, patch: string): Promise<MutationResult> {
+  async applyUnifiedDiff(
+    relativePath: string,
+    expectedHash: string,
+    patch: string,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<MutationResult> {
     const { absolute, content } = await this.readIfCurrent(relativePath, expectedHash);
     const nextContent = applyUnifiedDiffToContent(content, patch, relativePath);
     if (nextContent === content) {
@@ -136,7 +146,7 @@ export class CasEditor {
         bytesWritten: Buffer.byteLength(content, "utf8"),
       };
     }
-    return this.applyAtomic(relativePath, absolute, content, nextContent, expectedHash);
+    return this.applyAtomic(relativePath, absolute, content, nextContent, expectedHash, opts.dryRun);
   }
 
   /**
@@ -200,16 +210,21 @@ export class CasEditor {
     before: string,
     after: string,
     previousHash: string,
+    dryRun = false,
   ): Promise<MutationResult> {
-    await mkdir(dirname(absolute), { recursive: true });
-    await writeVerifiedWith(() => this.opts.guard.requireAllowed("write", relativePath), relativePath, after);
+    const syntaxWarning = enforceEditSyntax(relativePath, before, after);
+    if (!dryRun) {
+      await mkdir(dirname(absolute), { recursive: true });
+      await writeVerifiedWith(() => this.opts.guard.requireAllowed("write", relativePath), relativePath, after);
+    }
     return {
       path: relativePath,
-      applied: true,
+      applied: !dryRun,
       previousHash,
       newHash: contentHash(after),
       diff: this.diffFor(relativePath, before, after),
       bytesWritten: Buffer.byteLength(after, "utf8"),
+      ...(syntaxWarning ? { syntaxWarning } : {}),
     };
   }
 }
@@ -308,10 +323,4 @@ function findHunkAnchor(content: string[], hunk: ParsedHunk, from: number, to: n
   }
   // fallback: newStart as declared (trusting the producer)
   return Math.min(Math.max(0, hunk.newStart - 1), content.length);
-}
-
-/** Line diff convenience (used by edit_file_lines results). */
-export function lineDiff(before: string, after: string): string[] {
-  const parts = diffLines(before, after);
-  return parts.map((p) => `${p.added ? "+" : p.removed ? "-" : " "}${p.value.replace(/\n$/, "")}`);
 }

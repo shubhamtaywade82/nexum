@@ -4,6 +4,7 @@ import { connectMcpServerTools } from "../mcp/adapter/mcp-server-tools.js";
 import type { McpTrustPolicy } from "../mcp/trust.js";
 import type { NexumMcpServerInfo } from "../protocol/types.js";
 import type { McpToolAdapter } from "../mcp/adapter/mcp-tool-adapter.js";
+import { resolveMcpEnv, type CredentialSource } from "../mcp/env.js";
 
 // The protocol cannot carry an MCP elicitation to a client yet, so every request is declined
 // rather than left waiting for an answer nobody can give.
@@ -23,6 +24,7 @@ export class McpHub {
   constructor(
     private readonly servers: McpCliServerConfig[],
     private readonly trust?: McpTrustPolicy,
+    private readonly credentials?: CredentialSource,
   ) {}
 
   /** Connects every server in parallel; a server that fails or is denied is reported, never fatal. */
@@ -32,10 +34,12 @@ export class McpHub {
 
   private async connect(server: McpCliServerConfig): Promise<void> {
     try {
+      const env = await resolveMcpEnv(server.env, this.credentials);
       const { tools, close } = await connectMcpServerTools(server.command, server.args ?? [], {
         serverName: server.name,
         trust: this.trust,
         elicitation: DECLINE_ELICITATION,
+        ...(env ? { env } : {}),
       });
       this.connected.push({ name: server.name, tools, close });
       this.status.set(server.name, "connected");

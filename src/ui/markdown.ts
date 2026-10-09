@@ -20,15 +20,6 @@ export interface FormattedLine {
   indent?: number;
 }
 
-export interface RichLine {
-  role: "user" | "assistant" | "thinking" | "tool" | "system";
-  spans: Span[];
-  /** True if this is the first visual line of a chat entry — shows the role label. */
-  first: boolean;
-  /** Extra left padding for code blocks, blockquotes, etc. */
-  indent?: number;
-}
-
 // Bounded LRU Cache for Code Block Highlighting
 const CODE_CACHE = new Map<string, string[]>();
 const MAX_CACHE_SIZE = 200;
@@ -87,32 +78,6 @@ export interface TableData {
   headers: string[];
   alignments: Array<"left" | "center" | "right">;
   rows: string[][];
-}
-
-export function parseTable(lines: string[]): TableData | null {
-  if (lines.length < 2) return null;
-
-  const parseRow = (line: string): string[] => {
-    const trimmed = line.trim().replace(/^\||\|$/g, "");
-    return trimmed.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, "|"));
-  };
-
-  const headers = parseRow(lines[0]);
-  if (headers.length === 0) return null;
-
-  const delimiterLine = lines[1].trim();
-  if (!/^[\s|:-]+$/.test(delimiterLine)) return null;
-
-  const delimiterCells = parseRow(delimiterLine);
-  const alignments: Array<"left" | "center" | "right"> = headers.map((_, idx) => {
-    const d = delimiterCells[idx] || "";
-    if (d.startsWith(":") && d.endsWith(":")) return "center";
-    if (d.endsWith(":")) return "right";
-    return "left";
-  });
-
-  const rows = lines.slice(2).map(parseRow);
-  return { headers, alignments, rows };
 }
 
 export function renderTable(table: TableData, maxWidth: number): string[] {
@@ -335,14 +300,4 @@ export function renderSimpleMarkdown(text: string, bodyWidth: number): Formatted
   }
 
   return result;
-}
-
-export function renderMarkdown(text: string, role: RichLine["role"], bodyWidth: number): RichLine[] {
-  const formatted = renderSimpleMarkdown(text, bodyWidth);
-  return formatted.map((line, idx) => ({
-    role,
-    spans: line.spans,
-    first: idx === 0,
-    indent: line.indent,
-  }));
 }

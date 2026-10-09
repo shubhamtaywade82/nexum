@@ -61,8 +61,14 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
       expect(buildMutationStrategy("heuristic", cfg())).toBeNull();
     });
 
-    it("wires AgentMutationStrategy backed by NexumEngineeringAgentRuntime for 'agent'", () => {
+    it("wires AgentMutationStrategy backed by the kernel runtime for 'agent'", () => {
       const strategy = buildMutationStrategy("agent", cfg());
+      expect(strategy).toBeInstanceOf(AgentMutationStrategy);
+      expect(strategy!.name).toBe("agent:nexum-engineering-kernel");
+    });
+
+    it("keeps the pre-kernel loop available as 'agent-legacy'", () => {
+      const strategy = buildMutationStrategy("agent-legacy", cfg());
       expect(strategy).toBeInstanceOf(AgentMutationStrategy);
       expect(strategy!.name).toBe("agent:nexum-engineering");
     });

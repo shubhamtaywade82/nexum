@@ -1,7 +1,8 @@
 import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/cli/config.js";
 import { trustWorkspace, WorkspaceTrustStore } from "../../src/cli/workspace-trust.js";
 
@@ -44,6 +45,43 @@ describe("loadConfig apiKeys pool", () => {
     process.env.OLLAMA_API_KEY = "primary_key";
     process.env.OLLAMA_API_KEYS = "second_key, third_key";
     expect(loadConfig().apiKeys).toEqual(["primary_key", "second_key", "third_key"]);
+  });
+
+  it("pairs structured accounts with the labels /usage and /balance print", () => {
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      JSON.stringify({
+        apiKeys: ["acct_one"],
+        accounts: [
+          { apiKey: "acct_one", label: "me@example.com" },
+          { apiKey: "acct_two", label: "  work  " },
+          { apiKey: "acct_three" },
+        ],
+      }),
+    );
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    const cfg = loadConfig({ trustStore });
+
+    // the flat list stays the ordered pool; accounts contribute their keys too
+    expect(cfg.apiKeys).toEqual(["acct_one", "acct_two", "acct_three"]);
+    expect(cfg.accountLabels).toEqual({ acct_one: "me@example.com", acct_two: "work" });
+    // no label -> no entry, so the provider falls back to a masked key suffix
+    expect(cfg.accountLabels).not.toHaveProperty("acct_three");
+  });
+
+  // Credentials are not WORKSPACE_SAFE_KEYS: a checked-in config cannot inject
+  // an API key (or redirect usage reporting) before the workspace is trusted.
+  it("ignores accounts from an untrusted workspace", () => {
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      JSON.stringify({ accounts: [{ apiKey: "untrusted_key", label: "intruder" }] }),
+    );
+    const cfg = loadConfig({ trustStore: WorkspaceTrustStore.inMemory() });
+    expect(cfg.apiKeys).toBeUndefined();
+    expect(cfg.accountLabels).toBeUndefined();
   });
 
   it("loads API keys and config from workspace .env files", () => {
@@ -217,5 +255,67 @@ describe("parseAutoPlan", () => {
     expect(parseAutoPlan(undefined, "0")).toBe("off");
     expect(parseAutoPlan("nonsense")).toBe("ask");
     expect(parseAutoPlan(undefined)).toBe("ask");
+  });
+});
+
+describe("commented config file (config.example.jsonc)", () => {
+  const originalEnv = { ...process.env };
+  let workspaceRoot: string;
+
+  beforeEach(async () => {
+    workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), "config-jsonc-")));
+    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    // anything the example sets must not be shadowed by the shell's own config
+    for (const key of ["MODEL", "TIER", "HOST", "SHELL_TIMEOUT_SEC", "MAX_ACTIVE_TOOLS", "SANDBOX"]) {
+      delete process.env[`NEXUM_${key}`];
+      delete process.env[`DEVAGENT_${key}`];
+    }
+    delete process.env.OLLAMA_HOST;
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("accepts // and /* */ comments and keeps // inside string literals", () => {
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      `{
+        // project default model
+        "model": "commented-model", // trailing comment
+        /* block comment */
+        "host": "http://127.0.0.1:11434",
+        "writeScope": "src"
+      }`,
+    );
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    const cfg = loadConfig({ trustStore });
+
+    expect(cfg.model).toBe("commented-model");
+    expect(cfg.writeScope).toBe(join(workspaceRoot, "src"));
+    // the "//" inside the URL was not mistaken for a comment
+    expect(cfg.host).toBe("http://127.0.0.1:11434");
+  });
+
+  it("still falls back to defaults when the file is genuinely malformed", () => {
+    writeFileSync(join(workspaceRoot, ".nexum", "config.json"), '{ "model": "broken" ');
+    const cfg = loadConfig({ trustStore: WorkspaceTrustStore.inMemory() });
+    expect(cfg.model).toBe("qwen3.5:4b");
+  });
+
+  it("ships a config.example.jsonc that actually parses", () => {
+    const example = fileURLToPath(new URL("../../config.example.jsonc", import.meta.url));
+    copyFileSync(example, join(workspaceRoot, ".nexum", "config.json"));
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    const cfg = loadConfig({ trustStore });
+
+    // these are unset unless the example's values were read
+    expect(cfg.shellTimeoutSec).toBe(30);
+    expect(cfg.maxActiveTools).toBe(8);
+    expect(cfg.autoApprove).toBe(false);
+    expect(cfg.sandbox).toBe(true);
   });
 });

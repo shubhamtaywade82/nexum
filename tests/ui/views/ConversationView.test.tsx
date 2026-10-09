@@ -54,16 +54,15 @@ describe("summarizeGroup", () => {
 });
 
 describe("ConversationView activity stream", () => {
-  it("renders You / Nexum speaker rows", () => {
+  it("renders user prompt and Nexum speaker rows", () => {
     const state = stateWith([
       { type: "conversation.message", role: "user", text: "hello" },
       { type: "conversation.chunk", role: "assistant", chunk: "hi there" },
     ]);
     const { lastFrame, unmount } = render(<ConversationView state={state} width={80} rows={20} detail="full" />);
     const frame = lastFrame()!;
-    expect(frame).toContain("You");
-    expect(frame).toContain("Nexum");
-    expect(frame).toContain("hello");
+    expect(frame).toContain("> hello");
+    expect(frame).toContain("◆ Nexum");
     expect(frame).toContain("hi there");
     unmount();
   });
@@ -90,6 +89,30 @@ describe("ConversationView activity stream", () => {
     const frame = lastFrame()!;
     expect(frame).toContain("1 file · +1 −0");
     expect(frame).toContain("✓ 5 passed");
+    unmount();
+  });
+
+  it("renders an expanded block when thinking is actively in progress", () => {
+    let state = stateWith([{ type: "conversation.message", role: "user", text: "how does auth work?" }]);
+    state = reduce(state, { type: "conversation.chunk", role: "thinking", chunk: "Analyzing the auth flow" });
+    const { lastFrame, unmount } = render(<ConversationView state={state} width={80} rows={20} detail="full" />);
+    const frame = lastFrame()!;
+    expect(frame).toContain("▸ Thinking...");
+    expect(frame).toContain("Analyzing the auth flow");
+    unmount();
+  });
+
+  it("renders a collapsed Thought row with summary once completed", () => {
+    const state = stateWith([
+      { type: "conversation.message", role: "user", text: "how does auth work?" },
+      { type: "conversation.chunk", role: "thinking", chunk: "Analyzing the auth flow in detail" },
+      { type: "conversation.chunk", role: "assistant", chunk: "Here is how auth works" },
+    ]);
+    const { lastFrame, unmount } = render(<ConversationView state={state} width={80} rows={20} detail="full" />);
+    const frame = lastFrame()!;
+    expect(frame).toContain("▸ Thought");
+    expect(frame).toContain("(Analyzing the auth flow in detail)");
+    expect(frame).not.toContain("▸ Thinking...");
     unmount();
   });
 });

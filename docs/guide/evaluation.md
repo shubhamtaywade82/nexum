@@ -33,7 +33,7 @@ const dataset = defineDataset({
         forbiddenTools: ["shell"],
         maxTurns: 6,
         maxLatencyMs: 20_000,
-        rubricId: "builtin:task-completion",   // LLM-judged quality
+        rubricId: "builtin:task-completion", // LLM-judged quality
       },
     },
   ],
@@ -42,18 +42,18 @@ const dataset = defineDataset({
 
 ## Metrics
 
-| Metric id | What it measures | Normalized |
-|---|---|---|
-| `goal.completion` | expected status + output substrings | ✅ |
-| `tool.selection` | required tool calls made (name + arg subset match) | ✅ |
-| `tool.arguments` | expected argument subsets satisfied | ✅ |
-| `trajectory.efficiency` | tool-call frugality vs expectation (respects `maxToolCalls`) | ✅ |
-| `recovery.success` | failed tool calls later retried successfully | ✅ |
-| `safety.forbidden` | no forbidden tool fired | ✅ |
-| `run.latency_ms` | wall-clock (gate: `maxLatencyMs`) | raw |
-| `run.tokens` | token total (gate: `maxTokens`) | raw |
-| `run.turns` | strategy turns (gate: `maxTurns`) | raw |
-| `judge.overall` / `judge.criterion.*` | LLM-judge verdicts (needs `rubricId`) | ✅ |
+| Metric id                             | What it measures                                             | Normalized |
+| ------------------------------------- | ------------------------------------------------------------ | ---------- |
+| `goal.completion`                     | expected status + output substrings                          | ✅         |
+| `tool.selection`                      | required tool calls made (name + arg subset match)           | ✅         |
+| `tool.arguments`                      | expected argument subsets satisfied                          | ✅         |
+| `trajectory.efficiency`               | tool-call frugality vs expectation (respects `maxToolCalls`) | ✅         |
+| `recovery.success`                    | failed tool calls later retried successfully                 | ✅         |
+| `safety.forbidden`                    | no forbidden tool fired                                      | ✅         |
+| `run.latency_ms`                      | wall-clock (gate: `maxLatencyMs`)                            | raw        |
+| `run.tokens`                          | token total (gate: `maxTokens`)                              | raw        |
+| `run.turns`                           | strategy turns (gate: `maxTurns`)                            | raw        |
+| `judge.overall` / `judge.criterion.*` | LLM-judge verdicts (needs `rubricId`)                        | ✅         |
 
 Evaluators are pluggable: implement `Evaluator { id, evaluate(scenario, observation) }` and register it.
 
@@ -65,7 +65,7 @@ import { EvaluationRunner, FunctionHarness, observeExecution } from "@nemesis-os
 const runner = new EvaluationRunner(harness, {
   concurrency: 4,
   scenarioTimeoutMs: 120_000,
-  judge,                                        // optional: enables rubric metrics
+  judge, // optional: enables rubric metrics
   thresholds: [{ metricId: "goal.completion", min: 0.9 }],
   onScenarioComplete: (r) => console.log(r.scenarioId, r.pass),
 });
@@ -73,6 +73,7 @@ const report = await runner.run(dataset);
 ```
 
 A **harness** is anything that executes a scenario and returns a `TrajectoryObservation`:
+
 - `FunctionHarness(fn)` for fakes and recorded runs (unit tests).
 - `observeExecution({...events})` builds observations from a captured kernel `EventBus` stream — tool calls are paired by event id (`tool.started` → `tool.completed`/`tool.failed`), unresolved calls surface as failures.
 
@@ -83,9 +84,24 @@ Harness errors and timeouts become **errored scenarios** in the report — one b
 ```ts
 const regression = compareReports(baselineReport, currentReport, {
   rules: [{ metricId: "goal.completion", maxRegression: 0.05 }],
-  mode: "fail",            // or "warn"
+  mode: "fail", // or "warn"
 });
 regression.regressions; // [{ metricId, baseline, current, delta, maxRegression }]
 ```
 
 Persist baselines with `ReportStore(dir)` (`save` / `load` / `latestFor(datasetId)`) and render CI output with `renderMarkdownReport(report)` / `renderRegression(regression)`.
+
+## `nexum eval`
+
+```bash
+nexum eval evals/smoke.json                       # run + report (.nexum/evals/)
+nexum eval evals/smoke.json --baseline evals/baseline.json --max-regression 0.05
+nexum eval evals/rubric.json --judge              # LLM judge for scenarios with rubricId
+```
+
+Each scenario runs as one real agent turn on a fresh `Agent` (`AgentRunHarness`);
+the trajectory is read from that run's durable event log, so tool calls,
+model calls and tokens are what actually happened. Exit code is `0` only
+when the report and the optional regression gate pass. Scenarios use the
+configured workspace with unattended approvals (destructive actions are
+denied) — run file-editing scenarios against a scratch checkout.

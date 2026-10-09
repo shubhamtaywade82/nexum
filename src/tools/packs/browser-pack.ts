@@ -10,12 +10,13 @@ import {
   BrowserScreenshotTool,
   BrowserEvaluateTool,
   BrowserCloseTool,
+  type ScreenshotSink,
 } from "../browser-tools.js";
 import { BrowserManager } from "../../browser/manager.js";
 import { ToolPack, packOf } from "../gateway/tool-pack.js";
 import type { ToolRisk } from "../../core/tools/tool-contract.js";
 
-export function browserPack(browser: BrowserManager): ToolPack {
+export function browserPack(browser: BrowserManager, screenshots?: () => ScreenshotSink | undefined): ToolPack {
   return packOf(
     "browser",
     "Browser automation: navigate, click, fill, extract, screenshot, evaluate.",
@@ -25,7 +26,7 @@ export function browserPack(browser: BrowserManager): ToolPack {
       new BrowserClickTool(browser),
       new BrowserFillTool(browser),
       new BrowserGetTextTool(browser),
-      new BrowserScreenshotTool(browser),
+      new BrowserScreenshotTool(browser, screenshots),
       new BrowserEvaluateTool(browser),
       new BrowserCloseTool(browser),
     ].map((tool) => ({ tool, category: "Browser", metadata: { risk: "medium" as ToolRisk } })),

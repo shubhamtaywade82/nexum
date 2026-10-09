@@ -391,13 +391,3 @@ function isStateDir(relPath: string): boolean {
 function sensitive(relPath: string): boolean {
   return relPath !== "" && (isSensitivePath(relPath) || isSensitivePath(`${relPath}${sep}`));
 }
-
-/** Is the path a dangling symlink? (watch/patch tools want to know) */
-export function isDanglingSymlink(p: string): boolean {
-  try {
-    lstatSync(p);
-    return !existsSync(p);
-  } catch {
-    return false;
-  }
-}

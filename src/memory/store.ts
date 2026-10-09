@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { redactText } from "../safety/redact.js";
 import { SkillUsageStats } from "../skills/types.js";
 
 export interface StoredMessage {
@@ -42,7 +43,10 @@ export class MemoryStore {
   }
 
   appendMessage(role: string, content: string): void {
-    this.db.prepare("INSERT INTO messages (role, content, at) VALUES (?, ?, ?)").run(role, content, Date.now());
+    // memory.db is plain SQLite on disk: never persist credentials verbatim.
+    this.db
+      .prepare("INSERT INTO messages (role, content, at) VALUES (?, ?, ?)")
+      .run(role, redactText(content), Date.now());
   }
 
   recentMessages(limit: number): StoredMessage[] {
@@ -110,7 +114,7 @@ export class MemoryStore {
   addLearning(category: string, context: string, lesson: string): void {
     this.db
       .prepare("INSERT INTO learnings (category, context, lesson, created_at) VALUES (?, ?, ?, ?)")
-      .run(category, context, lesson, Date.now());
+      .run(category, redactText(context), redactText(lesson), Date.now());
   }
 
   getLearnings(): Array<{

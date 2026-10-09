@@ -58,6 +58,7 @@ import { RunRepository } from "../persistence/repositories/run-repository.js";
 import { EventRepository } from "../persistence/repositories/event-repository.js";
 import type { RedisEventBus } from "../infrastructure/redis/pubsub.js";
 import { runChannel } from "../infrastructure/redis/channels.js";
+import { prometheusMetrics } from "../observability/process-telemetry.js";
 
 export interface NexumHostOptions {
   createAgent: () => Agent;
@@ -290,6 +291,16 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
 
   if (method === "GET" && segments[0] === "health") {
     writeJson(res, 200, { status: "ok", ts: Date.now() });
+    return;
+  }
+
+  if (method === "GET" && segments[0] === "metrics") {
+    const body = prometheusMetrics();
+    res.writeHead(200, {
+      "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+      "Content-Length": Buffer.byteLength(body),
+    });
+    res.end(body);
     return;
   }
 

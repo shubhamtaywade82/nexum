@@ -48,6 +48,16 @@ export {
   profileFromLegacy,
   defaultConstraints,
 } from "./profiles/model-profile.js";
+export {
+  budgetForProfile,
+  sizeClassFor,
+  SIZE_CLASS_DEFAULTS,
+  CHARS_PER_TOKEN,
+  type ModelBudget,
+  type ModelBudgetOverrides,
+  type ModelSizeClass,
+  type ReasoningBudget,
+} from "./profiles/context-budget.js";
 
 // Gateway (review item 18)
 export { DefaultModelGateway, type ModelGateway, type DefaultModelGatewayOptions } from "./gateway/model-gateway.js";
