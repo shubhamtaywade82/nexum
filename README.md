@@ -13,6 +13,8 @@
 > details. Not yet recommended for production dependency without pinning
 > the exact version.
 
+Model transport uses [`@nemesis-oss/ollama-sdk`](../ollama-sdk/README.md). Recorded harness validation (Ollama Cloud `gemma4:cloud` and local `minicpm5:2b`) is in [docs/guide/benchmarks.md](./docs/guide/benchmarks.md) and the [validation playbook](./docs/guide/validation.md).
+
 Nexum is an open-source, local-first engineering agent runtime and terminal workspace that turns software tasks into observable, resumable execution.
 
 **Analyze → Plan → Implement → Verify → Review → Ship**

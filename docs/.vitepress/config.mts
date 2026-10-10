@@ -88,6 +88,7 @@ export default defineConfig({
           { text: "Trust & Security CLI", link: "/guide/security-cli" },
           { text: "Custom Skills & Prompts", link: "/guide/skills" },
           { text: "Model Benchmark Harness", link: "/guide/benchmarks" },
+          { text: "Validation playbook", link: "/guide/validation" },
         ],
       },
     ],
