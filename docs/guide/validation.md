@@ -46,7 +46,7 @@ npx tsx scripts/run-validation-missions.ts
 
 If missions fail with `model 'gpt-oss:120b' not found`, set `NEXUM_MODEL=gemma4:cloud` in `.env` or update `~/.nexum/config.json` to a model your Ollama Cloud account exposes (`ollama list`).
 
-Append results to [VALIDATION_LOG.md](../../VALIDATION_LOG.md) at the repo root.
+Append results to [VALIDATION_LOG.md](https://github.com/shubhamtaywade82/nexum/blob/main/VALIDATION_LOG.md) at the repo root.
 
 Mission B5 (provider unit tests):
 
