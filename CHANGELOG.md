@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed — TUI renderer is `@nemesis-oss/termina-core`
+
+The TUI now renders through `@nemesis-oss/termina-core` 0.1.0 (the published
+termina fork of Ink 8) instead of `ink` 7. `react` moves to ^19.3.0 and
+`@types/react` to ^19.3.0, which termina's peer ranges require. `ink` and
+`ink-testing-library` are removed. The test renderer is `tests/ui/wide-render.ts`.
+
+- A lone Escape key press is delivered after termina's 40 ms flush window (`escapeFlushDelayMilliseconds`), so a split escape sequence is not mistaken for Esc.
+
 ### Wired — previously unreachable implementation
 
 A reachability audit (entry points: `bin/cli.js`, npm scripts, TUI, host;

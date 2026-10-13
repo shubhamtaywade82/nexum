@@ -1,5 +1,5 @@
 import React from "react";
-import { Box } from "ink";
+import { Box } from "@nemesis-oss/termina-core";
 import { ConversationView, ViewProps } from "./ConversationView.js";
 import { MissionPanel } from "../components/MissionPanel.js";
 import { ToolsPanel } from "../components/ToolsPanel.js";

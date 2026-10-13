@@ -1,5 +1,5 @@
 import React from "react";
-import { Text } from "ink";
+import { Text } from "@nemesis-oss/termina-core";
 import { useTheme } from "../ui/hooks/use-theme.js";
 import type { Theme } from "../ui/types.js";
 

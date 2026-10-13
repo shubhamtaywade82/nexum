@@ -1,5 +1,5 @@
 import React from "react";
-import { Box } from "ink";
+import { Box } from "@nemesis-oss/termina-core";
 import { SkillMeta, SkillUsageStats } from "../../skills/types.js";
 import { UniversalPicker } from "./UniversalPicker.js";
 import { StatusMessage } from "../ui/status-message.js";

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput } from "@nemesis-oss/termina-core";
 import { ExecutionNode } from "../../runtime/event-node.js";
 import { parseSgrMouseEvent } from "../../interaction/mouse.js";
 import { useTheme } from "../ui/hooks/use-theme.js";

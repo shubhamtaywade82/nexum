@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it } from "@jest/globals";
-import { render } from "ink-testing-library";
+import { render } from "../wide-render.js";
 import { ExecutionDagOverlay } from "../../../src/ui/overlays/ExecutionDagOverlay.js";
 import { executionNodesFromState } from "../../../src/runtime/event-node.js";
 

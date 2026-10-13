@@ -1,5 +1,5 @@
 import React from "react";
-import { render } from "ink-testing-library";
+import { render } from "../wide-render.js";
 import { ConversationView, summarizeGroup } from "../../../src/ui/views/ConversationView.js";
 import { initialRuntimeState, reduce } from "../../../src/runtime/store.js";
 import { ChatEntry, RuntimeState } from "../../../src/runtime/types.js";

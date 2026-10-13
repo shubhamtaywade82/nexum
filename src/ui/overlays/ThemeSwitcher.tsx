@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput } from "@nemesis-oss/termina-core";
 import { THEME_ORDER, ThemeName } from "../../runtime/types.js";
 import { getTheme } from "../ui/theme-registry.js";
 import { useTheme } from "../ui/hooks/use-theme.js";

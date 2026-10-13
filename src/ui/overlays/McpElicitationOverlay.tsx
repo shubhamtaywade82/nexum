@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput } from "@nemesis-oss/termina-core";
 import { spawn } from "node:child_process";
 import type {
   McpElicitationFieldSchema,

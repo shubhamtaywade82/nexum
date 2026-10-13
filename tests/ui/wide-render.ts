@@ -1,22 +1,19 @@
 /**
- * ink-testing-library hardcodes its mock stdout's `columns` to 100
- * (node_modules/ink-testing-library/build/index.js), which Ink's own
- * renderer uses as a hard ceiling for content rows containing multiple
- * sibling bordered boxes — independent of any width prop passed down the
- * React tree. That's fine for every existing view (none exceed ~100 cols
- * of real content), but the Dashboard view requires >=130 cols to even
- * activate its 3-column layout (see DashboardView.MIN_WIDTH_FOR_DASHBOARD),
- * so testing it through ink-testing-library's `render()` silently clips
- * every wide test to a corrupted <=101-char render — never representative
- * of what a real terminal (whose `stdout.columns` always matches its own
- * rendering width) actually shows.
+ * Test renderer for the Nexum TUI, driving `@nemesis-oss/termina-core`'s
+ * `render()` against in-memory stdio so suites can assert on `lastFrame()`
+ * and send keys through `stdin.write()`.
  *
- * This is a drop-in replacement for ink-testing-library's `render()` with
- * one difference: `columns` is configurable and real, not hardcoded.
+ * `stdout.columns` is configurable and real. The renderer lays content out
+ * against it, so a fixed width would clip anything wider. Multi-box rows are
+ * capped by the terminal width, not by a prop passed down the React tree.
+ * Most views fit in the default 100 columns (`render()`). The Dashboard view
+ * needs >=130 cols to activate its 3-column layout (see
+ * DashboardView.MIN_WIDTH_FOR_DASHBOARD), so it renders through `renderWide()`
+ * with its own width.
  */
 
 import { EventEmitter } from "node:events";
-import { render as inkRender } from "ink";
+import { render as inkRender } from "@nemesis-oss/termina-core";
 import type { ReactElement } from "react";
 
 class WideStdout extends EventEmitter {
@@ -71,7 +68,9 @@ export interface RenderWideResult {
   unmount: () => void;
 }
 
-/** Same shape as ink-testing-library's render(), but stdout.columns genuinely reflects `columns` instead of a hardcoded 100. */
+const DEFAULT_COLUMNS = 100;
+
+/** Renders `tree` into an in-memory terminal `columns` wide. */
 export function renderWide(tree: ReactElement, columns: number): RenderWideResult {
   const stdout = new WideStdout(columns);
   const stderr = new Stderr();
@@ -92,4 +91,9 @@ export function renderWide(tree: ReactElement, columns: number): RenderWideResul
       instance.cleanup();
     },
   };
+}
+
+/** Default-width render (100 columns) used by most suites. */
+export function render(tree: ReactElement): RenderWideResult {
+  return renderWide(tree, DEFAULT_COLUMNS);
 }

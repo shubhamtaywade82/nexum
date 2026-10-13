@@ -46,8 +46,8 @@ function seededWorld() {
 }
 
 describe("layout snapshots", () => {
-  // ink-testing-library's own render() hardcodes its mock stdout.columns to
-  // 100 (see tests/tui/wide-render.ts), silently corrupting any render wider
+  // The default render() hardcodes its stdout.columns to
+  // 100 (see tests/ui/wide-render.ts), silently corrupting any render wider
   // than that — Dashboard is now the default view and needs >=130 cols to
   // show its real 3-column layout, so every size here goes through
   // renderWide for a frame that faithfully represents a real terminal.

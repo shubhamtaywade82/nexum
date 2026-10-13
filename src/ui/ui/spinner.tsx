@@ -1,7 +1,7 @@
 import React from "react";
 import cliSpinners from "cli-spinners";
 import type { SpinnerName } from "cli-spinners";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 
 import { useAnimation } from "./hooks/use-animation.js";
 import { useTheme } from "./hooks/use-theme.js";

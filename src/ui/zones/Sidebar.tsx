@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { RuntimeState } from "../../runtime/types.js";
 import { SessionMeta } from "../../runtime/session.js";
 

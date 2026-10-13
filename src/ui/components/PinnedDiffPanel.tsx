@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { ChatEntry } from "../../runtime/types.js";
 import { themeColors } from "../layout/theme-map.js";
 

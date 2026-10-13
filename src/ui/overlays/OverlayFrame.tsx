@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { useTheme } from "../ui/hooks/use-theme.js";
 
 export interface OverlayFrameProps {

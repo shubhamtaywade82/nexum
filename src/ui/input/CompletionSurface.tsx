@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { CompletionItem } from "../../interaction/completion.js";
 import { visibleWindow } from "../../interaction/picker.js";
 import { MAX_COMPLETION_ROWS } from "../layout/density.js";
