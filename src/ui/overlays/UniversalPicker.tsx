@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput } from "@nemesis-oss/termina-core";
 import { filterPickerItems, PickerItem, visibleWindow } from "../../interaction/picker.js";
 import { MOUSE_SGR_PATTERN } from "../../interaction/mouse.js";
 import { useTheme } from "../ui/hooks/use-theme.js";

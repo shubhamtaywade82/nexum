@@ -1,6 +1,6 @@
 # Terminal UI & Keybindings
 
-Nexum features an interactive React terminal interface built on Ink with alternate screen buffer support (`\x1b[?1049h`).
+Nexum features an interactive React terminal interface built on termina (`@nemesis-oss/termina-core`, an Ink-compatible renderer) with alternate screen buffer support (`\x1b[?1049h`).
 
 ---
 
@@ -25,13 +25,13 @@ Nexum features an interactive React terminal interface built on Ink with alterna
 
 ## Global Keybindings
 
-| Shortcut | Action |
-| :--- | :--- |
-| `Ctrl+M` | Open Model Switcher overlay |
-| `Ctrl+P` | Open Universal Command Palette |
-| `Ctrl+D` | Open Execution DAG overlay |
-| `Ctrl+K` | Open Search Everywhere |
-| `Ctrl+B` | Toggle Sidebar (Sessions, Tools, Skills) |
+| Shortcut | Action                                     |
+| :------- | :----------------------------------------- |
+| `Ctrl+M` | Open Model Switcher overlay                |
+| `Ctrl+P` | Open Universal Command Palette             |
+| `Ctrl+D` | Open Execution DAG overlay                 |
+| `Ctrl+K` | Open Search Everywhere                     |
+| `Ctrl+B` | Toggle Sidebar (Sessions, Tools, Skills)   |
 | `Ctrl+C` | Cancel in-flight turn (Double press quits) |
 
 ---

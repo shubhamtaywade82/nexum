@@ -158,7 +158,7 @@ src/
 ├── evolution/      ClosedLoopEngine + self-improvement (Evolution Plane)
 ├── domains/        Domain packages: trading (validation → risk →
 │                   execution pipeline), rails, ruby
-├── ui/             Ink terminal UI (see docs/SPEC.md — frozen product spec)
+├── ui/             termina terminal UI (see docs/SPEC.md — frozen product spec)
 ├── agents/         Product agents (DevAgent, CryptoAgent) — thin
 │                   descriptors over the runtime
 ├── cli/            Agent composition layer, conversation, config, TUI glue

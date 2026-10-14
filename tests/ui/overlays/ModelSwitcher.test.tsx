@@ -1,5 +1,5 @@
 import React from "react";
-import { render } from "ink-testing-library";
+import { render } from "../wide-render.js";
 import { ModelSwitcher } from "../../../src/ui/overlays/ModelSwitcher.js";
 
 describe("ModelSwitcher", () => {

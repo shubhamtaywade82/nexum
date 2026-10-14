@@ -1,6 +1,6 @@
 import React from "react";
-import { Text } from "ink";
-import { render } from "ink-testing-library";
+import { Text } from "@nemesis-oss/termina-core";
+import { render } from "./wide-render.js";
 import { ErrorBoundary } from "../../src/ui/ErrorBoundary.js";
 
 function Bomb(): React.JSX.Element {

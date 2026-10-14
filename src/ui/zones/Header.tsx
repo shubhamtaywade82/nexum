@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Spacer, Text } from "ink";
+import { Box, Spacer, Text } from "@nemesis-oss/termina-core";
 import { AGENT_MODE_LABELS, RuntimeState } from "../../runtime/types.js";
 import { truncate } from "../layout/truncate.js";
 import { useTheme } from "../ui/hooks/use-theme.js";

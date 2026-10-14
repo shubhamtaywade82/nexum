@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput } from "@nemesis-oss/termina-core";
 import { ChatEntry, RuntimeState } from "../../runtime/types.js";
 import { DetailLevel } from "../layout/density.js";
 import { truncate } from "../layout/truncate.js";

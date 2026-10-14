@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it } from "@jest/globals";
-import { render } from "ink-testing-library";
+import { render } from "../wide-render.js";
 import { McpElicitationOverlay } from "../../../src/ui/overlays/McpElicitationOverlay.js";
 
 describe("McpElicitationOverlay", () => {
@@ -54,7 +54,9 @@ describe("McpElicitationOverlay", () => {
       />,
     );
     ui.stdin.write("\u001b");
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // termina holds a lone ESC for escapeFlushDelayMilliseconds (40 ms) so a
+    // split escape sequence is not mistaken for the Escape key; wait past it.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(cancelled).toBe(true);
     ui.unmount();
   });

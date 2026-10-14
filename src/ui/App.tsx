@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdout } from "ink";
+import { Box, Text, useApp, useInput, useStdout } from "@nemesis-oss/termina-core";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { historyFile as flatHistoryFile, legacyHistoryFile, workspaceStateDir } from "../platform/paths.js";
@@ -155,10 +155,13 @@ function TerminalSizeListener({ onSize, rows }: { onSize: (w: number, h: number)
   const { stdout } = useStdout();
   useEffect(() => {
     if (!stdout) return;
-    const onResize = () => onSize(stdout.columns, rows ?? stdout.rows);
-    stdout.on("resize", onResize);
+    // termina types stdout as a bare WritableStream; at runtime it is the TTY
+    // WriteStream (or the test stream) that carries columns, rows and resize.
+    const tty = stdout as NodeJS.WriteStream;
+    const onResize = () => onSize(tty.columns, rows ?? tty.rows);
+    tty.on("resize", onResize);
     return () => {
-      stdout.off("resize", onResize);
+      tty.off("resize", onResize);
     };
   }, [stdout, onSize, rows]);
   return null;

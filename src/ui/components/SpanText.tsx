@@ -1,5 +1,5 @@
 import React from "react";
-import { Text } from "ink";
+import { Text } from "@nemesis-oss/termina-core";
 import { Span } from "../markdown.js";
 import { themeColors } from "../layout/theme-map.js";
 

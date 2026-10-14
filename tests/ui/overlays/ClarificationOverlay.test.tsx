@@ -1,5 +1,5 @@
 import React from "react";
-import { render } from "ink-testing-library";
+import { render } from "../wide-render.js";
 import { ClarificationOverlay } from "../../../src/ui/overlays/ClarificationOverlay.js";
 import { ClarificationRequest } from "../../../src/runtime/types.js";
 

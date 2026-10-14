@@ -3,7 +3,7 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import React from "react";
-import { render } from "ink";
+import { render } from "@nemesis-oss/termina-core";
 import { Agent } from "../cli/agent.js";
 import { formatCapability, startupWarnings } from "../cli/capabilities.js";
 import { checkSandboxImage } from "../cli/sandbox-image.js";

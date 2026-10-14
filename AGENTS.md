@@ -3,6 +3,7 @@
 ## 1. Project Purpose
 
 **Nexum** (formerly DevAgent‑TS) is a TypeScript‑based agent runtime and harness that enables LLM‑driven coding assistants. It provides:
+
 - A **capability-based model router** (`src/models/`) — a `ModelCatalog` discovers installed local + Ollama Cloud models, tags them by capability (coding/vision/reasoning/quick/tools), and a `Router` picks a local-first candidate per request, falling back through the rest on rate-limit/timeout/network errors.
 - **Checkpoint/resume** (`src/runtime/checkpoint.ts`) — the orchestrator persists plan state after every step transition; a crashed multi-step task resumes instead of restarting, without re-running completed steps. Separately, `src/runtime/session.ts`'s `SessionStore` persists the LLM conversation transcript after every turn; `Agent.resumeSession()` / the `/resume` slash command restore it in a new process.
 - **Browser automation** (`src/browser/manager.ts`) — a lazily-launched headless Chromium (Playwright), one reused page, exposed as `browser_navigate`/`click`/`fill`/`get_text`/`screenshot`/`evaluate`/`close` tools.
@@ -26,26 +27,27 @@ The repository contains the full runtime, CLI, TUI, provider, and a large suite 
 
 ## 2. Tech Stack
 
-| Layer | Technology |
-|------|--------------|
-| **Language** | TypeScript (target ES2022) |
-| **Runtime** | Node.js ≥ 22 |
-| **Package manager** | npm (lockfile `package-lock.json`) |
-| **Testing** | Jest with `ts-jest` preset |
-| **Linting** | ESLint (flat config, `eslint.config.js`) with `@typescript-eslint` plugin |
-| **Formatting** | Prettier (`.prettierrc.json`) |
-| **CLI / UI** | Ink (React‑style terminal UI) |
-| **Docker sandbox** | Custom Docker image `nexum-sandbox:latest` used by `ShellTool` and the script runners |
-| **LLM provider** | Ollama REST API – local (`http://localhost:11434`) or cloud (`OLLAMA_API_KEY`); both speak the same native `/api/chat` shape |
-| **Local database** | `better-sqlite3` — agent memory (`.nexum/memory.db`) and the `sqlite_query` tool |
-| **Build** | TypeScript compiler (`tsc`) producing `dist/` |
-| **Version control** | Git (runtime tracks branch, ahead/behind, file list) |
+| Layer               | Technology                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Language**        | TypeScript (target ES2022)                                                                                                   |
+| **Runtime**         | Node.js ≥ 22                                                                                                                 |
+| **Package manager** | npm (lockfile `package-lock.json`)                                                                                           |
+| **Testing**         | Jest with `ts-jest` preset                                                                                                   |
+| **Linting**         | ESLint (flat config, `eslint.config.js`) with `@typescript-eslint` plugin                                                    |
+| **Formatting**      | Prettier (`.prettierrc.json`)                                                                                                |
+| **CLI / UI**        | termina (`@nemesis-oss/termina-core`, Ink‑compatible React terminal renderer)                                                |
+| **Docker sandbox**  | Custom Docker image `nexum-sandbox:latest` used by `ShellTool` and the script runners                                        |
+| **LLM provider**    | Ollama REST API – local (`http://localhost:11434`) or cloud (`OLLAMA_API_KEY`); both speak the same native `/api/chat` shape |
+| **Local database**  | `better-sqlite3` — agent memory (`.nexum/memory.db`) and the `sqlite_query` tool                                             |
+| **Build**           | TypeScript compiler (`tsc`) producing `dist/`                                                                                |
+| **Version control** | Git (runtime tracks branch, ahead/behind, file list)                                                                         |
 
 ---
 
 ## 3. Testing Framework & How to Run Tests
 
 The project uses **Jest** with the `ts-jest` preset.
+
 - Configuration lives in `jest.config.js` (roots: `<rootDir>/tests`).
 - Tests are located under the `tests/` directory mirroring the source layout (e.g. `tests/tools`, `tests/orchestration`, `tests/models`, `tests/benchmark`).
 
@@ -65,30 +67,30 @@ You can also watch tests during development with the standard Jest `--watch` fla
 
 ## 4. Linting & Formatting Conventions
 
-- **ESLint** (`npm run lint`, flat config in `eslint.config.js`) covers `src` and `tests` and respects the TypeScript project `tsconfig.eslint.json`.  Notable rule overrides:
+- **ESLint** (`npm run lint`, flat config in `eslint.config.js`) covers `src` and `tests` and respects the TypeScript project `tsconfig.eslint.json`. Notable rule overrides:
   - `@typescript-eslint/no-explicit-any` is turned **off** (allowed).
   - Unused‑variable warnings ignore identifiers starting with `_`.
-- **Prettier** (`npm run format:check`) enforces a 120‑character line width, trailing commas, and semicolons.  The formatter runs on the same source files as ESLint.
+- **Prettier** (`npm run format:check`) enforces a 120‑character line width, trailing commas, and semicolons. The formatter runs on the same source files as ESLint.
 - `npm run release:check` runs lint, format check, build, tests and the package check in one go.
 
 ---
 
 ## 5. Build System & Commands
 
-| Command | Description |
-|---------|-------------|
-| `npm run build` | Compiles TypeScript (`src/ → dist/`) using `tsc` and the `tsconfig.json` configuration. |
-| `npm start` | Starts the production TUI (`node dist/ui/index.js`). |
-| `npm run dev` | Runs the TUI directly from source via `tsx src/ui/index.ts` (no build step). |
-| `npm run dev:legacy` | Runs the older CLI entry point (`src/cli/tui.ts`). |
-| `npm run benchmark` | Scores installed local + cloud models on JSON validity + tool-calling (`src/benchmark/cli.ts`). |
-| `npm run lint` | Executes ESLint over source and test files. |
-| `npm run format:check` | Runs Prettier in check mode. |
-| `npm run doctor` / `npm run migrate` | Environment diagnostics / migrate legacy `.devagent` state. |
-| `npm run docs:ingest -- <id...>` | Index DevDocs bundles into `.nexum/docs.db`. |
-| `npm run package:check` | Packs, installs and smoke-tests the npm tarball. |
-| `npm run test:docker` | Real-daemon sandbox suite (see §3). |
-| `docker build -t nexum-sandbox:latest docker/nexum-sandbox/` | Builds the sandbox image used by `ShellTool` and the script runners. |
+| Command                                                      | Description                                                                                     |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `npm run build`                                              | Compiles TypeScript (`src/ → dist/`) using `tsc` and the `tsconfig.json` configuration.         |
+| `npm start`                                                  | Starts the production TUI (`node dist/ui/index.js`).                                            |
+| `npm run dev`                                                | Runs the TUI directly from source via `tsx src/ui/index.ts` (no build step).                    |
+| `npm run dev:legacy`                                         | Runs the older CLI entry point (`src/cli/tui.ts`).                                              |
+| `npm run benchmark`                                          | Scores installed local + cloud models on JSON validity + tool-calling (`src/benchmark/cli.ts`). |
+| `npm run lint`                                               | Executes ESLint over source and test files.                                                     |
+| `npm run format:check`                                       | Runs Prettier in check mode.                                                                    |
+| `npm run doctor` / `npm run migrate`                         | Environment diagnostics / migrate legacy `.devagent` state.                                     |
+| `npm run docs:ingest -- <id...>`                             | Index DevDocs bundles into `.nexum/docs.db`.                                                    |
+| `npm run package:check`                                      | Packs, installs and smoke-tests the npm tarball.                                                |
+| `npm run test:docker`                                        | Real-daemon sandbox suite (see §3).                                                             |
+| `docker build -t nexum-sandbox:latest docker/nexum-sandbox/` | Builds the sandbox image used by `ShellTool` and the script runners.                            |
 
 ---
 
@@ -120,7 +122,7 @@ You can also watch tests during development with the standard Jest `--watch` fla
 │   ├── safety/              # the single sensitive-path list
 │   ├── subagents/           # SubagentService + providers
 │   ├── tools/               # tools, packs, gateway/catalog, path-utils, verified-fs, command-runner
-│   ├── ui/                  # Ink TUI (entry: src/ui/index.ts)
+│   ├── ui/                  # termina TUI (entry: src/ui/index.ts)
 │   ├── web-service/, webhooks/   # outbound fetch (SSRF-guarded), verified webhook ingress
 │   └── …                    # memory, rag, skills, jobs, observability, settings, …
 ├── tests/                   # Jest suites mirroring src/; tests/integration/ = opt-in real-Docker suite
@@ -134,7 +136,7 @@ You can also watch tests during development with the standard Jest `--watch` fla
 ## 7. Notable Architecture Decisions & Conventions
 
 1. **Single Source of Truth – the Store**
-   - All UI components read from `src/runtime/store.ts`.  Events flow from actors → `EventBus` → `reduce` → new immutable state.  This guarantees deterministic rendering and makes time‑travel debugging possible.
+   - All UI components read from `src/runtime/store.ts`. Events flow from actors → `EventBus` → `reduce` → new immutable state. This guarantees deterministic rendering and makes time‑travel debugging possible.
 2. **Bounded Buffers**
    - Conversation, logs, tool‑calls, and notifications have hard caps (`MAX_CONVERSATION = 500`, etc., `src/runtime/config.ts`, overridable via `NEXUM_MAX_*` env vars) to keep long sessions bounded in memory.
 3. **Sanitisation of Text**
@@ -150,7 +152,7 @@ You can also watch tests during development with the standard Jest `--watch` fla
 8. **Parallel-Ready Orchestrator**
    - `Orchestrator.run()` fans out every currently-ready step (dependencies satisfied) via `Promise.all` each round, instead of one at a time — independent coder/reviewer/tester-style steps overlap in-flight.
 9. **Planner with Dependency Graph**
-   - Steps (`PlanStep`) declare `dependencies` and optional `rollbackCommand`.  The orchestrator resolves a topological order, marks blocked/skipped steps on cascade failure, and can re‑plan on failures.
+   - Steps (`PlanStep`) declare `dependencies` and optional `rollbackCommand`. The orchestrator resolves a topological order, marks blocked/skipped steps on cascade failure, and can re‑plan on failures.
 10. **Extensible Tool Registry**
     - `src/tools/registry.ts` registers tools with name, description and JSON‑schema parameters, enabling the LLM to discover capabilities programmatically. `src/tools/discovery.ts`'s `DynamicToolSelector` prunes which tool schemas are actually sent to the model each turn (heuristic/llm/hybrid modes) instead of exposing the full registry every time.
 11. **Host-Side Infra Tools Are Allowlists**
@@ -206,4 +208,4 @@ You can also watch tests during development with the standard Jest `--watch` fla
 
 ---
 
-*This file is intended for future Nexum sessions to quickly understand the repository layout, tooling, and architectural conventions.*
+_This file is intended for future Nexum sessions to quickly understand the repository layout, tooling, and architectural conventions._
