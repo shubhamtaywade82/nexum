@@ -8,6 +8,10 @@ export interface ModelInfo {
   name: string;
   tier: Tier;
   capabilities: Capability[];
+  /** Native context window reported by the local server's /api/show. Absent for
+   * cloud models and when the server reports none; consumers then keep their
+   * default window. */
+  contextLength?: number;
 }
 
 // Fallback only — used when real capability metadata isn't available (Ollama
@@ -129,18 +133,24 @@ export class ModelCatalog {
         for (const entry of localTagEntries(data)) {
           const name = entry.name ?? entry.model;
           if (!name) continue;
+          // One /api/show answers both questions: capabilities (consulted only
+          // when /api/tags lacks the `tools` flag) and the native context window
+          // that bounds this model's budget.
+          const show = this.local.showModel ? await this.local.showModel(name) : null;
           let entryCaps = entry.capabilities;
-          if (entryCaps && !entryCaps.includes("tools") && this.local.showModel) {
-            const show = await this.local.showModel(name);
-            if (show?.capabilities) entryCaps = show.capabilities;
-          }
+          if (entryCaps && !entryCaps.includes("tools") && show?.capabilities) entryCaps = show.capabilities;
           const capabilities = capabilitiesFromLocalTag(
             { ...entry, capabilities: entryCaps },
             name,
             this.quickPreferredName,
           );
           if (capabilities.length === 0) continue;
-          results.push({ name, tier: "local", capabilities });
+          results.push({
+            name,
+            tier: "local",
+            capabilities,
+            ...(show?.contextLength !== undefined ? { contextLength: show.contextLength } : {}),
+          });
         }
       } catch {
         // local Ollama not running — leave local models empty

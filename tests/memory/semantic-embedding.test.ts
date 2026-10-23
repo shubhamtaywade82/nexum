@@ -85,6 +85,36 @@ describe("OllamaEmbedder", () => {
   });
 });
 
+describe("OllamaEmbedder batching (SDK batchEmbed)", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("splits 40 inputs into two /api/embed requests (32 + 8) and returns vectors in input order", async () => {
+    const fetchMock = jest.fn(async (_url: unknown, init?: RequestInit) => {
+      const input = (JSON.parse(String(init?.body)) as { input: string[] }).input;
+      // Encode each input's position in its vector so ordering is observable.
+      return new Response(JSON.stringify({ embeddings: input.map((text) => [Number(text), 0]) }), { status: 200 });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const texts = Array.from({ length: 40 }, (_, i) => String(i + 1));
+    const embedder = new OllamaEmbedder({ model: "nomic-embed-text" });
+    const vectors = await embedder.embedBatch(texts);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const sizes = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>).map(
+      ([, init]) => (JSON.parse(String(init.body)) as { input: string[] }).input.length,
+    );
+    expect(sizes.sort((a, b) => a - b)).toEqual([8, 32]);
+    expect(vectors).toHaveLength(40);
+    expect(vectors[0]).toEqual(l2Normalize([1, 0]));
+    expect(vectors[39]).toEqual(l2Normalize([40, 0]));
+  });
+});
+
 describe("FallbackEmbedder", () => {
   it("uses the primary when healthy", async () => {
     const primary = new HashEmbedder();

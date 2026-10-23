@@ -48,7 +48,18 @@ function modelsListResponse(models: Array<Record<string, unknown>>) {
 // All fetch calls whose body is a chat request (catalog-refresh calls have no body).
 function chatBodies(): Array<{ model: string; messages: Array<Record<string, unknown>>; tools?: unknown[] }> {
   const calls = (globalThis.fetch as jest.Mock).mock.calls;
-  return calls.filter((c) => c[1] && c[1].body).map((c) => JSON.parse(c[1].body));
+  return calls.filter((c) => String(c[0]).endsWith("/api/chat") && c[1] && c[1].body).map((c) => JSON.parse(c[1].body));
+}
+
+/**
+ * Answers the catalog's per-model `/api/show` probe (native context window), so
+ * the scripted mocks below only ever see the turn's own requests.
+ */
+function routeShow(fetchMock: jest.Mock): jest.Mock {
+  return jest.fn(async (url: string, init?: RequestInit) => {
+    if (String(url).endsWith("/api/show")) return { ok: true, status: 200, json: async () => ({}) };
+    return fetchMock(url, init);
+  });
 }
 
 describe("Agent capability routing — quick-first with self-escalation", () => {
@@ -60,23 +71,25 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     const encoder = new TextEncoder();
     const final = { message: { role: "assistant", content: "ok" }, done: true, prompt_eval_count: 12, eval_count: 5 };
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      let delivered = false;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => final,
-        body: {
-          getReader: () => ({
-            read: async () => {
-              if (delivered) return { done: true, value: undefined };
-              delivered = true;
-              return { done: false, value: encoder.encode(JSON.stringify(final) + "\n") };
-            },
-          }),
-        },
-      };
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        let delivered = false;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => final,
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (delivered) return { done: true, value: undefined };
+                delivered = true;
+                return { done: false, value: encoder.encode(JSON.stringify(final) + "\n") };
+              },
+            }),
+          },
+        };
+      }),
+    );
     const onModelUsed = jest.fn();
     const agent = new Agent({
       config: { workspaceRoot: dir, tier: "local", model: "test-model" },
@@ -99,7 +112,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     // call) resolves with a chat-shaped response — availableModels' parser reads
     // a `.models` array that isn't there, so the catalog legitimately ends up with
     // zero local candidates, exactly as if a local "quick" model weren't installed.
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => chatResponse("done via fallback"));
+    (globalThis as any).fetch = routeShow(jest.fn().mockImplementation(async () => chatResponse("done via fallback")));
 
     const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" } });
 
@@ -111,17 +124,19 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("delegates a plain lookup question to the local quick model", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      // First fetch is the catalog refresh's availableModels(); everything after
-      // is the turn's actual chat call(s).
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("found it");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        // First fetch is the catalog refresh's availableModels(); everything after
+        // is the turn's actual chat call(s).
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("found it");
+      }),
+    );
 
     const onStatus = jest.fn();
     const onModelUsed = jest.fn();
@@ -145,15 +160,17 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("escalates immediately via the heuristic pre-filter for an implementation request, skipping the quick attempt", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("implemented");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("implemented");
+      }),
+    );
 
     const onStatus = jest.fn();
     const agent = new Agent({
@@ -173,15 +190,17 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("skips the heuristic pre-filter when enableHeuristicGate is false, trying the quick model first as before", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("implemented");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("implemented");
+      }),
+    );
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
@@ -198,15 +217,17 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("attempts the local quick model first even at 'high' priority (priority no longer gates routing)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("done");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("done");
+      }),
+    );
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
@@ -222,15 +243,17 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("keeps routing plain conversational turns to quick by default", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("dependency injection is...");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("dependency injection is...");
+      }),
+    );
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
@@ -246,16 +269,18 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("escalates to the primary model when the quick model calls escalate_task, preserving full conversation history", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      if (call === 2) return toolCallResponse("escalate_task", { reason: "needs a real multi-file refactor" });
-      return chatResponse("done by primary");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        if (call === 2) return toolCallResponse("escalate_task", { reason: "needs a real multi-file refactor" });
+        return chatResponse("done by primary");
+      }),
+    );
 
     const onStatus = jest.fn();
     const agent = new Agent({
@@ -293,20 +318,22 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("auto-escalates when a tool call errors and the quick model answers instead of retrying or calling escalate_task", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      // Turn 0: calls read_file on a path that doesn't exist — a real tool error.
-      if (call === 2) return toolCallResponse("read_file", { path: "does/not/exist.txt" });
-      // Turn 1: instead of retrying or calling escalate_task, invents an unrelated
-      // "fix" as plain content — the exact failure mode observed in practice.
-      if (call === 3) return chatResponse("touch /todo_comments");
-      return chatResponse("a real answer from the primary model");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        // Turn 0: calls read_file on a path that doesn't exist — a real tool error.
+        if (call === 2) return toolCallResponse("read_file", { path: "does/not/exist.txt" });
+        // Turn 1: instead of retrying or calling escalate_task, invents an unrelated
+        // "fix" as plain content — the exact failure mode observed in practice.
+        if (call === 3) return chatResponse("touch /todo_comments");
+        return chatResponse("a real answer from the primary model");
+      }),
+    );
 
     const onStatus = jest.fn();
     const onAssistantText = jest.fn();
@@ -331,20 +358,22 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("stays escalated for the rest of the call, but resets to quick on the next runUserMessage call", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      if (call === 2) return toolCallResponse("escalate_task", { reason: "too complex" });
-      if (call === 3) return toolCallResponse("escalate_task", { reason: "still going" }); // still on primary, not quick
-      // Every other call — including the task-completion turn and the
-      // post-completion summarization call every "answered" turn triggers —
-      // returns plain content.
-      return chatResponse("done");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        if (call === 2) return toolCallResponse("escalate_task", { reason: "too complex" });
+        if (call === 3) return toolCallResponse("escalate_task", { reason: "still going" }); // still on primary, not quick
+        // Every other call — including the task-completion turn and the
+        // post-completion summarization call every "answered" turn triggers —
+        // returns plain content.
+        return chatResponse("done");
+      }),
+    );
 
     const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "primary-model" } });
 
@@ -369,17 +398,19 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("routes escalation to the installed vision model when the original message hinted at vision", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-          { name: "qwen-vl:8b", capabilities: ["vision", "completion", "tools"], details: { parameter_size: "8B" } },
-        ]);
-      }
-      if (call === 2) return toolCallResponse("escalate_task", { reason: "need to actually see the image" });
-      return chatResponse("described the screenshot");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+            { name: "qwen-vl:8b", capabilities: ["vision", "completion", "tools"], details: { parameter_size: "8B" } },
+          ]);
+        }
+        if (call === 2) return toolCallResponse("escalate_task", { reason: "need to actually see the image" });
+        return chatResponse("described the screenshot");
+      }),
+    );
 
     const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "primary-model" } });
 
@@ -393,20 +424,22 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("routes straight to the installed reasoning model when the heuristic gate and the reasoning hint both match", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-          {
-            name: "deepseek-r1:8b",
-            capabilities: ["thinking", "completion", "tools"],
-            details: { parameter_size: "8B" },
-          },
-        ]);
-      }
-      return chatResponse("here are the trade-offs");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+            {
+              name: "deepseek-r1:8b",
+              capabilities: ["thinking", "completion", "tools"],
+              details: { parameter_size: "8B" },
+            },
+          ]);
+        }
+        return chatResponse("here are the trade-offs");
+      }),
+    );
 
     const onStatus = jest.fn();
     const agent = new Agent({
@@ -429,15 +462,17 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("force-includes escalate_task in the tool schemas sent to the quick model even under a tight maxActiveTools cap", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("ok");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("ok");
+      }),
+    );
 
     const agent = new Agent({
       config: { workspaceRoot: dir, tier: "local", model: "test-model", maxActiveTools: 1 },
@@ -452,18 +487,20 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("stays on the quick model when self-consistency samples agree on an ambiguous prompt", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      // Self-consistency samples run before the catalog is ever refreshed
-      // (it doesn't need the catalog — it talks to the quick provider directly),
-      // so the 3 samples are calls 1-3 and the catalog GET is call 4.
-      if (call === 4) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("call it Account");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        // Self-consistency samples run before the catalog is ever refreshed
+        // (it doesn't need the catalog — it talks to the quick provider directly),
+        // so the 3 samples are calls 1-3 and the catalog GET is call 4.
+        if (call === 4) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("call it Account");
+      }),
+    );
 
     const onStatus = jest.fn();
     const agent = new Agent({
@@ -488,20 +525,22 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("escalates to the primary model when self-consistency samples diverge on an ambiguous prompt", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      // Self-consistency samples (1-3) run before the catalog GET (4) — see
-      // the comment in the "agree" test above for why.
-      if (call === 1) return chatResponse("call it Account");
-      if (call === 2) return chatResponse("call it UserProfile");
-      if (call === 3) return chatResponse("neither, use Customer");
-      if (call === 4) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("here's my recommendation");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        // Self-consistency samples (1-3) run before the catalog GET (4) — see
+        // the comment in the "agree" test above for why.
+        if (call === 1) return chatResponse("call it Account");
+        if (call === 2) return chatResponse("call it UserProfile");
+        if (call === 3) return chatResponse("neither, use Customer");
+        if (call === 4) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("here's my recommendation");
+      }),
+    );
 
     const onStatus = jest.fn();
     const agent = new Agent({
@@ -526,25 +565,27 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("offers delegate_to_local and injects the delegation system prompt once escalated, and executes a real delegation round-trip", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      if (call === 2) return toolCallResponse("escalate_task", { reason: "needs real logic" });
-      if (call === 3) {
-        return toolCallResponse("delegate_to_local", {
-          task_type: "ts_interface",
-          prompt: "Generate an interface for User with name:string",
-          expected_output: "typescript",
-        });
-      }
-      // Turn 4: LocalWorker's own generate() call, dispatched to the quick provider.
-      if (call === 4) return chatResponse("interface User { name: string; }");
-      return chatResponse("done, used the delegated interface");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        if (call === 2) return toolCallResponse("escalate_task", { reason: "needs real logic" });
+        if (call === 3) {
+          return toolCallResponse("delegate_to_local", {
+            task_type: "ts_interface",
+            prompt: "Generate an interface for User with name:string",
+            expected_output: "typescript",
+          });
+        }
+        // Turn 4: LocalWorker's own generate() call, dispatched to the quick provider.
+        if (call === 4) return chatResponse("interface User { name: string; }");
+        return chatResponse("done, used the delegated interface");
+      }),
+    );
 
     const agent = new Agent({
       config: { workspaceRoot: dir, tier: "local", model: "primary-model", quickModel: "minicpm5-1b" },
@@ -567,7 +608,9 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
 
   it("escalates to the configured cloud primary model for complex architecture prompts when tier is cloud", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => chatResponse("answered by cloud primary"));
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => chatResponse("answered by cloud primary")),
+    );
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
@@ -597,15 +640,17 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("routes conversational queries to local quick model even when tier is cloud", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      return chatResponse("hello from quick");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        return chatResponse("hello from quick");
+      }),
+    );
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
@@ -628,22 +673,24 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
   it("routes background memory summarization through 'quick' instead of the primary model (regression: it used to share the primary's own connection and could queue behind the next turn's request)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async () => {
-      call += 1;
-      // Catalog.refresh() queries BOTH tiers: call 1 is local's /api/tags,
-      // call 2 is cloud's /v1/models (harmlessly ignored here — no `.data`
-      // array in a chat-shaped response, catalog just sees zero cloud
-      // candidates from it, cloud-primary routing doesn't need the catalog
-      // to know about itself).
-      if (call === 1) {
-        return modelsListResponse([
-          { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
-        ]);
-      }
-      if (call === 3) return chatResponse("implemented binary search"); // the turn's own answer, on the cloud primary
-      if (call >= 4) return chatResponse("- said hello"); // generateSummary's own call
-      return chatResponse("unused");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        // Catalog.refresh() queries BOTH tiers: call 1 is local's /api/tags,
+        // call 2 is cloud's /v1/models (harmlessly ignored here — no `.data`
+        // array in a chat-shaped response, catalog just sees zero cloud
+        // candidates from it, cloud-primary routing doesn't need the catalog
+        // to know about itself).
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        if (call === 3) return chatResponse("implemented binary search"); // the turn's own answer, on the cloud primary
+        if (call >= 4) return chatResponse("- said hello"); // generateSummary's own call
+        return chatResponse("unused");
+      }),
+    );
 
     const agent = new Agent({
       // Pinned to heuristic tool selection so the only two chat-shaped calls

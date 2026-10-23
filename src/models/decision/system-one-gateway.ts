@@ -126,6 +126,7 @@
  *                        only out-of-band id the gateway allows)
  */
 
+import { CLOUD_MODEL_MIN_OLLAMA_VERSION, compareOllamaVersions, isCloudModel } from "@nemesis-oss/ollama-sdk";
 import type { DecisionGateway } from "./decision-gateway.js";
 import { DecisionError, DecisionProtocolError, DecisionTransportError, DecisionUnavailableError } from "./errors.js";
 import type { DecisionAnswer, DecisionRequest, DecisionResult } from "./types.js";
@@ -251,10 +252,22 @@ export class SystemOneDecisionGateway implements DecisionGateway {
     //    failed (e.g. wrong host) does not produce a misleading
     //    "version too old" message — the real transport/protocol error is
     //    more informative.
+    //    A cloud-suffixed model (`…:cloud`) served by a local server needs the
+    //    SDK's documented cloud floor, which is higher than the System One one.
+    //    The SDK's own `systemOne()` wrapper applies this gate too, but this
+    //    seam calls `runtime.invoke` so the abort signal reaches the wire.
     const version = await this.environment.getVersion();
-    if (version !== undefined && compareVersions(version, this.minVersion) < 0) {
+    const cloud = isCloudModel(request.model);
+    const required =
+      cloud && compareOllamaVersions(CLOUD_MODEL_MIN_OLLAMA_VERSION, this.minVersion) > 0
+        ? CLOUD_MODEL_MIN_OLLAMA_VERSION
+        : this.minVersion;
+    if (version !== undefined && compareOllamaVersions(version, required) < 0) {
       throw new DecisionUnavailableError(
-        `System One requires Ollama ${this.minVersion}+; local server reports ${version}`,
+        cloud
+          ? `System One cloud model "${request.model}" requires Ollama ${required}+ when served by a local server; ` +
+              `local server reports ${version}`
+          : `System One requires Ollama ${required}+; local server reports ${version}`,
       );
     }
 
@@ -301,17 +314,6 @@ function mapSystemOneError(err: unknown): Error {
   if (err instanceof DecisionError) return err;
   const message = err instanceof Error ? err.message : String(err);
   return new DecisionTransportError(`System One transport failure: ${message}`, err);
-}
-
-function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map((x) => Number.parseInt(x, 10));
-  const pb = b.split(".").map((x) => Number.parseInt(x, 10));
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const ai = pa[i] ?? 0;
-    const bi = pb[i] ?? 0;
-    if (ai !== bi) return ai - bi;
-  }
-  return 0;
 }
 
 /**

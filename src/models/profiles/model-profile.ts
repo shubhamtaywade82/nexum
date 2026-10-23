@@ -95,7 +95,11 @@ export function profileFromLegacy(info: ModelInfo, provider = "ollama"): ModelPr
       structuredOutput: scoreFor(info.capabilities, "tools") > 0 ? 0.5 : 0,
       streaming: true,
     },
-    constraints: defaultConstraints({ latencyClass: info.capabilities.includes("quick") ? "fast" : "unknown" }),
+    constraints: defaultConstraints({
+      latencyClass: info.capabilities.includes("quick") ? "fast" : "unknown",
+      // Undefined keeps defaultConstraints' 128k window (cloud, or no server report).
+      contextWindow: info.contextLength,
+    }),
     legacyCapabilities: info.capabilities,
   };
 }

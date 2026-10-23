@@ -37,6 +37,14 @@ export class ProviderError extends AgentRuntimeError {
   }
 }
 
+/**
+ * HTTP 402 from Ollama Cloud: billing, not credentials — the model is outside
+ * the account's plan or the account is out of usage credits. Routable: a
+ * different candidate may be on-plan, so the router moves on instead of
+ * failing the turn.
+ */
+export class PaymentRequiredError extends ProviderError {}
+
 export class InferenceQualityError extends AgentRuntimeError {
   constructor(
     message: string,

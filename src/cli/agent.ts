@@ -4,6 +4,7 @@ import { BRAND } from "../platform/brand.js";
 import { collectCapabilities, type FeatureStatus } from "./capabilities.js";
 import { buildSandboxImage, checkSandboxImage } from "./sandbox-image.js";
 import { summarizePlan } from "../orchestration/plan-summary.js";
+import type { PullProgressEvent } from "@nemesis-oss/ollama-sdk";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
 import { ModelStack } from "./services/model-stack.js";
@@ -1584,8 +1585,9 @@ export class Agent {
   }
 
   /** Ollama Cloud request counts + spend, one row per pooled API key. */
-  usageAll(range?: "24h" | "7d" | "30d") {
-    return this.stack.provider.usageAll(range ? { range } : undefined);
+  usageAll(range?: "24h" | "7d" | "30d", groupBy?: "model") {
+    const opts = { ...(range ? { range } : {}), ...(groupBy ? { groupBy } : {}) };
+    return this.stack.provider.usageAll(Object.keys(opts).length > 0 ? opts : undefined);
   }
 
   /** Ollama Cloud remaining included + purchased credits, one row per key. */
@@ -1596,6 +1598,11 @@ export class Agent {
   /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */
   importGguf(model: string, path: string) {
     return this.stack.provider.importGguf(model, path);
+  }
+
+  /** Downloads a model from the Ollama registry; `onEvent` receives every progress frame. */
+  pullModel(model: string, onEvent: (event: PullProgressEvent) => void) {
+    return this.stack.provider.pullModel(model, onEvent);
   }
 
   resetContext(): void {

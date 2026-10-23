@@ -58,6 +58,14 @@ describe("ModelAvailabilityChecker", () => {
     expect(result.reason).toBe("forbidden");
   });
 
+  it("checkOne returns available:false, reason:payment_required on HTTP 402 (billing, not credentials)", async () => {
+    mockFetch([{ status: 402, body: { error: "upgrade to use this model" } }]);
+    const checker = new ModelAvailabilityChecker(["key-a"]);
+    const result = await checker.checkOne("key-a", "qwen3-coder:480b");
+    expect(result.available).toBe(false);
+    expect(result.reason).toBe("payment_required");
+  });
+
   it("checkOne returns available:false, reason:not_found on HTTP 404", async () => {
     mockFetch([{ status: 404, body: { error: "not found" } }]);
     const checker = new ModelAvailabilityChecker(["key-a"]);

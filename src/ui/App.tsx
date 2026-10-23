@@ -89,11 +89,19 @@ export interface ShellAgent {
   pinSkill?(id: string | null): void;
   addLearning?(category: string, context: string, lesson: string): void;
   /** Ollama Cloud request counts + spend for every configured API key. */
-  usageAll?(range?: "24h" | "7d" | "30d"): Promise<Array<import("../models/adapters/provider.js").AccountUsage>>;
+  usageAll?(
+    range?: "24h" | "7d" | "30d",
+    groupBy?: "model",
+  ): Promise<Array<import("../models/adapters/provider.js").AccountUsage>>;
   /** Ollama Cloud remaining included + purchased credits, one row per key. */
   balanceAll?(): Promise<Array<import("../models/adapters/provider.js").AccountBalance>>;
   /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */
   importGguf?(model: string, path: string): Promise<unknown>;
+  /** Downloads a model from the Ollama registry, reporting each progress frame. */
+  pullModel?(
+    model: string,
+    onEvent: (event: import("@nemesis-oss/ollama-sdk").PullProgressEvent) => void,
+  ): Promise<void>;
 }
 
 export interface AppProps {

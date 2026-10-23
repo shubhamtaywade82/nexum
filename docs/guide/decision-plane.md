@@ -31,7 +31,7 @@ System One is Ollama's bounded-decision endpoint, exposed at `POST /v1/systemone
 - **local-only** — `tier: local` is supported, `tier: cloud` is not
 - **non-streaming** — single request, single response
 - **experimental** — the wire shape may still change
-- **Ollama >= 0.35.0** required
+- **Ollama >= 0.35.0** required (**>= 0.40.5** when the decision model is a `:cloud` model served by a local server, the SDK's documented cloud floor)
 - **64 KiB request-size limit** (server-enforced)
 - **no tools, no images, no generation controls** — bounded decisions only
 
@@ -119,7 +119,7 @@ interface DecisionPolicy {
 
 1. Validate the `DecisionRequest` (including the 64 KiB size limit) **before** touching the network
 2. Refuse a `tier: cloud` environment with `DecisionUnavailableError` — System One is local-only
-3. Refuse an Ollama version below `0.35.0` (when known) with `DecisionUnavailableError`
+3. Refuse an Ollama version below `0.35.0` (when known) with `DecisionUnavailableError`, or below `0.40.5` for a `:cloud` decision model
 4. Build the wire request and call the `SystemOneClient` seam
 5. Parse the response, validating every `selected` id against the question's declared `choices` (System One cannot invent ids)
 6. Surface every failure as a typed `DecisionError` subclass — never a silent chat fallback
@@ -128,12 +128,12 @@ interface DecisionPolicy {
 
 `src/models/decision/errors.ts` extends the existing `AgentRuntimeError` hierarchy:
 
-| Class                      | Code                         | Cause                                                          |
-| -------------------------- | ---------------------------- | -------------------------------------------------------------- |
-| `DecisionUnavailableError` | `DECISION_UNAVAILABLE`       | cloud tier, disabled, Ollama down, version < 0.35.0            |
-| `DecisionTransportError`   | `DECISION_TRANSPORT_FAILURE` | network, timeout, abort                                        |
-| `DecisionProtocolError`    | `DECISION_PROTOCOL_ERROR`    | malformed response, out-of-band id, oversized request pre-send |
-| `DecisionPolicyError`      | `DECISION_POLICY_VIOLATION`  | the caller's policy rejected the evidence (no-action outcome)  |
+| Class                      | Code                         | Cause                                                                       |
+| -------------------------- | ---------------------------- | --------------------------------------------------------------------------- |
+| `DecisionUnavailableError` | `DECISION_UNAVAILABLE`       | cloud tier, disabled, Ollama down, version < 0.35.0 (< 0.40.5 for `:cloud`) |
+| `DecisionTransportError`   | `DECISION_TRANSPORT_FAILURE` | network, timeout, abort                                                     |
+| `DecisionProtocolError`    | `DECISION_PROTOCOL_ERROR`    | malformed response, out-of-band id, oversized request pre-send              |
+| `DecisionPolicyError`      | `DECISION_POLICY_VIOLATION`  | the caller's policy rejected the evidence (no-action outcome)               |
 
 The gateway never catches a `DecisionError` and converts it into a chat turn — that would destroy the bounded-decision guarantee. The caller's policy owns the deterministic fallback.
 

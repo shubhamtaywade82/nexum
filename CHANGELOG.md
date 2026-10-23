@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Changed — `@nemesis-oss/ollama-sdk` 1.9 → 1.20 wired through
+
+`@nemesis-oss/ollama-sdk` moves from `^1.9.0` to `^1.20.0` (the SDK's own
+`main` is at 1.20.0, published, with no unreleased commits). The SDK releases
+between those versions are wired into the places that already did this work
+by hand, or that had no equivalent before:
+
+- **Typed errors reach the router.** A connection-level failure (refused,
+  reset, DNS) is now `TransportFailure` instead of a generic `ProviderError`,
+  so the router fails over to the next candidate; before, it was fatal for the
+  whole turn. HTTP 402 is `PaymentRequiredError` (billing, not credentials) and
+  is routable. `RateLimitError.retryAfterMs` carries the server's `Retry-After`.
+- **Account probes are bounded.** `/usage` and `/balance` run under a 30 s
+  deadline. The SDK sleeps the server's `Retry-After` verbatim on a 429, which
+  could otherwise hold the command for the whole window.
+- **`/usage [24h|7d|30d] [model]`** shows the per-model breakdown
+  (`groupBy=model`), with the server's remainder roll-up.
+- **`/pull <model>`** downloads from the registry with live progress: percent,
+  transfer speed and ETA, one notification per second (`Provider.pullModel`
+  over `models.pull({ stream: true })` + `onProgress`).
+- **Native context windows.** The catalog reads `model_info.*.context_length`
+  (falling back to the Modelfile's `num_ctx`) from the same `/api/show` call it
+  already made for capabilities. Local models are sized to their real window,
+  not the 128k default that every profile used to get.
+- **Decision plane cloud floor.** A `:cloud` decision model served by a local
+  server needs Ollama 0.40.5+, enforced by the gateway before the request is
+  sent (the SDK's own `systemOne()` wrapper has the same gate, but it has no
+  abort signal, so the gateway calls the seam directly). Version comparison
+  uses the SDK's `compareOllamaVersions`.
+- **Embeddings batch.** `OllamaEmbedder` sends 32 inputs per `/api/embed`
+  request with 3 in flight (`batchEmbed`), instead of one unbounded request.
+
+Declined, with reasons: the SDK's web tools (nexum's SSRF-guarded fetch and
+policy gates stay authoritative), SDK conversation compaction and history
+sanitizing (nexum's compaction pipeline is plugin-integrated), the SDK
+model-affinity scheduler (`KeyManager` already binds cloud keys to models; the
+SDK's routing is host-level), `minConfidence` / `minProbability` gates
+(`decision-policy.ts` already applies a per-choice threshold), and the SDK's
+agent tool-loop and draft-benchmark helpers.
+
 ### Changed — TUI renderer is `@nemesis-oss/termina-core`
 
 The TUI now renders through `@nemesis-oss/termina-core` 0.1.0 (the published

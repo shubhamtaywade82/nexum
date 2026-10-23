@@ -405,6 +405,37 @@ describe("SystemOneDecisionGateway — environment rules", () => {
   });
 });
 
+describe("SystemOneDecisionGateway — cloud-model version floor", () => {
+  it("refuses a cloud-suffixed model through a local server older than 0.40.5", async () => {
+    const client = new FakeSystemOneClient(async () => wireResponse({ domain: { choice: "filesystem" } }));
+    const gw = new SystemOneDecisionGateway({
+      client,
+      environment: new StaticEnvironment("local", "0.40.4"),
+    });
+    const err = await gw.decide(choiceRequest({ model: "clef:cloud" })).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DecisionUnavailableError);
+    expect((err as Error).message).toMatch(/clef:cloud.*0\.40\.5.*0\.40\.4/);
+  });
+
+  it("accepts a cloud-suffixed model at exactly the cloud floor", async () => {
+    const client = new FakeSystemOneClient(async () => wireResponse({ domain: { choice: "filesystem" } }));
+    const gw = new SystemOneDecisionGateway({
+      client,
+      environment: new StaticEnvironment("local", "0.40.5"),
+    });
+    await expect(gw.decide(choiceRequest({ model: "clef:cloud" }))).resolves.toBeDefined();
+  });
+
+  it("keeps the plain System One floor for models without the cloud suffix", async () => {
+    const client = new FakeSystemOneClient(async () => wireResponse({ domain: { choice: "filesystem" } }));
+    const gw = new SystemOneDecisionGateway({
+      client,
+      environment: new StaticEnvironment("local", "0.36.0"),
+    });
+    await expect(gw.decide(choiceRequest())).resolves.toBeDefined();
+  });
+});
+
 describe("SystemOneDecisionGateway — transport failures", () => {
   it("wraps a generic network error as DecisionTransportError", async () => {
     const client = new FakeSystemOneClient(async () => {

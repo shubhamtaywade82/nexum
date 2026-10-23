@@ -169,9 +169,10 @@ const cfg = loadConfig();
       validateModel: () => agent.validateModel(),
       getSkillsRegistry: () => agent.getSkillsRegistry(),
       pinSkill: (id: string | null) => agent.pinSkill(id),
-      usageAll: (range?: "24h" | "7d" | "30d") => agent.usageAll(range),
+      usageAll: (range?: "24h" | "7d" | "30d", groupBy?: "model") => agent.usageAll(range, groupBy),
       balanceAll: () => agent.balanceAll(),
       importGguf: (model: string, path: string) => agent.importGguf(model, path),
+      pullModel: (model: string, onEvent) => agent.pullModel(model, onEvent),
     };
   }
 

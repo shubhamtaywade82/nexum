@@ -1,8 +1,15 @@
 import {
   OllamaClient,
   OllamaClientError,
+  OllamaNetworkError,
+  OllamaPaymentRequiredError,
   OllamaRateLimitError,
   OllamaTimeoutError,
+  extractNativeContextLength,
+  extractParameterNumCtx,
+  onProgress,
+  type PullProgressEvent,
+  type RequestCancellationOptions,
   type Message as SdkMessage,
   type ChatResponse as SdkChatResponse,
   type VisionInput,
@@ -22,6 +29,7 @@ import {
   TransportFailure,
   RateLimitError,
   ProviderError,
+  PaymentRequiredError,
   TimeoutError,
   InferenceQualityError,
   ToolFailure,
@@ -34,6 +42,7 @@ export {
   TransportFailure,
   RateLimitError,
   ProviderError,
+  PaymentRequiredError,
   TimeoutError,
   InferenceQualityError,
   ToolFailure,
@@ -121,6 +130,17 @@ export interface AccountBalance {
   error?: string;
 }
 
+/** Upper bound on one account's /usage or /balance probe, retries included.
+ * The SDK sleeps exactly the server's `Retry-After` on a 429 (no jitter, no
+ * clamp), so an unbounded probe could hold the user's command for the whole
+ * window before answering. */
+const ACCOUNT_PROBE_TIMEOUT_MS = 30_000;
+
+function boundedProbe<T extends RequestCancellationOptions>(req: T | undefined): T {
+  const deadline = AbortSignal.timeout(ACCOUNT_PROBE_TIMEOUT_MS);
+  return { ...req, signal: req?.signal ? AbortSignal.any([req.signal, deadline]) : deadline } as T;
+}
+
 /** Fallback row name when the config gave an account no label: identifies the
  * key by position and last 4 chars, enough to tell accounts apart by eye
  * without printing the secret. */
@@ -189,23 +209,41 @@ export function defaultHostForTier(tier: Tier): string {
 // "does not support tools", "subscription") survives intact for those checks.
 function mapSdkError(err: unknown, tier: Tier, model: string, cloudKeyCount: number): Error {
   if (err instanceof OllamaRateLimitError) {
+    // The SDK parses `Retry-After` (delay-seconds or HTTP-date) into
+    // `retryAfterMs`; carry it through so the caller can pace its own retry.
+    const retryAfterMs = err.retryAfterMs ?? null;
     return tier === "cloud"
-      ? new RateLimitError(`${model} (${tier}) rate limited on all ${cloudKeyCount} key(s)`)
-      : new RateLimitError(`${model} (${tier}) rate limited: ${err.message}`);
+      ? new RateLimitError(`${model} (${tier}) rate limited on all ${cloudKeyCount} key(s)`, retryAfterMs, err)
+      : new RateLimitError(`${model} (${tier}) rate limited: ${err.message}`, retryAfterMs, err);
   }
   if (err instanceof OllamaTimeoutError) {
-    return new TimeoutError(err.message);
+    return new TimeoutError(err.message, err);
+  }
+  // Transport failed before any HTTP status (refused, reset, DNS). The SDK
+  // classes this under OllamaClientError, so it has to be matched before the
+  // generic branch below — as a ProviderError the router never fails over.
+  if (err instanceof OllamaNetworkError) {
+    return new TransportFailure(`Ollama ${tier} unreachable (${model}): ${err.message}`, null, err);
+  }
+  if (err instanceof OllamaPaymentRequiredError) {
+    return new PaymentRequiredError(
+      `Ollama ${tier} ${err.status ?? 402}: ${redactSecrets(upstreamBodyText(err))}`,
+      err,
+    );
   }
   if (err instanceof OllamaClientError) {
-    // The SDK's `.message` collapses a non-JSON (or non-`{error}`-shaped)
-    // upstream body down to a generic "HTTP <status> <statusText>" string —
-    // `.response.body` still has the raw text/JSON, which is what needs
-    // redacting and surfacing to callers like router.ts.
-    const body = err.response?.body;
-    const bodyText = typeof body === "string" ? body : body !== undefined ? JSON.stringify(body) : err.message;
-    return new ProviderError(`Ollama ${tier} ${err.status ?? ""}: ${redactSecrets(bodyText)}`);
+    return new ProviderError(`Ollama ${tier} ${err.status ?? ""}: ${redactSecrets(upstreamBodyText(err))}`, err);
   }
   return err instanceof Error ? err : new ProviderError(String(err));
+}
+
+/** The raw upstream body. The SDK's `.message` collapses a non-JSON (or
+ * non-`{error}`-shaped) body to a generic "HTTP <status> <statusText>", while
+ * `.response.body` keeps the text that router.ts matches on ("subscription", …)
+ * and that must be redacted before it reaches callers. */
+function upstreamBodyText(err: OllamaClientError): string {
+  const body = err.response?.body;
+  return typeof body === "string" ? body : body !== undefined ? JSON.stringify(body) : err.message;
 }
 
 // `finalResult.raw` is the last raw NDJSON chunk (carries eval_count/
@@ -460,13 +498,18 @@ export class Provider {
     }
   }
 
-  /** Queries local /api/show for accurate capabilities missed by /api/tags. */
-  async showModel(model: string): Promise<{ capabilities?: string[] } | null> {
+  /** Queries local /api/show for accurate capabilities missed by /api/tags,
+   * and for the model's native context window (`model_info.*.context_length`,
+   * falling back to the Modelfile's `num_ctx`). */
+  async showModel(model: string): Promise<{ capabilities?: string[]; contextLength?: number } | null> {
     if (this.tier !== "local") return null;
     const client = this.buildClient();
     try {
       const info = await client.modelsClient.show({ model });
-      return { capabilities: info.capabilities as string[] | undefined };
+      return {
+        capabilities: info.capabilities as string[] | undefined,
+        contextLength: extractNativeContextLength(info.model_info) ?? extractParameterNumCtx(info.parameters),
+      };
     } catch {
       return null;
     }
@@ -521,6 +564,18 @@ export class Provider {
     return this.mapErrors(() => this.buildClient().modelsClient.createModelFromGguf(model, gguf, opts), model);
   }
 
+  /** Downloads `model` from the Ollama registry (`POST /api/pull`, streamed).
+   * `onEvent` receives every progress frame; the SDK's `onProgress` fills
+   * `bytesPerSecond` and `etaSeconds` once two byte-bearing frames of a layer
+   * have arrived. Local tier only: the cloud host does not pull into a local store. */
+  async pullModel(model: string, onEvent: (event: PullProgressEvent) => void): Promise<void> {
+    if (this.tier !== "local") throw new ProviderError("pullModel requires the local tier");
+    return this.mapErrors(async () => {
+      const stream = await this.buildClient().modelsClient.pull({ model, stream: true });
+      await onProgress(stream, onEvent);
+    }, model);
+  }
+
   /** Ollama Cloud request counts/spend (`GET ollama.com/api/usage`) for **every**
    * key in the pool — one row per account, so several accounts for availability
    * each get their own numbers. Always a cloud-host call regardless of this
@@ -533,7 +588,7 @@ export class Provider {
       this.accountKeys().map(async (apiKey, index) => {
         const label = this.accountLabels[apiKey] ?? maskedKeyLabel(apiKey, index);
         try {
-          return { label, usage: await this.accountClient(apiKey).usage(req) };
+          return { label, usage: await this.accountClient(apiKey).usage(boundedProbe(req)) };
         } catch (err) {
           return { label, error: this.accountError(err) };
         }
@@ -547,7 +602,7 @@ export class Provider {
       this.accountKeys().map(async (apiKey, index) => {
         const label = this.accountLabels[apiKey] ?? maskedKeyLabel(apiKey, index);
         try {
-          return { label, balance: await this.accountClient(apiKey).balance(req) };
+          return { label, balance: await this.accountClient(apiKey).balance(boundedProbe(req)) };
         } catch (err) {
           return { label, error: this.accountError(err) };
         }

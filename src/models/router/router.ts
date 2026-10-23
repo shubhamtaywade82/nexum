@@ -4,8 +4,8 @@ import {
   ChatResponse,
   ChatOptions,
   ProviderError,
-  RateLimitError,
-  TimeoutError,
+  PaymentRequiredError,
+  TransportFailure,
 } from "../adapters/provider.js";
 import { Capability, ModelCatalog } from "../catalog.js";
 
@@ -94,9 +94,13 @@ export class Router {
   }
 
   private isRecoverable(e: unknown): boolean {
-    if (e instanceof RateLimitError) return true;
-    if (e instanceof TimeoutError) return true;
+    // Covers RateLimitError and TimeoutError, and network-level failures
+    // (refused, reset, DNS) that the SDK surfaces as OllamaNetworkError.
+    if (e instanceof TransportFailure) return true;
     if (e instanceof TypeError) return true;
+    // Billing gate on this candidate (plan or credits), not on the account
+    // as a whole — another candidate may be on-plan.
+    if (e instanceof PaymentRequiredError) return true;
     // The catalog's capability filter should already exclude these, but if a
     // model still gets picked that rejects tool schemas outright, that's a
     // wrong-candidate problem, not a fatal one — try the next candidate.
