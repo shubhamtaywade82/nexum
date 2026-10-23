@@ -25,7 +25,6 @@ import { SelfConsistency } from "../../models/verification/self-consistency.js";
 import { ModelCapabilityRegistry } from "../../models/profiles/model-capability-registry.js";
 import { DecisionGateway, SystemOneDecisionGateway, type SystemOneEnvironment } from "../../models/decision/index.js";
 import { OllamaSystemOneClient } from "../../models/decision/ollama-system-one-client.js";
-import { version as versionOperation } from "@nemesis-oss/ollama-sdk/generated/api";
 
 export type StatusEmitter = (message: string) => void;
 
@@ -66,16 +65,9 @@ class LocalSystemOneEnvironment implements SystemOneEnvironment {
   async getVersion(): Promise<string | undefined> {
     if (this.cached !== null) return this.cached === undefined ? undefined : this.cached;
     try {
-      // Use the SDK's public `version` operation via the same `runtime.invoke`
-      // seam the Decision Plane adapter uses for `systemOne`. The response
-      // shape is `{ version?: string }` per the SDK's `VersionResponse`.
-      const client = this.provider.getOllamaClient();
-      const res = (await client.runtime.invoke({
-        operation: versionOperation,
-        body: undefined,
-      })) as { version?: unknown };
-      const v = res.version;
-      this.cached = typeof v === "string" ? v : undefined;
+      // The SDK's public `version()` — the same probe its systemOne cloud gate uses.
+      const { version } = await this.provider.getOllamaClient().version();
+      this.cached = typeof version === "string" ? version : undefined;
     } catch {
       // Local Ollama unreachable — let the gateway try anyway and surface
       // the real transport error if the user actually calls decide().
@@ -216,9 +208,9 @@ export class ModelStack {
     //
     // When enabled and local, the stack builds a SystemOneDecisionGateway
     // around an OllamaSystemOneClient that calls the SDK's public
-    // `systemOne` operation via `OllamaClient.runtime.invoke`. The local
-    // Ollama version probe (used by the gateway to enforce `minVersion:
-    // 0.35.0`) is served by the same `runtime.invoke` seam.
+    // `OllamaClient.systemOne(request, { signal })`. The local Ollama version
+    // probe (used by the gateway to enforce `minVersion: 0.35.0`) is the SDK's
+    // public `version()`.
     this.decisionModel = cfg.decisionModel;
     if (cfg.enableDecision && cfg.tier === "local") {
       this.decisionGateway =

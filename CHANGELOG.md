@@ -2,12 +2,11 @@
 
 ## Unreleased
 
-### Changed — `@nemesis-oss/ollama-sdk` 1.9 → 1.20 wired through
+### Changed — `@nemesis-oss/ollama-sdk` 1.9 → 1.22 wired through
 
-`@nemesis-oss/ollama-sdk` moves from `^1.9.0` to `^1.20.0` (the SDK's own
-`main` is at 1.20.0, published, with no unreleased commits). The SDK releases
-between those versions are wired into the places that already did this work
-by hand, or that had no equivalent before:
+`@nemesis-oss/ollama-sdk` moves from `^1.9.0` to `^1.22.0`, the latest published
+release. The SDK releases between those versions are wired into the places that
+already did this work by hand, or that had no equivalent before:
 
 - **Typed errors reach the router.** A connection-level failure (refused,
   reset, DNS) is now `TransportFailure` instead of a generic `ProviderError`,
@@ -26,13 +25,20 @@ by hand, or that had no equivalent before:
   (falling back to the Modelfile's `num_ctx`) from the same `/api/show` call it
   already made for capabilities. Local models are sized to their real window,
   not the 128k default that every profile used to get.
-- **Decision plane cloud floor.** A `:cloud` decision model served by a local
-  server needs Ollama 0.40.5+, enforced by the gateway before the request is
-  sent (the SDK's own `systemOne()` wrapper has the same gate, but it has no
-  abort signal, so the gateway calls the seam directly). Version comparison
-  uses the SDK's `compareOllamaVersions`.
+- **Decision plane cloud floor and deadlines.** A `:cloud` decision model served
+  by a local server needs Ollama 0.40.5+. The SDK's `systemOne` enforces that
+  floor and reports a refusal as `OllamaCloudModelVersionError`, which the
+  gateway maps to `DecisionUnavailableError`. The adapter calls
+  `OllamaClient.systemOne(request, { signal })` (`@nemesis-oss/ollama-sdk@1.21.0`),
+  so a decision's deadline covers the gate and the wire request. Before 1.21.0
+  the SDK dropped per-call signals in its failover layer, so the decision plane
+  never enforced its deadline; 1.21.0 fixes that (SDK ADR 0037).
 - **Embeddings batch.** `OllamaEmbedder` sends 32 inputs per `/api/embed`
   request with 3 in flight (`batchEmbed`), instead of one unbounded request.
+- **Wire contract tested over a real socket.** `tests/models/ollama-wire.test.ts`
+  runs the SDK's transport against a local server that speaks the Ollama
+  endpoints: 402, `Retry-After`, a refused connection with router failover,
+  `/api/show` context discovery, streamed pulls, and embedding batches.
 
 Declined, with reasons: the SDK's web tools (nexum's SSRF-guarded fetch and
 policy gates stay authoritative), SDK conversation compaction and history

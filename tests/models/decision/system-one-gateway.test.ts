@@ -1,3 +1,4 @@
+import { OllamaCloudModelVersionError } from "@nemesis-oss/ollama-sdk";
 import {
   SystemOneDecisionGateway,
   type SystemOneClient,
@@ -405,34 +406,42 @@ describe("SystemOneDecisionGateway — environment rules", () => {
   });
 });
 
-describe("SystemOneDecisionGateway — cloud-model version floor", () => {
-  it("refuses a cloud-suffixed model through a local server older than 0.40.5", async () => {
-    const client = new FakeSystemOneClient(async () => wireResponse({ domain: { choice: "filesystem" } }));
+describe("SystemOneDecisionGateway — cloud-model version floor (applied by the SDK)", () => {
+  it("maps the SDK's cloud-model version refusal to DecisionUnavailableError", async () => {
+    const client = new FakeSystemOneClient(async () => {
+      throw new OllamaCloudModelVersionError("System One cloud model requires Ollama >= 0.40.5", {
+        model: "clef:cloud",
+        serverVersion: "0.40.4",
+        minRequiredVersion: "0.40.5",
+      });
+    });
     const gw = new SystemOneDecisionGateway({
       client,
       environment: new StaticEnvironment("local", "0.40.4"),
     });
     const err = await gw.decide(choiceRequest({ model: "clef:cloud" })).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DecisionUnavailableError);
-    expect((err as Error).message).toMatch(/clef:cloud.*0\.40\.5.*0\.40\.4/);
+    expect((err as Error).message).toMatch(/0\.40\.5/);
   });
 
-  it("accepts a cloud-suffixed model at exactly the cloud floor", async () => {
-    const client = new FakeSystemOneClient(async () => wireResponse({ domain: { choice: "filesystem" } }));
-    const gw = new SystemOneDecisionGateway({
-      client,
-      environment: new StaticEnvironment("local", "0.40.5"),
-    });
-    await expect(gw.decide(choiceRequest({ model: "clef:cloud" }))).resolves.toBeDefined();
-  });
-
-  it("keeps the plain System One floor for models without the cloud suffix", async () => {
+  it("hands a cloud-suffixed model to the SDK without a nexum-side cloud pre-check", async () => {
+    // The SDK owns the 0.40.5 floor and probes the server itself, so the gateway
+    // must not refuse on its own (and must not cache a second probe).
     const client = new FakeSystemOneClient(async () => wireResponse({ domain: { choice: "filesystem" } }));
     const gw = new SystemOneDecisionGateway({
       client,
       environment: new StaticEnvironment("local", "0.36.0"),
     });
-    await expect(gw.decide(choiceRequest())).resolves.toBeDefined();
+    await expect(gw.decide(choiceRequest({ model: "clef:cloud" }))).resolves.toBeDefined();
+  });
+
+  it("keeps the 0.35.0 System One floor for every model", async () => {
+    const client = new FakeSystemOneClient(async () => wireResponse({ domain: { choice: "filesystem" } }));
+    const gw = new SystemOneDecisionGateway({
+      client,
+      environment: new StaticEnvironment("local", "0.34.0"),
+    });
+    await expect(gw.decide(choiceRequest())).rejects.toBeInstanceOf(DecisionUnavailableError);
   });
 });
 
