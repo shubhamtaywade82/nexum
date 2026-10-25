@@ -16,8 +16,9 @@ const binPath = join(here, "..", "..", "bin", "cli.js");
 describe("bin/cli.js rpc wiring", () => {
   it("dispatches the 'rpc' command to dist/cli/rpc.js", () => {
     const content = readFileSync(binPath, "utf8");
-    expect(content).toMatch(/command === 'rpc'/);
-    expect(content).toMatch(/import\('\.\.\/dist\/cli\/rpc\.js'\)/);
+    // Quote-agnostic: the pre-commit formatter owns this file's quote style.
+    expect(content).toMatch(/command === ["']rpc["']/);
+    expect(content).toMatch(/import\(["']\.\.\/dist\/cli\/rpc\.js["']\)/);
   });
 
   it("mentions rpc in the --help output", () => {
