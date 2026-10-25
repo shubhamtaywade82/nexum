@@ -151,6 +151,27 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
       expect(results[2]).toMatchObject({ taskId: "case-3", loopAborted: true });
     });
 
+    it("ignores bracketed logger prefixes on stdout", () => {
+      const stdout = [
+        "[Learning] absorbed 2 lesson(s) from partial episode",
+        JSON.stringify([
+          {
+            model: "m",
+            tier: "local",
+            caseId: "case-1",
+            pass: true,
+            latencyMs: 120,
+            tokensPerSec: 9.5,
+            tokens: 1200,
+            tokensEstimated: false,
+          },
+        ]),
+      ].join("\n");
+      const results = parseBenchmarkJson(stdout);
+      expect(results).toHaveLength(1);
+      expect(results[0].taskId).toBe("case-1");
+    });
+
     it("throws when the subprocess produced no results array", () => {
       expect(() => parseBenchmarkJson("no json here")).toThrow("no results array");
     });
