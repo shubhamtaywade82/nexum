@@ -491,7 +491,7 @@ production implementation.
   harness to a commit (registry lineage first, then any git-resolvable ref),
   verifies the commit exists in the repository, atomically writes the
   `activeHarness` pointer (tmp + rename), and re-reads it to verify.
-  **No runtime consumes the pointer yet:** nothing in the running agent reads `nexum.harness.json`, so an activation records the choice and changes no executing code (`consumedByRuntime: false` in the artifact).
+  **The launcher consumes the pointer.** `bin/cli.js` calls `runActiveHarness` (`src/platform/harness-launcher.ts`) before any command runs. For an agent command (the TUI, a task, `fix`, `issue`, `rpc`, `serve`, `eval`) started from the checkout, it compares the pointer with the checkout's `HEAD`. When they differ, it materializes the pointer's commit once into `~/.nexum/harnesses/<sha>` (a git worktree, its dependencies with install scripts off, and its build) and runs the same command there with the same arguments and terminal. Control commands (`evolve`, `doctor`, `trust`, …) always run the installed code, so the evaluator never runs the harness it judges. A `frozen` marker makes agent commands exit 75 until the rollback lands. A failed build fails closed; `NEXUM_HARNESS=current` runs the installed code instead. Processes already running keep their code; the pointer takes effect on the next start. The artifact records `consumedByRuntime: true`.
   Fail-closed on unknown harnesses; corrupt manifests are never clobbered;
   `harnessHealth()` is real external reality (git cat-file), so the runtime
   rollback orchestrator's post-switch verification checks the repository,
