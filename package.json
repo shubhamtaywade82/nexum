@@ -94,7 +94,7 @@
     "vitepress": "^1.6.4"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.4.0",
     "@nemesis-oss/binance-sdk": "^3.0.0",
     "@nemesis-oss/ollama-sdk": "^1.22.0",
     "@nemesis-oss/termina-core": "^0.1.0",
@@ -121,7 +121,7 @@
     "vscode-languageserver-types": "^3.18.0",
     "vscode-uri": "^3.1.0",
     "ws": "^8.21.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

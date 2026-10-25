@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * ApprovalManager service (review item 1) — human-in-the-loop gates the
  * Agent god class used to own inline.
@@ -48,7 +49,7 @@ export class ApprovalManager {
     if (this.opts.autoApprove) return true;
     if (!this.opts.hasApprovalListener()) return false;
 
-    const id = `appr${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
+    const id = `appr-${randomUUID()}`;
     const request: ApprovalRequest = { id, title, summary, filesChanged: 0, additions: 0, deletions: 0 };
     const approved = await new Promise<boolean>((resolve) => {
       this.pendingApprovals.set(id, resolve);

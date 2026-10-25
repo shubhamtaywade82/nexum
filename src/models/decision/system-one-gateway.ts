@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * SystemOneDecisionGateway — the concrete adapter from Nexum's
  * {@link DecisionRequest} domain contract to the tev1 /v1/systemone wire
@@ -281,7 +282,7 @@ export class SystemOneDecisionGateway implements DecisionGateway {
     //    request's declared choices.
     const parsed = parseWireResponse(raw, request);
     return {
-      id: request.id ?? `decision-${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      id: request.id ?? `decision-${randomUUID()}`,
       model: parsed.model ?? request.model,
       mode: request.mode,
       decisions: parsed.answers,

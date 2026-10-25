@@ -705,11 +705,11 @@ export class ClosedLoopEngine {
     let accepted = false;
     let merged = false;
     if (ci.passed) {
-      review = await adapter.syncReviewFeedback(this.experiments, experimentId, handle.prNumber);
+      review = await adapter.syncReviewFeedback(this.experiments, experimentId, handle.prNumber, handle.headSha);
       if (review.state === "approved" && (opts.autoAccept ?? true)) {
         accepted = this.finalizeAcceptance(experimentId);
         if (accepted && (opts.mergeOnAccept ?? true)) {
-          merged = await adapter.mergePullRequest(handle.prNumber);
+          merged = await adapter.mergePullRequest(handle.prNumber, handle.headSha);
         }
       }
     }

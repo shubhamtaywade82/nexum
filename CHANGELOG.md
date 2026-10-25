@@ -10,7 +10,18 @@ A loopback `nexum serve` with no `NEXUM_SERVER_TOKEN` accepted any request that 
 - **Origin.** An `Origin` header must be listed in `NEXUM_ALLOWED_ORIGINS`, an exact `scheme://host[:port]` list. Refused with `403 forbidden_origin`.
 - **Body type.** A request with a body must be `application/json`. Refused with `415 unsupported_media_type`.
 
-The token comparison is now constant-time. Non-browser clients send none of these headers, so the SDK, the `nexum chat` client and the existing tests are unaffected. Loopback without a token still accepts local processes, which remains the documented local-dev boundary.
+The token comparison is now constant-time. Non-browser clients send none of these headers, so the SDK, the `nexum chat` client and the existing tests are unaffected. The loopback token default in the next section closes the remaining gap for local processes.
+
+### Security — loopback token by default, browser origins, scoped idempotency
+
+- **Loopback token by default.** `nexum serve` on a loopback bind creates a per-user bearer token at `~/.nexum/server-token` (mode 0600) and local clients read it automatically. The client sends that token only to a loopback base URL. `nexum serve --no-token` restores the token-less mode, in which any local process can call the host. `NEXUM_SERVER_TOKEN` overrides the file. Library callers of `createNexumHost` keep explicit control, and no token is generated for them.
+- **Browser origins can call the host.** The preflight from an origin listed in `NEXUM_ALLOWED_ORIGINS` is answered with `204` and no credentials, and its responses name the origin. The guard's refusal already told users to add an origin to call the host from a browser, but the host never answered the preflight, so a browser could not call it.
+- **Idempotency-Key is bound to its body and route.** Reusing a key with a different body returns `422 idempotency_key_reused`. Before, it silently replayed the first response. A duplicate that arrives while the first request is still running returns `409 idempotency_in_progress`. Only 2xx responses are stored, and a refused attempt releases its key. Entries expire after 24 h and at most 10 000 are kept.
+- **Auto-merge is pinned to the reviewed commit.** An evolution PR's approval counts only when it was given on the PR's head commit, and the merge names that commit's SHA, so a commit pushed after approval is not merged unreviewed. `syncReviewFeedback`, `getLatestReview` and `mergePullRequest` now take the head SHA.
+- **Calculator.** Names inherited from `Object.prototype`, such as `constructor`, are rejected. Before, `constructor(1)*2` evaluated to `2`.
+- **Identifiers.** Approval, run, grant, webhook, clarification, hypothesis and decision ids use `randomUUID()`, not `Math.random()`.
+- **Keyword index.** The FTS5 table name must be a plain SQL identifier.
+- **Dependencies.** `@modelcontextprotocol/client` `^2.0.0` → `^2.4.0` and `zod` `^4.4.3` → `^4.6.7`, both fixing security advisories. Transitive updates: `undici` 7.30.1, `js-yaml` 3.15.2, `follow-redirects` 1.16.1, `body-parser` 2.4.0, `fast-uri` 3.1.9, `ip-address` 10.7.5 and `@modelcontextprotocol/sdk` 1.32.2. `npm audit --omit=dev` reports no vulnerabilities.
 
 ### Changed — `@nemesis-oss/ollama-sdk` 1.9 → 1.22 wired through
 

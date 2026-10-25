@@ -40,6 +40,12 @@ describe("evaluateExpression", () => {
     },
   );
 
+  it("rejects an inherited object name rather than resolving it to Object", () => {
+    // `constructor(1)*2` used to evaluate to 2, because the name resolved to Object through the prototype chain.
+    expect(() => evaluateExpression("constructor(1)*2")).toThrow(/unknown name "constructor"/);
+    expect(() => evaluateExpression("toString")).toThrow(/unknown name/);
+  });
+
   it.each([
     ["1 + 2 * 3", 7],
     ["sin(0)", 0],

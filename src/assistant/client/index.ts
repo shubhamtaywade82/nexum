@@ -5,10 +5,15 @@ import type {
   RunEventEnvelope,
   ResolveInteractionRequest,
 } from "../../protocol/types.js";
+import { isLoopbackHostHeader } from "../../host/request-guard.js";
+import { readServerToken, serverTokenPath } from "../../host/server-token.js";
 
 export interface NexumClientOptions {
   baseUrl?: string;
+  /** Bearer token. Defaults to NEXUM_SERVER_TOKEN, then to the per-user token of a loopback host. */
   token?: string;
+  /** Token file consulted for a loopback base URL. Defaults to the per-user token file. */
+  tokenFile?: string;
   fetchFn?: typeof fetch;
 }
 
@@ -50,7 +55,8 @@ export class NexumClient {
 
   constructor(opts: NexumClientOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? process.env.NEXUM_SERVER_URL ?? "http://127.0.0.1:3777").replace(/\/$/, "");
-    this.token = opts.token ?? process.env.NEXUM_SERVER_TOKEN;
+    this.token =
+      opts.token ?? process.env.NEXUM_SERVER_TOKEN ?? loopbackToken(this.baseUrl, opts.tokenFile ?? serverTokenPath());
     this.fetchFn = opts.fetchFn ?? fetch;
   }
 
@@ -194,6 +200,20 @@ export class NexumClient {
     }
     return res.json() as Promise<T>;
   }
+}
+
+/**
+ * The per-user token, offered only for a loopback base URL. It authorises this
+ * machine's host, so it must never be sent to another address.
+ */
+function loopbackToken(baseUrl: string, tokenFile: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(baseUrl).host;
+  } catch {
+    return undefined;
+  }
+  return isLoopbackHostHeader(host) ? readServerToken(tokenFile) : undefined;
 }
 
 function parseSseBlock(block: string): RunEventEnvelope | null {

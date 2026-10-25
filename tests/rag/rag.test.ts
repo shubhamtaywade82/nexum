@@ -106,6 +106,13 @@ describe("KeywordRetriever + indexes", () => {
     expect(chunks[0].source.kind).toBe("keyword");
   });
 
+  it("sqlite FTS index refuses a table name that is not a plain SQL identifier", () => {
+    const db = new Database(":memory:");
+    expect(() => new SqliteKeywordIndex(db, { table: "docs; DROP TABLE x" })).toThrow(/invalid FTS5 table name/);
+    expect(() => new SqliteKeywordIndex(db, { table: "rag-chunks" })).toThrow(/invalid FTS5 table name/);
+    db.close();
+  });
+
   it("sqlite FTS index searches, lists, deletes and is namespace-scoped", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nexum-fts-"));
     const db = new Database(join(dir, "fts.db"));

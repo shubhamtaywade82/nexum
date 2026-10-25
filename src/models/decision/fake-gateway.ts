@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * FakeDecisionGateway — the test/injection form of {@link DecisionGateway}.
  *
@@ -80,7 +81,7 @@ export class FakeDecisionGateway implements DecisionGateway {
       });
     }
 
-    const id = request.id ?? `decision-${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = request.id ?? `decision-${randomUUID()}`;
     const result: DecisionResult = {
       id,
       model: request.model,

@@ -321,7 +321,7 @@ mutation → git commit → push branch → create PR → CI → review → feed
 
 - `deliverExperiment()` commits, pushes the evolution branch, and opens the PR carrying the provenance body.
 - `syncCiFeedback()` polls check-runs and reports the verdict through `reportCiResult()` — including the honest case: a polling timeout reports `pending` and leaves the lifecycle at `CI_PENDING` rather than fabricating a verdict.
-- `syncReviewFeedback()` reads the LATEST human review and reports it through `reportReviewOutcome()` (`APPROVED` / `CHANGES_REQUESTED`).
+- `syncReviewFeedback()` reads the LATEST human review of the PR's head commit and reports it through `reportReviewOutcome()` (`APPROVED` / `CHANGES_REQUESTED`). A review of an earlier commit does not count, and the merge call names the same head SHA, so a commit pushed after approval is not merged unreviewed.
 - Git and HTTP are injectable, so the adapter is fully unit-testable without network access.
 
 ### 6.12 ActivationMonitor — post-activation telemetry

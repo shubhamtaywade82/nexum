@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * ExecutionManager service (review item 1) — run lifecycle + planned-task
  * execution the Agent god class used to own inline.
@@ -49,7 +50,7 @@ export class ExecutionManager {
     const controller = new AbortController();
     this.currentRunController = controller;
     this.executionSignal = controller.signal;
-    return `run_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    return `run_${randomUUID()}`;
   }
 
   /** Cancel the in-flight run scope: supervised tool calls unwind as cancelled. */

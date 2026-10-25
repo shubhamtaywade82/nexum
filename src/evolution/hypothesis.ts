@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * Hypothesis generator for the Nexum Harness Evolution System.
  *
@@ -8,10 +9,9 @@
 import { HarnessDiagnosis, HarnessHypothesis } from "./types.js";
 import { ImprovementTarget } from "./targets/target-engine.js";
 
-/** Generates a unique hypothesis identifier based on timestamp and component. */
+/** Generates a unique hypothesis identifier from the component and a random UUID. */
 function generateHypothesisId(component: string): string {
-  const rand = Math.random().toString(36).slice(2, 7);
-  return `hyp-${component}-${Date.now()}-${rand}`;
+  return `hyp-${component}-${randomUUID()}`;
 }
 
 /** Formulates a concrete hypothesis from a diagnosed subsystem weakness. */

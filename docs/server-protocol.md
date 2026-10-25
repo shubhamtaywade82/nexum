@@ -5,7 +5,9 @@ Protocol Version: `1.0.0`
 ## 1. System Endpoints
 
 ### `GET /`
+
 Basic server identification.
+
 - **Status**: 200 OK
 - **Response**:
   ```json
@@ -18,7 +20,9 @@ Basic server identification.
   ```
 
 ### `GET /health`
+
 Process-level liveness probe.
+
 - **Status**: 200 OK
 - **Response**:
   ```json
@@ -29,7 +33,9 @@ Process-level liveness probe.
   ```
 
 ### `GET /ready`
+
 Deep dependency readiness check (PostgreSQL, Redis, Runtime).
+
 - **Status**: 200 OK (or 503 Service Unavailable if degraded)
 - **Response**:
   ```json
@@ -44,8 +50,10 @@ Deep dependency readiness check (PostgreSQL, Redis, Runtime).
   ```
 
 ### `GET /capabilities`
+
 What this server can do, so clients discover it instead of assuming. Requires the auth token when one is configured.
 Metadata only: no file paths, commands, arguments, environment or keys.
+
 - **Status**: 200 OK
 - **Response**:
   ```json
@@ -53,10 +61,7 @@ Metadata only: no file paths, commands, arguments, environment or keys.
     "protocolVersion": "1.0.0",
     "agents": ["devagent"],
     "strategies": ["react", "plan_execute", "graph"],
-    "presentations": [
-      { "format": "markdown" },
-      { "format": "openui", "schemaVersion": "0.3.0" }
-    ],
+    "presentations": [{ "format": "markdown" }, { "format": "openui", "schemaVersion": "0.3.0" }],
     "tools": [
       { "id": "read_file", "description": "...", "pack": "Filesystem", "risk": "medium", "uiInvocable": true },
       { "id": "run_shell", "description": "...", "pack": "Shell", "risk": "high", "uiInvocable": false }
@@ -81,9 +86,11 @@ Metadata only: no file paths, commands, arguments, environment or keys.
 ## 2. Session Endpoints
 
 ### `POST /sessions`
+
 Creates a new conversation session.
+
 - **Headers**:
-  - `Idempotency-Key`: Optional UUID
+  - `Idempotency-Key`: Optional. A retry with the same key and the same body on the same route replays the first 2xx response for 24 h. The same key with a different body returns `422 idempotency_key_reused`. A duplicate that arrives while the first request is still running returns `409 idempotency_in_progress`. A refused attempt does not consume the key.
 - **Request Body**:
   ```json
   {
@@ -102,7 +109,9 @@ Creates a new conversation session.
   ```
 
 ### `GET /sessions`
+
 Lists persisted sessions (most recently updated first).
+
 - **Status**: 200 OK
 - **Response**:
   ```json
@@ -121,7 +130,9 @@ Lists persisted sessions (most recently updated first).
   ```
 
 ### `GET /sessions/:id`
+
 Retrieves a session and its durable message history.
+
 - **Status**: 200 OK (or 404 Not Found)
 - **Response**:
   ```json
@@ -153,9 +164,11 @@ Retrieves a session and its durable message history.
 ## 3. Run Endpoints
 
 ### `POST /sessions/:sessionId/runs`
+
 Initiates a new execution turn. Returns immediately with the created run resource.
+
 - **Headers**:
-  - `Idempotency-Key`: Optional UUID
+  - `Idempotency-Key`: Optional. A retry with the same key and the same body on the same route replays the first 2xx response for 24 h. The same key with a different body returns `422 idempotency_key_reused`. A duplicate that arrives while the first request is still running returns `409 idempotency_in_progress`. A refused attempt does not consume the key.
 - **Request Body**:
   ```json
   {
@@ -166,15 +179,15 @@ Initiates a new execution turn. Returns immediately with the created run resourc
     "interactive": false
   }
   ```
-  | Field | Meaning |
-  | --- | --- |
-  | `goal` | Required. The user's message. |
-  | `presentation` | Optional, default `{ "mode": "auto" }`. How the answer should be presented; see below. |
-  | `interactive` | `true` if this client will show approvals and clarifications to a user. Default `false`: approvals are denied and clarifications skipped, so a headless client never leaves a run waiting. |
-  **Presentation.** `{ mode, openui? }` where `mode` is `auto`, `markdown` or `openui`, and `openui` is the client's offer:
-  `{ "schemaVersion", "spec", "schema" }` (`spec` is prompt-ready component documentation, max 32,000 chars; `schema` is
-  the library's JSON schema, which Nexum validates the answer against). The client says what it can render; Nexum decides
-  the format and reports it in `run.completed`.
+  | Field                                                                                                                     | Meaning                                                                                                                                                                                    |
+  | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+  | `goal`                                                                                                                    | Required. The user's message.                                                                                                                                                              |
+  | `presentation`                                                                                                            | Optional, default `{ "mode": "auto" }`. How the answer should be presented; see below.                                                                                                     |
+  | `interactive`                                                                                                             | `true` if this client will show approvals and clarifications to a user. Default `false`: approvals are denied and clarifications skipped, so a headless client never leaves a run waiting. |
+  | **Presentation.** `{ mode, openui? }` where `mode` is `auto`, `markdown` or `openui`, and `openui` is the client's offer: |
+  | `{ "schemaVersion", "spec", "schema" }` (`spec` is prompt-ready component documentation, max 32,000 chars; `schema` is    |
+  | the library's JSON schema, which Nexum validates the answer against). The client says what it can render; Nexum decides   |
+  | the format and reports it in `run.completed`.                                                                             |
   - `markdown`: nothing is injected; the answer is Markdown.
   - `auto`: with an `openui` offer, the spec is added to this run's prompt and the model may answer in OpenUI when the
     content fits; without an offer, Markdown.
@@ -203,7 +216,9 @@ Initiates a new execution turn. Returns immediately with the created run resourc
   ```
 
 ### `GET /runs/:runId`
+
 Retrieves the metadata and current state of a run.
+
 - **Status**: 200 OK (or 404 Not Found)
 - **Response**:
   ```json
@@ -224,8 +239,10 @@ Retrieves the metadata and current state of a run.
   the client's schema (see Presentation above); `content` is then the bare program.
 
 ### `POST /runs/:runId/cancel`
+
 Cooperatively cancels an in-flight run via the agent's `AbortController`. Anything the run is waiting on
 (an approval or clarification) is denied or skipped so the run can end.
+
 - **Status**: 200 OK
 - **Response**:
   ```json
@@ -239,7 +256,9 @@ Cooperatively cancels an in-flight run via the agent's `AbortController`. Anythi
 ## 4. Event Streaming & SSE
 
 ### `GET /runs/:runId/events`
+
 Server-Sent Events endpoint streaming execution telemetry.
+
 - **Headers**:
   - `Accept: text/event-stream`
   - `Last-Event-ID: <seq>` (Optional; resumes replay from sequence `<seq>`)
@@ -247,7 +266,9 @@ Server-Sent Events endpoint streaming execution telemetry.
   - `?after=<seq>` (Alternative to `Last-Event-ID`)
 
 #### SSE Wire Format
+
 Each event includes a database monotonic integer `id`:
+
 ```http
 id: 101
 event: run.started
@@ -272,9 +293,9 @@ data: {"type":"run.completed","runId":"run-98a72b","output":{"format":"markdown"
 
 A run created with `interactive: true` pauses when the agent needs a decision, emitting an event and waiting:
 
-| Event | Fields |
-| --- | --- |
-| `run.approval.required` | `interactionId`, `title`, `summary` |
+| Event                        | Fields                                                                |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `run.approval.required`      | `interactionId`, `title`, `summary`                                   |
 | `run.clarification.required` | `interactionId`, `question`, `options: [{ id, label, description? }]` |
 
 The run continues on the same connection once the interaction is resolved; a `run.approval.resolved` /
@@ -283,7 +304,9 @@ clarification skipped) and are reported with the same `*.resolved` events. Cance
 anything still pending. MCP elicitation is not yet carried by this protocol.
 
 ### `POST /runs/:runId/interactions/:interactionId/resolve`
+
 Answers a pending interaction.
+
 - **Request Body** — an approval must say `approved` explicitly; it is never inferred:
   ```json
   { "approved": true }
@@ -303,7 +326,9 @@ Answers a pending interaction.
 ## 6. UI tool calls
 
 ### `POST /sessions/:sessionId/tools/:name`
+
 Lets a rendered UI (for example an OpenUI `Query`) call a tool directly, outside any agent run.
+
 - **Request Body**: `{ "args": { ... } }` (`args` defaults to `{}`)
 - Only tools whose `/capabilities` entry has `uiInvocable: true` run here. Eligibility is an explicit opt-in on the
   tool's policy and is separate from `risk`; a high-risk tool never qualifies even if mislabelled. Everything else,
@@ -322,6 +347,7 @@ Lets a rendered UI (for example an OpenUI `Query`) call a tool directly, outside
 ## 7. Standardized Error Contract
 
 Error responses are a flat JSON object with a lowercase snake_case code, a message, and sometimes extra fields:
+
 ```json
 {
   "error": "run_in_progress",
@@ -345,9 +371,11 @@ Bearer token applies, and errors on these routes use OpenAI's envelope
 `{ "error": { "message", "type", "param", "code" } }` (for example `authentication_error` / `invalid_api_key`).
 
 ### `GET /v1/models`, `GET /v1/models/:id`
+
 One model, `nexum-agent`. It is the whole agent, not a raw LLM; the underlying model is chosen by Nexum.
 
 ### `POST /v1/chat/completions`
+
 - **Request:** `{ "model": "nexum-agent", "messages": [...] }`. Any other `model` is `404 model_not_found`.
 - **Mapping:** the last message must be a non-empty `user` message; it is the run's goal. `system` / `developer`
   messages are passed as context (`Context from the client: ... User request: ...`), so retrieval context from a client
@@ -373,9 +401,8 @@ One model, `nexum-agent`. It is the whole agent, not a raw LLM; the underlying m
 - **Streaming (`stream: true`):** a standard `chat.completion.chunk` SSE stream: a first chunk with
   `delta.role = "assistant"`, text chunks, a last chunk with `finish_reason: "stop"`, then `data: [DONE]`. While the agent
   works, each tool call appears as a Markdown blockquote line (`> 🔧 **read_file** \`{"path":"a"}\``, and
-  `> ⚠️ **name** failed: ...` on failure), then a blank line and the answer. Thoughts and plans are not shown, and no
-  `tool_calls` delta is ever sent, because a client that saw one would try to run the tool itself. The agent produces
-  its answer in one piece, so the answer arrives as a single chunk at the end. SSE comment lines (`: keep-alive`) are
+`> ⚠️ **name** failed: ...`on failure), then a blank line and the answer. Thoughts and plans are not shown, and no`tool_calls` delta is ever sent, because a client that saw one would try to run the tool itself. The agent produces
+its answer in one piece, so the answer arrives as a single chunk at the end. SSE comment lines (`: keep-alive`) are
   sent every 15 s while the agent is silent. A run that fails is reported as a final text line and the stream still ends
   normally. Closing the connection cancels the run. The temporary session is deleted before the stream ends. A request
   that fails before the stream starts (an unknown model, a bad body) gets an ordinary JSON error instead.
