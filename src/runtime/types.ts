@@ -432,6 +432,7 @@ export interface StatusToken {
   text: string;
   priority: number;
   color?: string;
+  onClick?: () => void;
 }
 
 export interface Notification {

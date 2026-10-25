@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, Text, useInput } from "@nemesis-oss/termina-core";
+import { Box, Text, useInput, useMouse } from "@nemesis-oss/termina-core";
 import { THEME_ORDER, ThemeName } from "../../runtime/types.js";
 import { getTheme } from "../ui/theme-registry.js";
 import { useTheme } from "../ui/hooks/use-theme.js";
@@ -40,6 +40,19 @@ export function ThemeSwitcher({ current, width, rows, active, onSelect }: ThemeS
   const windowStart = Math.max(0, Math.min(clampedIndex - (listRows - 1), THEME_ORDER.length - listRows));
   const visible = THEME_ORDER.slice(windowStart, windowStart + listRows);
 
+  useMouse(
+    (event) => {
+      if (event.action === "wheel") {
+        if (event.button === "wheelUp") {
+          setIndex((idx) => Math.max(0, idx - 1));
+        } else if (event.button === "wheelDown") {
+          setIndex((idx) => Math.min(THEME_ORDER.length - 1, idx + 1));
+        }
+      }
+    },
+    { isActive: active },
+  );
+
   useInput(
     (input, key) => {
       if (MOUSE_SGR_PATTERN.test(input)) return; // scroll/click artifact, never real text
@@ -65,7 +78,7 @@ export function ThemeSwitcher({ current, width, rows, active, onSelect }: ThemeS
         const bg = isSelected ? theme.colors.selection : undefined;
         const fg = isSelected ? theme.colors.selectionForeground : undefined;
         return (
-          <Box key={name} height={1} width="100%" backgroundColor={bg}>
+          <Box key={name} height={1} width="100%" backgroundColor={bg} onClick={() => onSelect(name)}>
             <Text color={fg} wrap="truncate">
               {`${isSelected ? "› " : "  "}${isCurrent ? "●" : "○"} ${padName(name)}`}
             </Text>

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdout } from "@nemesis-oss/termina-core";
+import { Box, Text, useApp, useInput, usePaste, useStdout } from "@nemesis-oss/termina-core";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { historyFile as flatHistoryFile, legacyHistoryFile, workspaceStateDir } from "../platform/paths.js";
@@ -291,8 +291,6 @@ export function App({
   const [modelAvailability, setModelAvailability] = useState<Record<string, boolean>>({});
   const [modelCapabilities, setModelCapabilities] = useState<Record<string, string[]>>({});
   const commandRegistry = useMemo(() => registry ?? builtinCommands(), [registry]);
-  const pastingRef = useRef(false);
-  const pasteBufRef = useRef("");
   const pasteCountRef = useRef(0);
   const focusReportRef = useRef(false);
   const lastCtrlCTimeRef = useRef(0);
@@ -353,53 +351,12 @@ export function App({
     });
   }, [appendPasted]);
 
-  // Detect bracketed paste markers on stdin.
-  // Uses prependListener so our handler runs BEFORE Ink's — once pastingRef
-  // is true, useInput bails out and lets this handler set the prompt directly.
-  useEffect(() => {
-    if (!process.stdin.isTTY) return;
-    let buf = "";
-    const handler = (data: Buffer) => {
-      buf += data.toString();
-
-      if (buf.includes("\x1b[200~")) {
-        pastingRef.current = true;
-        pasteBufRef.current = "";
-        buf = buf.replace("\x1b[200~", "");
-      }
-
-      if (pastingRef.current) {
-        if (buf.includes("\x1b[201~")) {
-          const parts = buf.split("\x1b[201~");
-          pasteBufRef.current += parts[0] ?? "";
-          // Some terminals encode pasted line breaks as bare \r (confirmed
-          // via DEVAGENT_DEBUG_STDIN capture) rather than \n. Normalize both
-          // \r\n and lone \r to \n so line counting/collapsing sees them —
-          // otherwise the raw \r survives into the prompt and, once actually
-          // written to a real terminal, repeatedly carriage-returns the
-          // cursor, leaving only the last segment visible on screen.
-          const pasted = pasteBufRef.current.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-          pasteBufRef.current = "";
-          setPrompt((p) => appendPasted(p, pasted));
-          buf = parts.slice(1).join("\x1b[201~");
-          // Defer turning off pastingRef so any useInput callbacks queued
-          // from INK's buffer see pastingRef.current = true and bail out.
-          setTimeout(() => {
-            pastingRef.current = false;
-          }, 0);
-        } else {
-          pasteBufRef.current += buf;
-          buf = "";
-        }
-      }
-
-      if (!pastingRef.current) buf = "";
-    };
-    process.stdin.prependListener("data", handler);
-    return () => {
-      process.stdin.off("data", handler);
-    };
-  }, []);
+  // Termina handles bracketed paste markers natively via usePaste.
+  // Normalize \r\n and bare \r to \n so line counting/collapsing sees them properly.
+  usePaste((text) => {
+    const pasted = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    setPrompt((p) => appendPasted(p, pasted));
+  });
 
   // Terminal focus tracking (DECSET 1004): most modern terminals (iTerm2,
   // kitty, WezTerm, Alacritty, Windows Terminal) report window focus in/out
@@ -416,8 +373,7 @@ export function App({
     // falls through Ink's keypress parser as literal "[I"/"[O" text typed
     // into the prompt. Same fix as the bracketed-paste handler above:
     // prependListener runs before Ink's own stdin listener, and
-    // focusReportRef tells useInput to swallow the resulting keypresses
-    // instead of appending them (see the pastingRef check below).
+    // focusReportRef tells useInput to swallow the resulting keypresses.
     const handler = (data: Buffer) => {
       const s = data.toString();
       if (s !== "\x1b[I" && s !== "\x1b[O") return;
@@ -640,7 +596,6 @@ export function App({
   );
 
   useInput((input, key) => {
-    if (pastingRef.current) return; // let the data handler manage paste content
     if (focusReportRef.current) return; // terminal focus in/out escape, not real text
     if (MOUSE_SGR_PATTERN.test(input)) return; // scroll/click artifact, never real text
 
@@ -881,7 +836,14 @@ export function App({
               {"─".repeat(Math.max(0, width - 1))}
             </Text>
           </Box>
-          <ActivityStrip state={state} width={width} now={now} activeView={ui.activeView} />
+          <ActivityStrip
+            state={state}
+            width={width}
+            now={now}
+            activeView={ui.activeView}
+            onSelectView={(v) => uiDispatch({ type: "focus-view", view: v })}
+            onOpenPalette={() => uiDispatch({ type: "open-overlay", overlay: "palette" })}
+          />
           <Box flexDirection="column" height={viewRows}>
             {showViewTitle ? (
               <Box height={1}>

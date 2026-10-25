@@ -1,7 +1,6 @@
 import React, { useState } from "react";
-import { Box, Text, useInput } from "@nemesis-oss/termina-core";
+import { Box, Text, useInput, useMouse } from "@nemesis-oss/termina-core";
 import { ExecutionNode } from "../../runtime/event-node.js";
-import { parseSgrMouseEvent } from "../../interaction/mouse.js";
 import { useTheme } from "../ui/hooks/use-theme.js";
 import { OverlayFrame } from "./OverlayFrame.js";
 
@@ -30,22 +29,21 @@ export function ExecutionDagOverlay({
   const clampedIndex = Math.min(index, Math.max(0, flatNodes.length - 1));
   const selectedNode = flatNodes[clampedIndex];
 
+  useMouse(
+    (event) => {
+      if (event.action === "wheel") {
+        if (event.button === "wheelUp") {
+          setIndex((idx) => Math.max(0, idx - 1));
+        } else if (event.button === "wheelDown") {
+          setIndex((idx) => Math.min(flatNodes.length - 1, idx + 1));
+        }
+      }
+    },
+    { isActive: active },
+  );
+
   useInput(
     (input, key) => {
-      const mouse = parseSgrMouseEvent(input);
-      if (mouse) {
-        if (mouse.button === "scroll_up") {
-          setIndex(Math.max(0, clampedIndex - 1));
-        } else if (mouse.button === "scroll_down") {
-          setIndex(Math.min(flatNodes.length - 1, clampedIndex + 1));
-        } else if (mouse.button === "left" && mouse.action === "press") {
-          if (selectedNode) {
-            setExpandedNodeId(expandedNodeId === selectedNode.id ? null : selectedNode.id);
-          }
-        }
-        return;
-      }
-
       if (key.escape || input === "q") {
         onClose();
       } else if (key.upArrow) {
@@ -88,7 +86,15 @@ export function ExecutionDagOverlay({
                 : theme.colors.warning;
 
           return (
-            <Box key={node.id} flexDirection="column" marginY={0}>
+            <Box
+              key={node.id}
+              flexDirection="column"
+              marginY={0}
+              onClick={() => {
+                setIndex(i);
+                setExpandedNodeId((curr) => (curr === node.id ? null : node.id));
+              }}
+            >
               <Box backgroundColor={isSelected ? theme.colors.selection : undefined}>
                 <Text color={theme.colors.mutedForeground}>{expandGlyph}</Text>
                 <Text color={statusColor} bold>

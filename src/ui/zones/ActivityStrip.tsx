@@ -9,6 +9,8 @@ export interface ActivityStripProps {
   width: number;
   now?: number;
   activeView?: ViewId;
+  onSelectView?: (view: ViewId) => void;
+  onOpenPalette?: () => void;
 }
 
 const NOTIFICATION_TTL_MS = 5000;
@@ -21,8 +23,15 @@ const NOTIFICATION_HEALTH = {
 } as const;
 
 /** Primary nav tabs; recent notifications surface as a toast token. */
-export function ActivityStrip({ state, width, now = Date.now(), activeView }: ActivityStripProps): React.JSX.Element {
-  const tokens = activityStripTokens(state, activeView);
+export function ActivityStrip({
+  state,
+  width,
+  now = Date.now(),
+  activeView,
+  onSelectView,
+  onOpenPalette,
+}: ActivityStripProps): React.JSX.Element {
+  const tokens = activityStripTokens(state, activeView, onSelectView, onOpenPalette);
   const latest = state.notifications[state.notifications.length - 1];
   if (latest && now - latest.at < NOTIFICATION_TTL_MS) {
     tokens.push({

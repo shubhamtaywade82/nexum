@@ -25,18 +25,15 @@ import { BRAND } from "../platform/brand.js";
 /** Matches App.tsx double–Ctrl+C window; SIGINT must not restore the terminal on first press. */
 const EXIT_CONFIRM_MS = 1500;
 
-function enableTerminalFeatures(): () => void {
+function setupTerminalFailsafe(): () => void {
   if (!process.stdin.isTTY) return () => {};
-  process.stdout.write("\x1b[?1049h\x1b[2J\x1b[3J\x1b[H\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h");
   let restored = false;
   const cleanup = () => {
     if (restored) return;
     restored = true;
     process.stdout.write("\x1b[?2004l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l\x1b[?25h");
   };
-  // Restore the primary buffer only on process exit — not on the first SIGINT.
-  // A SIGINT handler that resets the terminal before Ink/App unmount leaves the
-  // TUI running in a broken screen while Ctrl+C appears to do nothing.
+  // Emergency fallback cleanup on exit in case unmount is bypassed
   process.once("exit", cleanup);
   return cleanup;
 }
@@ -226,14 +223,20 @@ const cfg = loadConfig();
     shellAgent = buildLocalShellAgent(agent);
   }
 
-  const disableFeatures = enableTerminalFeatures();
+  const restoreFailsafe = setupTerminalFailsafe();
   const instance = render(
     React.createElement(App, { bus, store, agent: shellAgent, workspaceRoot: cfg.workspaceRoot, initialTask }),
-    { exitOnCtrlC: false },
+    {
+      exitOnCtrlC: false,
+      alternateScreen: true,
+      mouse: true,
+      incrementalRendering: true,
+      kittyKeyboard: { mode: "auto" },
+    },
   );
-  registerForceQuitHandlers(() => instance.unmount(), disableFeatures);
+  registerForceQuitHandlers(() => instance.unmount(), restoreFailsafe);
   await instance.waitUntilExit();
-  disableFeatures();
+  restoreFailsafe();
   if (agent) {
     try {
       await agent.stopHost();

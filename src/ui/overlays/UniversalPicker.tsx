@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, Text, useInput } from "@nemesis-oss/termina-core";
+import { Box, Text, useInput, useMouse } from "@nemesis-oss/termina-core";
 import { filterPickerItems, PickerItem, visibleWindow } from "../../interaction/picker.js";
 import { MOUSE_SGR_PATTERN } from "../../interaction/mouse.js";
 import { useTheme } from "../ui/hooks/use-theme.js";
@@ -58,6 +58,19 @@ export function UniversalPicker({
   const aboveCount = start;
   const belowCount = filtered.length - (start + visible.length);
 
+  useMouse(
+    (event) => {
+      if (event.action === "wheel") {
+        if (event.button === "wheelUp") {
+          setIndex((idx) => Math.max(0, idx - 1));
+        } else if (event.button === "wheelDown") {
+          setIndex((idx) => Math.min(filtered.length - 1, idx + 1));
+        }
+      }
+    },
+    { isActive: active },
+  );
+
   useInput(
     (input, key) => {
       if (MOUSE_SGR_PATTERN.test(input)) return; // scroll/click artifact, never real text
@@ -113,7 +126,25 @@ export function UniversalPicker({
             : "";
         const bg = highlighted ? theme.colors.selection : undefined;
         return (
-          <Box key={item.id} height={1} width="100%" backgroundColor={bg}>
+          <Box
+            key={item.id}
+            height={1}
+            width="100%"
+            backgroundColor={bg}
+            onClick={() => {
+              setIndex(absolute);
+              if (multi) {
+                setChecked((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(item.id)) next.delete(item.id);
+                  else next.add(item.id);
+                  return next;
+                });
+              } else {
+                onSubmit([item.id]);
+              }
+            }}
+          >
             <Box width={GLYPH_COL}>
               <Text color={highlighted ? theme.colors.selectionForeground : undefined} backgroundColor={bg}>
                 {glyph}

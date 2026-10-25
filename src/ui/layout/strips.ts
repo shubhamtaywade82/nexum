@@ -18,16 +18,27 @@ import { semanticColor } from "./theme-map.js";
 /** Primary nav tabs: five workspace views, active one highlighted. Secondary
  * actors (Mem/Mdl/MCP/Skl/LSP) surface as header health tokens instead —
  * they never deserved the same navigational prominence as Chat. */
-export function activityStripTokens(_state: RuntimeState, activeView?: ViewId): StatusToken[] {
+export function activityStripTokens(
+  _state: RuntimeState,
+  activeView?: ViewId,
+  onSelectView?: (view: ViewId) => void,
+  onOpenPalette?: () => void,
+): StatusToken[] {
   const tokens: StatusToken[] = PRIMARY_VIEWS.map((id, i) => {
     const active = activeView === id || (activeView === "dashboard" && id === "conversation");
     return {
       text: active ? `[${PRIMARY_VIEW_LABELS[id]}]` : ` ${PRIMARY_VIEW_LABELS[id]} `,
       priority: i + 1,
       color: semanticColor(active ? "active" : "muted"),
+      onClick: onSelectView ? () => onSelectView(id) : undefined,
     };
   });
-  tokens.push({ text: "Ctrl+P Palette", priority: 20, color: semanticColor("muted") });
+  tokens.push({
+    text: "Ctrl+P Palette",
+    priority: 20,
+    color: semanticColor("muted"),
+    onClick: onOpenPalette,
+  });
   return tokens;
 }
 
