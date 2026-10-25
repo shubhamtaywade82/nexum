@@ -66,6 +66,10 @@ export interface BenchmarkResult {
   reason?: string;
   latencyMs: number;
   tokensPerSec: number | null;
+  /** Prompt plus completion tokens the case consumed, summed over every turn. 0 when no response came back. */
+  tokens: number;
+  /** True when `tokens` is a content-length estimate because the provider reported no usage counts. */
+  tokensEstimated: boolean;
   error?: string;
 }
 

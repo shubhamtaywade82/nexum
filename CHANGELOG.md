@@ -23,6 +23,15 @@ The token comparison is now constant-time. Non-browser clients send none of thes
 - **Keyword index.** The FTS5 table name must be a plain SQL identifier.
 - **Dependencies.** `@modelcontextprotocol/client` `^2.0.0` → `^2.4.0` and `zod` `^4.4.3` → `^4.6.7`, both fixing security advisories. Transitive updates: `undici` 7.30.1, `js-yaml` 3.15.2, `follow-redirects` 1.16.1, `body-parser` 2.4.0, `fast-uri` 3.1.9, `ip-address` 10.7.5 and `@modelcontextprotocol/sdk` 1.32.2. `npm audit --omit=dev` reports no vulnerabilities.
 
+### Changed — evolution decides on development tasks; held-out is reported
+
+The strict-test protocol of _Can LLMs Improve Their Own Harness?_ (arXiv:2610.30499) is now enforced in code. Held-out tasks no longer influence acceptance, the selector, or the generalization gate.
+
+- **Frozen split.** Held-out membership is a hash of the case id (`heldout-split-v1`, one case in five), replacing the `reasoning`/`thinking` category label.
+- **Decision inputs are development-only.** Stage A/B, the validity check and the transfer gate read development results. A held-out regression no longer blocks a promotion. The held-out gain is recorded in `ExperimentOutcome.heldOut` and the experiment record.
+- **Real token counts.** Benchmark cases sum the provider's reported prompt and completion tokens over every turn. The fixed `tokens: 1500` is gone. Estimates are marked `tokensEstimated`.
+- **Activation is not overstated.** `--activate-runtime` writes the `nexum.harness.json` pointer, but no runtime reads it yet. The artifact records `consumedByRuntime: false`, and the CLI and docs say so.
+
 ### Changed — `@nemesis-oss/ollama-sdk` 1.9 → 1.22 wired through
 
 `@nemesis-oss/ollama-sdk` moves from `^1.9.0` to `^1.22.0`, the latest published

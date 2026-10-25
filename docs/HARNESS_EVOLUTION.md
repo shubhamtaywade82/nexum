@@ -203,11 +203,11 @@ CI and review are FIRST-CLASS lifecycle states (v2.1): a passing CI run has its 
 `src/evolution/comparison/two-stage-selector.ts` separates experiment validity from improvement:
 
 - **Stage A — statistical / execution validity**: runs completed, verifier coverage, verifier evidence validity, no catastrophic regressions, sufficient sample size.
-- **Stage B — improvement validity**: capability or reliability gain, no held-out regression, transfer evidence, acceptable token cost.
+- **Stage B — improvement validity**: capability or reliability gain on development tasks, and acceptable token cost. Held-out and transfer results are reported beside the decision and never decide it (§6.22).
 
 ### 6.5 Fixed-Executor Evaluation & the Generalization Gate
 
-`src/evolution/evaluation/fixed-executor.ts` treats evaluator model, harness candidate, and task suite as independent variables and builds the H0..Hn × executor matrix. `src/evolution/generalization/generalization-gate.ts` grants `GENERALIZED` only when the candidate holds or improves held-out success under the primary executor and does not collapse under any transfer executor, and reports **executor sensitivity** (spread of held-out deltas across executors) plus **direction agreement** — the research metrics for separating "the harness improved" from "this model + harness combination got lucky".
+`src/evolution/evaluation/fixed-executor.ts` treats evaluator model, harness candidate, and task suite as independent variables and builds the H0..Hn × executor matrix. `src/evolution/generalization/generalization-gate.ts` grants `GENERALIZED` only when the candidate does not collapse under any transfer executor. Held-out deltas are reported, including **executor sensitivity** (their spread across executors), but never decide the verdict. The gate also reports **direction agreement** — the research metrics for separating "the harness improved" from "this model + harness combination got lucky".
 
 #### Generalization policy
 
@@ -491,6 +491,7 @@ production implementation.
   harness to a commit (registry lineage first, then any git-resolvable ref),
   verifies the commit exists in the repository, atomically writes the
   `activeHarness` pointer (tmp + rename), and re-reads it to verify.
+  **No runtime consumes the pointer yet:** nothing in the running agent reads `nexum.harness.json`, so an activation records the choice and changes no executing code (`consumedByRuntime: false` in the artifact).
   Fail-closed on unknown harnesses; corrupt manifests are never clobbered;
   `harnessHealth()` is real external reality (git cat-file), so the runtime
   rollback orchestrator's post-switch verification checks the repository,
@@ -512,3 +513,13 @@ nexum evolve --mutate --repo . --strategy agent --verify-profile full \
   --benchmark --github --activate-runtime
 # → accepted candidate becomes the manifest pointer (nexum.harness.json)
 ```
+
+## 6.22 Held-out protocol and token accounting
+
+Modelled on the strict-test protocol of _Can LLMs Improve Their Own Harness?_ (arXiv:2610.30499): test tasks do not influence proposals, acceptance, stopping or selection.
+
+- **Frozen split.** A benchmark case is held out by `sha256(HELD_OUT_SPLIT_VERSION:caseId)`, one case in five (`src/evolution/heldout-split.ts`). The category label is no longer used, because the mutation agent can see and choose labels. The split version is recorded in every held-out report, and `heldOutSplitDigest()` names the exact assignment.
+- **Decisions use development tasks only.** `ClosedLoopEngine.runExperiment` builds its metrics, validity, Stage A/B and the transfer gate from development results. The selector's inputs have no held-out field, so the decision cannot read one.
+- **Held-out is an endpoint.** `ExperimentOutcome.heldOut` reports the held-out success rates and their gain, and the record stores them under `held_out` (empty when no held-out task ran). `promotion precision` counts a promotion as genuinely better only if its held-out gain is positive.
+- **Tokens are measured.** Each benchmark case sums the provider's `prompt_eval_count + eval_count` over every turn (`usageFor()` in `src/benchmark/runner.ts`). Only a provider that reports no counts falls back to a content-length estimate, which is marked `tokensEstimated`.
+- **Residual risk.** Held-out case definitions live in the repository, so a mutation worktree can still read them. The split prevents their _results_ from influencing a decision, but it does not hide the cases. Isolating the definitions outside the repository is the next step.

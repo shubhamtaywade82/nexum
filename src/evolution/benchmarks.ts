@@ -12,6 +12,7 @@ import { BenchmarkTarget, runBenchmark } from "../benchmark/runner.js";
 import { BenchmarkCase, BenchmarkResult } from "../benchmark/types.js";
 import { Provider } from "../models/adapters/provider.js";
 import { TaskExecutionResult } from "./evaluator.js";
+import { isHeldOutCase } from "./heldout-split.js";
 
 /** Gathers all benchmark cases across builtin, agentic, and execution suites. */
 export async function getAllBenchmarkCases(): Promise<BenchmarkCase[]> {
@@ -31,7 +32,6 @@ export function filterCasesByCategory(cases: BenchmarkCase[], categories: string
 /** Transforms a BenchmarkResult into a standardized TaskExecutionResult. */
 export function toTaskExecutionResult(res: BenchmarkResult): TaskExecutionResult {
   const isError = !res.pass;
-  const isHeldOut = res.category === "reasoning" || res.category === "thinking";
   const loopAborted = Boolean(res.error?.includes("maxTurns") || res.reason?.includes("loop"));
 
   return {
@@ -40,10 +40,11 @@ export function toTaskExecutionResult(res: BenchmarkResult): TaskExecutionResult
     verificationPassed: res.pass,
     toolCalls: res.category === "tool-calling" || res.category === "agentic-looping" ? 2 : 1,
     toolErrors: isError ? 1 : 0,
-    tokens: 1500,
+    tokens: res.tokens,
+    tokensEstimated: res.tokensEstimated,
     latencyMs: res.latencyMs,
     loopAborted,
-    isHeldOut,
+    isHeldOut: isHeldOutCase(res.caseId),
   };
 }
 

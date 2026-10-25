@@ -13,9 +13,9 @@
  *    particular model + harness combination improve?".
  *
  * The gate consumes a fixed-executor evaluation matrix (harness versions ×
- * executor models) and grants GENERALIZED only when the candidate improves or
- * holds steady on held-out tasks for the primary executor AND does not
- * collapse under any transfer executor.
+ * executor models) and grants GENERALIZED only when the candidate does not
+ * collapse under any transfer executor. Held-out cells are reported in the
+ * verdict but never decide it: a held-out signal must not reach acceptance.
  */
 
 /** One cell of the fixed-executor evaluation matrix. */
@@ -31,8 +31,6 @@ export interface ExecutorEvaluationCell {
 export interface GeneralizationGateOptions {
   /** Minimum runs per matrix cell for the cell to be usable. */
   minRunsPerCell?: number;
-  /** Maximum tolerated held-out regression vs baseline per executor (0..1). */
-  maxHeldOutRegression?: number;
   /** Maximum tolerated transfer regression on ANY transfer executor (0..1). */
   maxTransferRegression?: number;
 }
@@ -51,12 +49,10 @@ export interface GeneralizationVerdict {
 
 export class GeneralizationGate {
   private readonly minRunsPerCell: number;
-  private readonly maxHeldOutRegression: number;
   private const_maxTransferRegression: number;
 
   constructor(opts: GeneralizationGateOptions = {}) {
     this.minRunsPerCell = opts.minRunsPerCell ?? 2;
-    this.maxHeldOutRegression = opts.maxHeldOutRegression ?? 0.05;
     this.const_maxTransferRegression = opts.maxTransferRegression ?? 0.1;
   }
 
@@ -79,22 +75,12 @@ export class GeneralizationGate {
     const baselineCells = cells.filter((c) => c.harnessId === baselineHarnessId);
     const executors = [...new Set([...candidateCells, ...baselineCells].map((c) => c.executorModel))];
 
+    // Held-out cells are reported only. They add no violation, so they cannot fail the gate.
     for (const model of executors) {
       const candHeld = candidateCells.find((c) => c.executorModel === model && c.split === "held_out");
       const baseHeld = baselineCells.find((c) => c.executorModel === model && c.split === "held_out");
-
-      if (candHeld && baseHeld) {
-        if (candHeld.runs < this.minRunsPerCell || baseHeld.runs < this.minRunsPerCell) {
-          violations.push(`Insufficient runs for held-out evaluation under ${model}`);
-          continue;
-        }
-        const delta = candHeld.taskSuccessRate - baseHeld.taskSuccessRate;
-        heldOutDeltas[model] = delta;
-        if (delta < -this.maxHeldOutRegression) {
-          violations.push(
-            `Held-out regression under ${model}: ${(delta * 100).toFixed(1)}% (limit −${(this.maxHeldOutRegression * 100).toFixed(1)}%)`,
-          );
-        }
+      if (candHeld && baseHeld && candHeld.runs >= this.minRunsPerCell && baseHeld.runs >= this.minRunsPerCell) {
+        heldOutDeltas[model] = candHeld.taskSuccessRate - baseHeld.taskSuccessRate;
       }
     }
 
@@ -121,12 +107,15 @@ export class GeneralizationGate {
     const deltas = Object.values(heldOutDeltas);
     const executorSensitivity = deltas.length > 1 ? Math.max(...deltas) - Math.min(...deltas) : null;
 
-    const generalized = violations.length === 0 && Object.keys(heldOutDeltas).length > 0;
+    // The decision axis is transfer: every transfer executor must be evaluated and must not collapse.
+    const transferComplete =
+      transferExecutors.length > 0 && Object.keys(transferDeltas).length === transferExecutors.length;
+    const generalized = violations.length === 0 && transferComplete;
     const rationale = generalized
-      ? `Candidate holds or improves on held-out evaluation across ${Object.keys(heldOutDeltas).length} executor(s); executor sensitivity ${executorSensitivity === null ? "n/a (needs ≥2 executors)" : `${(executorSensitivity * 100).toFixed(1)}%`}.`
+      ? `Candidate holds under all ${transferExecutors.length} transfer executor(s); executor sensitivity ${executorSensitivity === null ? "n/a (needs ≥2 executors)" : `${(executorSensitivity * 100).toFixed(1)}%`}.`
       : violations.length > 0
         ? `Generalization gate failed: ${violations.join("; ")}`
-        : "Generalization gate failed: no usable held-out evaluation cells.";
+        : "Generalization gate failed: no transfer executor was evaluated.";
 
     return { generalized, rationale, heldOutDeltas, transferDeltas, executorSensitivity, violations };
   }

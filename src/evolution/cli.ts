@@ -643,7 +643,8 @@ async function activateRuntimeIfNeeded(
   outcome: Awaited<ReturnType<ClosedLoopEngine["runEvolutionCycle"]>>,
 ): Promise<NonNullable<ExperimentArtifactInput["activation"]>> {
   const harnessId = outcome.ok ? outcome.outcome.experiment.candidate.harness : "";
-  const base = { controller: controller.name, harnessId };
+  // No runtime reads nexum.harness.json yet, so an activation records a choice and changes no running code.
+  const base = { controller: controller.name, harnessId, consumedByRuntime: false };
   if (!outcome.ok) {
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error: "cycle did not produce a candidate" };
   }
@@ -660,7 +661,7 @@ async function activateRuntimeIfNeeded(
     }
     const pointer = controller.readPointer();
     console.log(
-      `[Evolution] Runtime activated: harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)} (manifest pointer: nexum.harness.json).`,
+      `[Evolution] Pointer written: harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)} (nexum.harness.json). No runtime consumes this pointer yet, so the running agent is unchanged.`,
     );
     return {
       ...base,

@@ -100,20 +100,36 @@ describe("TwoStageSelector", () => {
     expect(result.decision).toBe("eligible");
   });
 
-  it("inconclusive: valid experiment but held-out regression blocks promotion", () => {
+  it("eligible: a held-out regression does not block promotion, because held-out is not a selector input", () => {
     const result = selector.evaluate({
       candidateId: "H1",
       baselineId: "H0",
-      // Capability improves on visible but held-out drops → NOT promotable.
+      // Development capability improves; held-out drops. The selector only sees development metrics,
+      // so the held-out drop cannot reach the decision.
       candidateMetrics: metrics({ success: 0.95, heldOut: 0.6 }),
       baselineMetrics: metrics({ heldOut: 0.8 }),
       validity: VALID_EXPERIMENT,
-      heldOutGain: -0.2,
     });
     expect(result.stageA.decision).toBe("valid");
-    expect(result.stageB?.decision).toBe("not_improved");
-    expect(result.decision).toBe("inconclusive");
-    expect(result.stageB?.checks.find((c) => c.check === "held_out_improvement")?.passed).toBe(false);
+    expect(result.stageB?.decision).toBe("improved");
+    expect(result.decision).toBe("eligible");
+    expect(result.stageB?.checks.map((c) => c.check)).not.toContain("held_out_improvement");
+    expect(result.stageB?.deltas).not.toHaveProperty("generalization");
+  });
+
+  it("is unchanged by any held-out value: identical development metrics give the identical decision", () => {
+    const decide = (heldOut: number) =>
+      selector.evaluate({
+        candidateId: "H1",
+        baselineId: "H0",
+        candidateMetrics: metrics({ success: 0.9, heldOut }),
+        baselineMetrics: metrics({ heldOut: 0.8 }),
+        validity: VALID_EXPERIMENT,
+      });
+    const low = decide(0.1);
+    const high = decide(0.99);
+    expect(high.decision).toBe(low.decision);
+    expect(high.stageB?.deltas).toEqual(low.stageB?.deltas);
   });
 
   it("inconclusive: excessive token overhead blocks promotion", () => {

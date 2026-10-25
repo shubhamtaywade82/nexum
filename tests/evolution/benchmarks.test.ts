@@ -5,6 +5,7 @@ import {
   toTaskExecutionResult,
 } from "../../src/evolution/benchmarks.js";
 import { BenchmarkCase, BenchmarkResult } from "../../src/benchmark/types.js";
+import { isHeldOutCase } from "../../src/evolution/heldout-split.js";
 import { Provider } from "../../src/models/adapters/provider.js";
 
 describe("Evolution Benchmarks Bridge", () => {
@@ -34,6 +35,8 @@ describe("Evolution Benchmarks Bridge", () => {
       pass: true,
       latencyMs: 1200,
       tokensPerSec: 45,
+      tokens: 812,
+      tokensEstimated: false,
     };
 
     const taskRes = toTaskExecutionResult(bRes);
@@ -43,6 +46,26 @@ describe("Evolution Benchmarks Bridge", () => {
     expect(taskRes.toolCalls).toBe(2);
     expect(taskRes.toolErrors).toBe(0);
     expect(taskRes.latencyMs).toBe(1200);
+    // The provider-reported usage, not a constant.
+    expect(taskRes.tokens).toBe(812);
+    expect(taskRes.tokensEstimated).toBe(false);
+  });
+
+  it("assigns held-out by the frozen case-id split, never by category label", () => {
+    const base = {
+      model: "m",
+      tier: "local" as const,
+      pass: true,
+      latencyMs: 1,
+      tokensPerSec: null,
+      tokens: 0,
+      tokensEstimated: false,
+    };
+    // A category label carries no held-out meaning: the flag is the same hash assignment for every category.
+    for (const category of ["reasoning", "thinking", "tool-calling"] as const) {
+      const taskRes = toTaskExecutionResult({ ...base, caseId: "case-split-probe", category });
+      expect(taskRes.isHeldOut).toBe(isHeldOutCase("case-split-probe"));
+    }
   });
 
   it("runs benchmark cases with a mock provider", async () => {

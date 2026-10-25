@@ -30,7 +30,12 @@ import { GitDeliveryEngine, DeliveryReport, DeliveryPrOptions } from "./delivery
 import { HarnessDiagnoser } from "./diagnoser.js";
 import { CandidateEvaluator, TaskExecutionResult } from "./evaluator.js";
 import { ExecutorArm } from "./evaluation/fixed-executor.js";
-import { GeneralizationGate, GeneralizationVerdict } from "./generalization/generalization-gate.js";
+import {
+  GeneralizationGate,
+  GeneralizationVerdict,
+  type ExecutorEvaluationCell,
+} from "./generalization/generalization-gate.js";
+import { HELD_OUT_SPLIT_VERSION } from "./heldout-split.js";
 import { EvidenceAggregator } from "./experience/evidence-aggregator.js";
 import { ExperienceRecord } from "./experience/types.js";
 import { ExperienceStore } from "./experience/experience-store.js";
@@ -143,7 +148,68 @@ export interface ExperimentOutcome {
   comparison: ComparisonResult;
   twoStage: TwoStageResult;
   generalization: GeneralizationVerdict | null;
+  /** Held-out endpoint, reported beside the decision. Never an input to it. */
+  heldOut: HeldOutReport;
   delivery: DeliveryReport | null;
+}
+
+/** Held-out results of one experiment, kept apart from every decision input. */
+export interface HeldOutReport {
+  /** Version of the frozen split that assigned the tasks (see heldout-split.ts). */
+  splitVersion: string;
+  candidateRuns: number;
+  baselineRuns: number;
+  /** Success rate over held-out runs; null when no held-out task ran. */
+  candidateSuccessRate: number | null;
+  baselineSuccessRate: number | null;
+  /** Candidate minus baseline; null when either side has no held-out runs. */
+  gain: number | null;
+}
+
+export function heldOutReport(candidate: TaskExecutionResult[], baseline: TaskExecutionResult[]): HeldOutReport {
+  const candidateHeld = candidate.filter((r) => r.isHeldOut);
+  const baselineHeld = baseline.filter((r) => r.isHeldOut);
+  const candidateSuccessRate = successRate(candidateHeld);
+  const baselineSuccessRate = successRate(baselineHeld);
+  return {
+    splitVersion: HELD_OUT_SPLIT_VERSION,
+    candidateRuns: candidateHeld.length,
+    baselineRuns: baselineHeld.length,
+    candidateSuccessRate,
+    baselineSuccessRate,
+    gain:
+      candidateSuccessRate === null || baselineSuccessRate === null ? null : candidateSuccessRate - baselineSuccessRate,
+  };
+}
+
+function successRate(results: TaskExecutionResult[]): number | null {
+  return results.length === 0 ? null : results.filter((r) => r.success).length / results.length;
+}
+
+/** The record's held-out split: empty when no held-out task ran, so an unmeasured split is never shown as a score. */
+function heldOutRates(report: HeldOutReport): Record<string, number> {
+  if (report.candidateSuccessRate === null) return {};
+  return { heldOutScore: report.candidateSuccessRate, runs: report.candidateRuns };
+}
+
+function meanTransferRate(cells: ExecutorEvaluationCell[] | undefined, harnessId: string): number | null {
+  const transfer = (cells ?? []).filter((c) => c.harnessId === harnessId && c.split === "transfer");
+  return transfer.length === 0 ? null : transfer.reduce((acc, c) => acc + c.taskSuccessRate, 0) / transfer.length;
+}
+
+function transferRates(cells: ExecutorEvaluationCell[] | undefined, harnessId: string): Record<string, number> {
+  const rate = meanTransferRate(cells, harnessId);
+  return rate === null ? {} : { transferScore: rate };
+}
+
+function transferGainOf(
+  cells: ExecutorEvaluationCell[] | undefined,
+  candidateId: string,
+  baselineId: string,
+): number | null {
+  const candidate = meanTransferRate(cells, candidateId);
+  const baseline = meanTransferRate(cells, baselineId);
+  return candidate === null || baseline === null ? null : candidate - baseline;
 }
 
 /**
@@ -287,12 +353,15 @@ export class ClosedLoopEngine {
     /** Fixed-executor matrix cells (candidate + baseline × executors). */
     matrixCells?: Parameters<GeneralizationGate["evaluate"]>[0];
   }): ExperimentOutcome {
-    // 1. Metrics & baseline resolution.
-    const candidateMetrics = this.evaluator.aggregateResults(input.candidateResults);
-    const baselineMetrics = this.evaluator.aggregateResults(input.baselineResults);
+    // 1. Metrics & baseline resolution. Only development tasks decide; held-out tasks are reported, never decided on.
+    const candidateDev = input.candidateResults.filter((r) => !r.isHeldOut);
+    const baselineDev = input.baselineResults.filter((r) => !r.isHeldOut);
+    const candidateMetrics = this.evaluator.aggregateResults(candidateDev);
+    const baselineMetrics = this.evaluator.aggregateResults(baselineDev);
+    const heldOut = heldOutReport(input.candidateResults, input.baselineResults);
 
-    // 2. Two-stage selection (Stage A validity → Stage B improvement).
-    const validity = deriveValidity(input.candidateResults, input.baselineResults);
+    // 2. Two-stage selection (Stage A validity → Stage B improvement) over development results.
+    const validity = deriveValidity(candidateDev, baselineDev);
     const twoStage = this.twoStage.evaluate({
       candidateId: input.candidateHarnessId,
       baselineId: input.parentHarnessId,
@@ -301,12 +370,13 @@ export class ClosedLoopEngine {
       validity,
     });
 
-    // 3. Generalization gate over the fixed-executor matrix.
+    // 3. Generalization gate over the fixed-executor transfer cells. It decides only when a transfer
+    //    executor exists, and it never receives held-out cells.
     let generalization: GeneralizationVerdict | null = null;
-    if (input.matrixCells && input.matrixCells.length > 0) {
-      const transferExecutors = this.executorModels.slice(1);
+    const transferExecutors = this.executorModels.slice(1);
+    if (input.matrixCells && input.matrixCells.length > 0 && transferExecutors.length > 0) {
       generalization = this.generalizationGate.evaluate(
-        input.matrixCells,
+        input.matrixCells.filter((c) => c.split !== "held_out"),
         input.parentHarnessId,
         input.candidateHarnessId,
         transferExecutors,
@@ -346,14 +416,15 @@ export class ClosedLoopEngine {
       input.experimentId,
       {
         visible: pickRates(candidateMetrics, "visible"),
-        held_out: pickRates(candidateMetrics, "held_out"),
-        transfer: pickRates(candidateMetrics, "transfer"),
+        held_out: heldOutRates(heldOut),
+        transfer: transferRates(input.matrixCells, input.candidateHarnessId),
       },
       {
         capability: twoStage.stageB?.deltas.capability ?? 0,
         reliability: twoStage.stageB?.deltas.reliability ?? 0,
         efficiency: twoStage.stageB?.deltas.efficiency ?? 0,
-        generalization: twoStage.stageB?.deltas.generalization ?? 0,
+        // The held-out gain, reported beside the decision. It is not one of the decision deltas.
+        generalization: heldOut.gain ?? 0,
       },
     );
     const decisionRationale = policyMissingEvidence
@@ -410,7 +481,10 @@ export class ClosedLoopEngine {
       candidateId: input.candidateHarnessId,
       baselineId: input.parentHarnessId,
       decision: eligible ? "promote" : twoStage.decision === "rejected" ? "reject" : "inconclusive",
-      scoreDeltas: twoStage.stageB?.deltas ?? { capability: 0, reliability: 0, efficiency: 0, generalization: 0 },
+      scoreDeltas: {
+        ...(twoStage.stageB?.deltas ?? { capability: 0, reliability: 0, efficiency: 0 }),
+        generalization: heldOut.gain ?? 0,
+      },
       rationale: decisionRationale,
     };
 
@@ -457,14 +531,11 @@ export class ClosedLoopEngine {
       versionId: input.candidateHarnessId,
       parentVersionId: input.parentHarnessId,
       visibleGain: twoStage.stageB?.deltas.capability ?? null,
-      heldOutGain: candidateMetrics.generalization.heldOutScore - baselineMetrics.generalization.heldOutScore,
-      transferGain: candidateMetrics.generalization.transferScore - baselineMetrics.generalization.transferScore,
+      heldOutGain: heldOut.gain,
+      transferGain: transferGainOf(input.matrixCells, input.candidateHarnessId, input.parentHarnessId),
       promoted: eligible,
-      // Without a generalization gate there is no independent held-out verdict — "unknown", not "eligible".
-      genuinelyBetterOnHeldOut:
-        generalization === null
-          ? "unknown"
-          : generalization.generalized && (twoStage.stageB?.deltas.generalization ?? 0) > 0,
+      // Post hoc endpoint: did the promoted version actually beat its parent on held-out tasks? "unknown" when none ran.
+      genuinelyBetterOnHeldOut: heldOut.gain === null ? "unknown" : heldOut.gain > 0,
       accepted: false,
       rolledBack: false,
       retainedBySuccessor: "unknown",
@@ -473,7 +544,7 @@ export class ClosedLoopEngine {
     });
 
     const experiment = this.experiments.record(input.experimentId);
-    return { experiment, comparison, twoStage, generalization, delivery: deliveryReport };
+    return { experiment, comparison, twoStage, generalization, heldOut, delivery: deliveryReport };
   }
 
   // ── Self-development actuator ─────────────────────────────────────────

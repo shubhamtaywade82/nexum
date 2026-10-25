@@ -39,12 +39,9 @@ export function ratesFor(
   verificationPassRate: number;
   runs: number;
 } {
-  const selected =
-    split === undefined || split === "visible"
-      ? results.filter((r) => !r.isHeldOut)
-      : split === "held_out"
-        ? results.filter((r) => r.isHeldOut)
-        : results; // transfer runs are produced under a different executor entirely
+  // Transfer runs use a different executor, but the same suite. They decide acceptance,
+  // so they take only development tasks; held-out tasks reach the record alone.
+  const selected = split === "held_out" ? results.filter((r) => r.isHeldOut) : results.filter((r) => !r.isHeldOut);
   const runs = selected.length;
   return {
     taskSuccessRate: runs > 0 ? selected.filter((r) => r.success).length / runs : 0,

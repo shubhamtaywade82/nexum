@@ -4,10 +4,11 @@
  *
  * The seam in runtime-activation.ts describes the runtime half of activation
  * and rollback ("the process that actually executes the harness"). For Nexum
- * that process is the harness manifest consumer: the running system loads
- * `nexum.harness.json` to know which harness policy/version it executes —
- * the same manifest the mutation strategies legitimately write into. This
- * controller makes that file the ACTIVATION CONTRACT:
+ * that process would be a harness manifest consumer, which loads
+ * `nexum.harness.json` to know which harness version to execute. No such
+ * consumer exists yet: nothing in the running agent reads the pointer, so this
+ * controller records the choice and changes no running code. The file is the
+ * ACTIVATION CONTRACT a consumer would honor:
  *
  *   switchTo(H(n))  →  resolve H(n) to a commit (registry first, then any
  *                      git-resolvable ref) → verify the commit exists in the
