@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Security — the host refuses browser-driven requests
+
+A loopback `nexum serve` with no `NEXUM_SERVER_TOKEN` accepted any request that reached its socket, including a page open in the user's browser. Two requests from a foreign origin created a session with a 201: a cross-site `text/plain` POST, and a request whose `Host` named an attacker's domain (DNS rebinding). Every host route now runs `checkRequestGuard` before authentication:
+
+- **Host.** On a loopback bind, the `Host` header must name `localhost`, `127.0.0.1` or `[::1]`. Refused with `403 forbidden_host`.
+- **Origin.** An `Origin` header must be listed in `NEXUM_ALLOWED_ORIGINS`, an exact `scheme://host[:port]` list. Refused with `403 forbidden_origin`.
+- **Body type.** A request with a body must be `application/json`. Refused with `415 unsupported_media_type`.
+
+The token comparison is now constant-time. Non-browser clients send none of these headers, so the SDK, the `nexum chat` client and the existing tests are unaffected. Loopback without a token still accepts local processes, which remains the documented local-dev boundary.
+
 ### Changed — `@nemesis-oss/ollama-sdk` 1.9 → 1.22 wired through
 
 `@nemesis-oss/ollama-sdk` moves from `^1.9.0` to `^1.22.0`, the latest published

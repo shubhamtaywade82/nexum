@@ -20,9 +20,10 @@
  *   nexum serve --host 0.0.0.0               # bind beyond localhost (opt-in)
  *   nexum serve --workspace /path/to/repo    # explicit workspace root
  *
- * Binds to 127.0.0.1 by default — this is a local dev host, not a service
- * meant to be exposed to a network. There is no auth layer yet (see
- * docs/plan): don't bind --host beyond localhost on a shared machine.
+ * Binds to 127.0.0.1 by default. A non-loopback bind requires NEXUM_SERVER_TOKEN
+ * (bearer). A loopback bind without a token accepts any local process, so run it
+ * only on a machine you trust. Browser-driven requests are refused in both modes
+ * by the Host, Origin and body-type checks in src/host/request-guard.ts.
  */
 
 import { CliConfig, loadConfig } from "./config.js";

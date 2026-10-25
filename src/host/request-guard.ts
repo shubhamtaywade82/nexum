@@ -1,0 +1,101 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+import type { IncomingMessage } from "node:http";
+
+/**
+ * Request checks that run before authentication on every host route.
+ *
+ * Without a token, a loopback host accepts any caller that reaches the socket,
+ * and a browser is such a caller: any page the user opens can send a cross-site
+ * request to `127.0.0.1`. Two browser behaviours make that exploitable.
+ *
+ *   - DNS rebinding: a page on `attacker.example` re-resolves to `127.0.0.1`,
+ *     so the request reaches the host with `Host: attacker.example`.
+ *   - Cross-site POST: a `text/plain` request needs no CORS preflight, so it
+ *     reaches the host with a foreign `Origin` and a body the host would parse.
+ *
+ * The Host check closes the first, the Origin check closes the second, and the
+ * JSON-only body rule closes it again for clients that send no Origin.
+ */
+
+const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "::1"]);
+
+export interface GuardRejection {
+  status: 403 | 415;
+  error: "forbidden_host" | "forbidden_origin" | "unsupported_media_type";
+  message: string;
+}
+
+export interface RequestGuardOptions {
+  /** True when the host is bound to a loopback address. */
+  isLoopbackHost: boolean;
+  /** Normalised origins (see {@link normalizeOrigin}) browsers may call from. */
+  allowedOrigins: ReadonlySet<string>;
+}
+
+export function checkRequestGuard(req: IncomingMessage, opts: RequestGuardOptions): GuardRejection | null {
+  if (opts.isLoopbackHost && !isLoopbackHostHeader(req.headers.host)) {
+    return {
+      status: 403,
+      error: "forbidden_host",
+      message: "Host header must name this server on loopback (localhost, 127.0.0.1 or [::1])",
+    };
+  }
+  const origin = req.headers.origin;
+  if (origin !== undefined && !opts.allowedOrigins.has(normalizeOrigin(origin))) {
+    return {
+      status: 403,
+      error: "forbidden_origin",
+      message: `origin ${origin} is not allowed; add it to NEXUM_ALLOWED_ORIGINS to call the host from a browser`,
+    };
+  }
+  if (hasBody(req) && !isJsonContentType(req.headers["content-type"])) {
+    return { status: 415, error: "unsupported_media_type", message: "request body must be application/json" };
+  }
+  return null;
+}
+
+/** Whether a Host header names this server on loopback. The port is ignored: rebinding is about the name. */
+export function isLoopbackHostHeader(value: string | undefined): boolean {
+  if (!value) return false;
+  const name = value
+    .replace(/:\d+$/, "")
+    .replace(/^\[(.*)\]$/, "$1")
+    .toLowerCase();
+  return LOOPBACK_NAMES.has(name);
+}
+
+/** Lowercase scheme and host, drop a trailing slash. `null` (sandboxed or file origins) stays `null`. */
+export function normalizeOrigin(value: string): string {
+  return value.trim().replace(/\/$/, "").toLowerCase();
+}
+
+/** Parses a comma-separated `NEXUM_ALLOWED_ORIGINS` value into normalised origins. */
+export function parseAllowedOrigins(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .map(normalizeOrigin);
+}
+
+/**
+ * Compares a presented bearer token with the configured one in constant time.
+ * Both sides are hashed first so the comparison runs over equal-length buffers
+ * and leaks neither the token's length nor its prefix through timing.
+ */
+export function tokensMatch(presented: string, expected: string): boolean {
+  const a = createHash("sha256").update(presented).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+function hasBody(req: IncomingMessage): boolean {
+  if (req.headers["transfer-encoding"] !== undefined) return true;
+  const length = req.headers["content-length"];
+  return length !== undefined && Number(length) > 0;
+}
+
+function isJsonContentType(value: string | string[] | undefined): boolean {
+  return typeof value === "string" && /^application\/json\s*(;|$)/i.test(value.trim());
+}

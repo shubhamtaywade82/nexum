@@ -30,6 +30,7 @@ import { randomUUID } from "node:crypto";
 import type { Agent } from "../cli/agent.js";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { DISCOVERY_SESSION_ID, HostAgentRegistry } from "./agent-registry.js";
+import { checkRequestGuard, normalizeOrigin, parseAllowedOrigins, tokensMatch } from "./request-guard.js";
 import { describeError, readJsonBody, writeJson } from "./http.js";
 import { cancelRun, startRun, type Repos } from "./run-starter.js";
 import { writeOpenAiError } from "./openai/errors.js";
@@ -68,6 +69,11 @@ export interface NexumHostOptions {
   host?: string;
   port?: number;
   token?: string;
+  /**
+   * Origins a browser may call the host from (exact `scheme://host[:port]`).
+   * Defaults to `NEXUM_ALLOWED_ORIGINS`. Requests from any other origin are refused.
+   */
+  allowedOrigins?: string[];
   /** How long an unanswered approval/clarification waits before failing closed. Default 5 min. */
   interactionTimeoutMs?: number;
 }
@@ -99,6 +105,7 @@ interface RequestContext {
   busySessions: Set<string>;
   idempotencyCache: Map<string, { status: number; body: unknown; ts: number }>;
   isLoopbackHost: boolean;
+  allowedOrigins: ReadonlySet<string>;
   token?: string;
 }
 
@@ -107,6 +114,9 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
   const port = opts.port ?? 3777;
   const token = opts.token ?? process.env.NEXUM_SERVER_TOKEN;
   const isLoopbackHost = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const allowedOrigins = new Set(
+    (opts.allowedOrigins ?? parseAllowedOrigins(process.env.NEXUM_ALLOWED_ORIGINS)).map(normalizeOrigin),
+  );
 
   const repos: Repos = {
     sessions: new SessionRepository(opts.db),
@@ -135,6 +145,7 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
     busySessions,
     idempotencyCache,
     isLoopbackHost,
+    allowedOrigins,
     token,
   };
 
@@ -188,7 +199,8 @@ function isAuthorized(req: IncomingMessage, isLoopbackHost: boolean, expectedTok
   const authHeader = req.headers.authorization;
   if (!authHeader) return false;
   const [scheme, clientToken] = authHeader.split(" ");
-  return scheme === "Bearer" && clientToken === expectedToken;
+  if (scheme !== "Bearer" || clientToken === undefined || expectedToken === undefined) return false;
+  return tokensMatch(clientToken, expectedToken);
 }
 
 function getIdempotencyKey(req: IncomingMessage): string | undefined {
@@ -271,6 +283,16 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   const url = new URL(req.url ?? "/", "http://localhost");
   const segments = url.pathname.split("/").filter(Boolean);
   const method = req.method ?? "GET";
+
+  const rejection = checkRequestGuard(req, { isLoopbackHost: ctx.isLoopbackHost, allowedOrigins: ctx.allowedOrigins });
+  if (rejection) {
+    if (segments[0] === "v1") {
+      writeOpenAiError(res, rejection.status, "invalid_request_error", rejection.message, { code: rejection.error });
+    } else {
+      writeJson(res, rejection.status, { error: rejection.error, message: rejection.message });
+    }
+    return;
+  }
 
   if (!isAuthorized(req, ctx.isLoopbackHost, ctx.token)) {
     const message = "invalid or missing authentication token";
