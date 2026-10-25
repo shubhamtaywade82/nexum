@@ -30,6 +30,7 @@ The strict-test protocol of _Can LLMs Improve Their Own Harness?_ (arXiv:2610.30
 - **Frozen split.** Held-out membership is a hash of the case id (`heldout-split-v1`, one case in five), replacing the `reasoning`/`thinking` category label.
 - **Decision inputs are development-only.** Stage A/B, the validity check and the transfer gate read development results. A held-out regression no longer blocks a promotion. The held-out gain is recorded in `ExperimentOutcome.heldOut` and the experiment record.
 - **Real token counts.** Benchmark cases sum the provider's reported prompt and completion tokens over every turn. The fixed `tokens: 1500` is gone. Estimates are marked `tokensEstimated`.
+- **The evaluator is fixed across a lineage.** Mutations may not read or edit `src/evolution/` or `src/benchmark/`. This is enforced in the agent's worktree view (symlinks included), the proposal check, and the executor's planned and actual-diff checks. The default `execution` and `lifecycle` scopes no longer include `src/evolution/`. The `routing` and `verification` scopes pointed at a non-existent `src/provider/` and now point at `src/models/`; `execution` names `src/orchestration/`, not the non-existent `src/orchestrator/`.
 - **Activation is not overstated.** `--activate-runtime` writes the `nexum.harness.json` pointer, but no runtime reads it yet. The artifact records `consumedByRuntime: false`, and the CLI and docs say so.
 
 ### Changed — `@nemesis-oss/ollama-sdk` 1.9 → 1.22 wired through
