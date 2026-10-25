@@ -1183,6 +1183,14 @@ export class Agent {
           );
           previousTurnHadToolError = true;
           consecutiveToolErrors += 1;
+          if (!escalated) {
+            escalated = true;
+            injectDelegationAddendum();
+            this.emit(
+              "onStatus",
+              `escalating to ${escalationHint ?? "the primary model"}: local model escaped workspace root`,
+            );
+          }
 
           if (this.loopDetector.record(name, args, "PathEscapeError")) {
             return {

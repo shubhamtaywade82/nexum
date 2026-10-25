@@ -355,6 +355,39 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     expect(bodies[2].model).toBe("primary-model"); // immediate re-run on primary
   });
 
+  it("auto-escalates immediately when a local model tool call encounters PathEscapeError", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    let call = 0;
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return modelsListResponse([
+            { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } },
+          ]);
+        }
+        // Turn 0: calls read_file with an escaped path
+        if (call === 2) return toolCallResponse("read_file", { path: "/etc/outside.txt" });
+        // Turn 1: escalated to primary model
+        return chatResponse("handled on primary model");
+      }),
+    );
+
+    const onStatus = jest.fn();
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "primary-model" },
+      events: { onStatus },
+    });
+
+    const reply = await agent.runUserMessage("inspect file");
+    expect(reply).toBe("handled on primary model");
+    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("escaped workspace root"));
+
+    const bodies = chatBodies();
+    expect(bodies[0].model).toBe("minicpm5-1b"); // turn 0: quick
+    expect(bodies[1].model).toBe("primary-model"); // turn 1: escalated to primary model
+  });
+
   it("stays escalated for the rest of the call, but resets to quick on the next runUserMessage call", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
