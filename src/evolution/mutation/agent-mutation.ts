@@ -25,9 +25,9 @@
  * The strategy therefore never needs to be trusted; it needs to be audited.
  */
 
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, realpath } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import { pathWithinAllowedPrefix } from "./path-scope.js";
+import { pathWithinAllowedPrefix, protectedEvaluationPath } from "./path-scope.js";
 import { HarnessComponent, HarnessDiagnosis } from "../types.js";
 import { ImprovementTarget } from "../targets/target-engine.js";
 import { MutationScope } from "./mutation-scope.js";
@@ -284,8 +284,13 @@ export class AgentMutationStrategy implements MutationStrategy {
       parentCommit: context.parentCommit ?? "HEAD",
       readFile: async (p) => {
         const abs = safe(p);
-        if (!abs) return null;
+        if (!abs || protectedEvaluationPath(p)) return null;
         try {
+          // A symlink must not reach the evaluator either, so the resolved path is checked too.
+          const resolved = relative(await realpath(root), await realpath(abs))
+            .split(sep)
+            .join("/");
+          if (resolved.startsWith("..") || protectedEvaluationPath(resolved)) return null;
           const buf = await readFile(abs);
           if (buf.byteLength <= maxReadBytes) return buf.toString("utf8");
           // Byte-bound truncation; a split multi-byte sequence at the edge
@@ -310,6 +315,7 @@ export class AgentMutationStrategy implements MutationStrategy {
             if (EXCLUDED_LIST_DIRS.has(entry.name)) continue;
             const abs = join(dir, entry.name);
             const rel = relative(root, abs).split(sep).join("/");
+            if (protectedEvaluationPath(rel)) continue;
             if (entry.isDirectory()) {
               await walk(abs);
             } else if (entry.isFile()) {

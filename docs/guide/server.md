@@ -13,7 +13,7 @@ Nexum Server is a durable runtime server that acts as the single authoritative e
 5. **Lossless, Duplicate-Free Reconnection**: Reconnecting clients using `Last-Event-ID` or `?after=<seq>` receive replayed events from PostgreSQL before transitioning to the live stream with deduplication by sequence.
 6. **Session-Level Execution Concurrency**: One session has at most one active interactive run at a time (turn-taking). Independent sessions execute concurrently up to the global server resource limit.
 7. **Crash-Safe Reconciliation**: A server crash never leaves active runs permanently in `running`. On startup, orphaned runs are deterministically reconciled and marked as `interrupted`.
-8. **Security at the Network Boundary**: Loopback (`127.0.0.1`) permits local development access without authentication. Non-loopback binding (`0.0.0.0`, LAN, public) strictly requires `NEXUM_SERVER_TOKEN` via `Authorization: Bearer <token>`.
+8. **Security at the Network Boundary**: A loopback bind (`127.0.0.1`) uses a per-user bearer token, created on first use at `~/.nexum/server-token` (mode 0600). Local clients read it automatically, and it is sent only to a loopback base URL. `nexum serve --no-token` turns the token off, and then any local process can call the host. A non-loopback bind (`0.0.0.0`, LAN, public) requires `NEXUM_SERVER_TOKEN` via `Authorization: Bearer <token>`. `NEXUM_SERVER_TOKEN` overrides the file in every mode. In every mode, requests from a browser are refused unless they are allowed: a `Host` header that does not name the server on loopback (DNS rebinding), an `Origin` not listed in `NEXUM_ALLOWED_ORIGINS` (cross-site requests), and any body that is not `application/json`. To call the host from a browser page, list its origin, for example `NEXUM_ALLOWED_ORIGINS=http://localhost:5173`. The page must hold the token itself, because a browser never sends the token file.
 9. **Single Workspace per Server Instance (v1)**: One server instance owns one designated workspace root directory (`workspaceRoot`).
 
 ---
@@ -102,6 +102,7 @@ If a client disconnects while an interaction is pending, the interaction remains
 Clients subscribe to run telemetry via `GET /runs/:runId/events` (HTTP Server-Sent Events).
 
 ### Reconnection Handshake
+
 1. Client reconnects with header `Last-Event-ID: <seq>` or query `?after=<seq>`.
 2. Server queries PostgreSQL: `SELECT * FROM execution_events WHERE run_id = $1 AND seq > $2 ORDER BY seq ASC`.
 3. Server streams all historical events.
@@ -113,12 +114,15 @@ Clients subscribe to run telemetry via `GET /runs/:runId/events` (HTTP Server-Se
 ## 6. Crash Recovery & Shutdown
 
 ### Startup Reconciliation
+
 On server boot:
+
 1. Query PostgreSQL: `SELECT * FROM runs WHERE status IN ('queued', 'running')`.
 2. For each orphaned run, transition status to `interrupted`.
 3. Record `error: "server_restart"` and `finishedAt: now()`.
 
 ### Graceful Shutdown (SIGTERM / SIGINT)
+
 1. Mark server state as `draining`.
 2. Stop accepting new runs (`POST /sessions/:id/runs` returns 503).
 3. Wait up to `NEXUM_SHUTDOWN_GRACE_MS` (default 10,000ms) for active runs to complete.

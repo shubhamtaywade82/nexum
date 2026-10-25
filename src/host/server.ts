@@ -30,7 +30,15 @@ import { randomUUID } from "node:crypto";
 import type { Agent } from "../cli/agent.js";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { DISCOVERY_SESSION_ID, HostAgentRegistry } from "./agent-registry.js";
+import {
+  checkRequestGuard,
+  isLoopbackBind,
+  normalizeOrigin,
+  parseAllowedOrigins,
+  tokensMatch,
+} from "./request-guard.js";
 import { describeError, readJsonBody, writeJson } from "./http.js";
+import { fingerprintBody, IdempotencyStore, type IdempotentResponse } from "./idempotency.js";
 import { cancelRun, startRun, type Repos } from "./run-starter.js";
 import { writeOpenAiError } from "./openai/errors.js";
 import { handleOpenAiRequest } from "./openai/index.js";
@@ -68,6 +76,11 @@ export interface NexumHostOptions {
   host?: string;
   port?: number;
   token?: string;
+  /**
+   * Origins a browser may call the host from (exact `scheme://host[:port]`).
+   * Defaults to `NEXUM_ALLOWED_ORIGINS`. Requests from any other origin are refused.
+   */
+  allowedOrigins?: string[];
   /** How long an unanswered approval/clarification waits before failing closed. Default 5 min. */
   interactionTimeoutMs?: number;
 }
@@ -97,8 +110,9 @@ interface RequestContext {
   runOwners: Map<string, string>;
   activeRuns: Set<Promise<void>>;
   busySessions: Set<string>;
-  idempotencyCache: Map<string, { status: number; body: unknown; ts: number }>;
+  idempotency: IdempotencyStore;
   isLoopbackHost: boolean;
+  allowedOrigins: ReadonlySet<string>;
   token?: string;
 }
 
@@ -106,7 +120,10 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
   const host = opts.host ?? "127.0.0.1";
   const port = opts.port ?? 3777;
   const token = opts.token ?? process.env.NEXUM_SERVER_TOKEN;
-  const isLoopbackHost = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const isLoopbackHost = isLoopbackBind(host);
+  const allowedOrigins = new Set(
+    (opts.allowedOrigins ?? parseAllowedOrigins(process.env.NEXUM_ALLOWED_ORIGINS)).map(normalizeOrigin),
+  );
 
   const repos: Repos = {
     sessions: new SessionRepository(opts.db),
@@ -122,7 +139,7 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
   const runOwners = new Map<string, string>();
   const activeRuns = new Set<Promise<void>>();
   const busySessions = new Set<string>();
-  const idempotencyCache = new Map<string, { status: number; body: unknown; ts: number }>();
+  const idempotency = new IdempotencyStore();
 
   const ctx: RequestContext = {
     registry,
@@ -133,8 +150,9 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
     runOwners,
     activeRuns,
     busySessions,
-    idempotencyCache,
+    idempotency,
     isLoopbackHost,
+    allowedOrigins,
     token,
   };
 
@@ -188,7 +206,8 @@ function isAuthorized(req: IncomingMessage, isLoopbackHost: boolean, expectedTok
   const authHeader = req.headers.authorization;
   if (!authHeader) return false;
   const [scheme, clientToken] = authHeader.split(" ");
-  return scheme === "Bearer" && clientToken === expectedToken;
+  if (scheme !== "Bearer" || clientToken === undefined || expectedToken === undefined) return false;
+  return tokensMatch(clientToken, expectedToken);
 }
 
 function getIdempotencyKey(req: IncomingMessage): string | undefined {
@@ -272,6 +291,32 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   const segments = url.pathname.split("/").filter(Boolean);
   const method = req.method ?? "GET";
 
+  const rejection = checkRequestGuard(req, { isLoopbackHost: ctx.isLoopbackHost, allowedOrigins: ctx.allowedOrigins });
+  if (rejection) {
+    if (segments[0] === "v1") {
+      writeOpenAiError(res, rejection.status, "invalid_request_error", rejection.message, { code: rejection.error });
+    } else {
+      writeJson(res, rejection.status, { error: rejection.error, message: rejection.message });
+    }
+    return;
+  }
+
+  const origin = req.headers.origin;
+  if (origin !== undefined) {
+    // The guard accepted this origin, so it is on the allowlist and may read the response.
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    if (method === "OPTIONS") {
+      // A browser sends the preflight without credentials, so it is answered before auth.
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Last-Event-ID");
+      res.setHeader("Access-Control-Max-Age", "600");
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+  }
+
   if (!isAuthorized(req, ctx.isLoopbackHost, ctx.token)) {
     const message = "invalid or missing authentication token";
     if (segments[0] === "v1") writeOpenAiError(res, 401, "authentication_error", message, { code: "invalid_api_key" });
@@ -321,26 +366,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
 
   if (segments[0] === "sessions") {
     if (method === "POST" && segments.length === 1) {
-      const idempotencyKey = getIdempotencyKey(req);
-      if (idempotencyKey && ctx.idempotencyCache.has(idempotencyKey)) {
-        const cached = ctx.idempotencyCache.get(idempotencyKey)!;
-        writeJson(res, cached.status, cached.body);
-        return;
-      }
-      let title: string | undefined;
-      try {
-        const body = (await readJsonBody(req)) as { title?: string };
-        if (body && typeof body.title === "string") title = body.title;
-      } catch {
-        // Optional session title; ignore parse failure
-      }
-      const id = randomUUID();
-      const row = await ctx.repos.sessions.create(id, ctx.workspaceRoot, title);
-      const resBody = { id: row.id, createdAt: row.createdAt };
-      if (idempotencyKey) {
-        ctx.idempotencyCache.set(idempotencyKey, { status: 201, body: resBody, ts: Date.now() });
-      }
-      writeJson(res, 201, resBody);
+      // The session title is optional; a missing or malformed body creates an untitled session.
+      const body = await readOptionalJson(req);
+      const title = typeof body?.title === "string" ? body.title : undefined;
+      await runIdempotent(req, res, ctx, `${method} ${url.pathname}`, body, async () => {
+        const row = await ctx.repos.sessions.create(randomUUID(), ctx.workspaceRoot, title);
+        return { status: 201, body: { id: row.id, createdAt: row.createdAt } };
+      });
       return;
     }
 
@@ -624,13 +656,6 @@ async function handleCreateRun(
   sessionId: string,
   ctx: RequestContext,
 ): Promise<void> {
-  const idempotencyKey = getIdempotencyKey(req);
-  if (idempotencyKey && ctx.idempotencyCache.has(idempotencyKey)) {
-    const cached = ctx.idempotencyCache.get(idempotencyKey)!;
-    writeJson(res, cached.status, cached.body);
-    return;
-  }
-
   const sessionRow = await ctx.repos.sessions.get(sessionId);
   if (!sessionRow) {
     writeJson(res, 404, { error: "not_found", message: `no session "${sessionId}"` });
@@ -643,30 +668,96 @@ async function handleCreateRun(
     return;
   }
   const runRequest = parsed.request;
-  const started = await startRun(ctx, sessionId, runRequest);
-  if (!started.ok) {
-    writeJson(res, 409, {
-      error: "run_in_progress",
-      message: `session "${sessionId}" already has a run in progress`,
-      runId: started.activeRunId,
-    });
+  await runIdempotent(req, res, ctx, `POST /sessions/${sessionId}/runs`, runRequest, async () => {
+    const started = await startRun(ctx, sessionId, runRequest);
+    if (!started.ok) {
+      return {
+        status: 409,
+        body: {
+          error: "run_in_progress",
+          message: `session "${sessionId}" already has a run in progress`,
+          runId: started.activeRunId,
+        },
+      };
+    }
+    const { run: runRow } = started;
+    return {
+      status: 201,
+      body: {
+        run: {
+          id: runRow.id,
+          sessionId: runRow.sessionId,
+          status: runRow.status,
+          goal: runRow.goal,
+          createdAt: runRow.startedAt.getTime(),
+        },
+      },
+    };
+  });
+}
+
+/**
+ * Runs a mutating request at most once per `Idempotency-Key`. Without the header
+ * the operation runs and its response is written directly.
+ *
+ * `perform` returns the response to send. A 2xx result is stored for replay;
+ * anything else releases the reservation so the client can retry. A thrown error
+ * releases the reservation and propagates to the 500 handler.
+ */
+async function runIdempotent(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RequestContext,
+  scope: string,
+  fingerprintSource: unknown,
+  perform: () => Promise<IdempotentResponse>,
+): Promise<void> {
+  const key = getIdempotencyKey(req);
+  if (key === undefined) {
+    const out = await perform();
+    writeJson(res, out.status, out.body);
     return;
   }
 
-  const { run: runRow } = started;
-  const resBody = {
-    run: {
-      id: runRow.id,
-      sessionId: runRow.sessionId,
-      status: runRow.status,
-      goal: runRow.goal,
-      createdAt: runRow.startedAt.getTime(),
-    },
-  };
-
-  if (idempotencyKey) {
-    ctx.idempotencyCache.set(idempotencyKey, { status: 201, body: resBody, ts: Date.now() });
+  const decision = ctx.idempotency.begin(scope, key, fingerprintBody(fingerprintSource));
+  switch (decision.kind) {
+    case "replay":
+      writeJson(res, decision.response.status, decision.response.body);
+      return;
+    case "conflict":
+      writeJson(res, 422, {
+        error: "idempotency_key_reused",
+        message: "Idempotency-Key was already used with a different request body",
+      });
+      return;
+    case "in_progress":
+      writeJson(res, 409, {
+        error: "idempotency_in_progress",
+        message: "a request with this Idempotency-Key is still running",
+      });
+      return;
+    case "reserved":
+      break;
   }
 
-  writeJson(res, 201, resBody);
+  let out: IdempotentResponse;
+  try {
+    out = await perform();
+  } catch (err) {
+    ctx.idempotency.release(scope, key);
+    throw err;
+  }
+  if (out.status >= 200 && out.status < 300) ctx.idempotency.complete(scope, key, out);
+  else ctx.idempotency.release(scope, key);
+  writeJson(res, out.status, out.body);
+}
+
+/** An optional JSON object body. A missing, malformed or oversized body yields `undefined`. */
+async function readOptionalJson(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
+  try {
+    const body = await readJsonBody(req);
+    return body !== null && typeof body === "object" ? (body as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
 }

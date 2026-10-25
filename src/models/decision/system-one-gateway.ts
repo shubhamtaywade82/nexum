@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * SystemOneDecisionGateway — the concrete adapter from Nexum's
  * {@link DecisionRequest} domain contract to the tev1 /v1/systemone wire
@@ -98,13 +99,11 @@
  * `OllamaRuntime` class. The SDK's public `OllamaClient.runtime` getter
  * returns the runtime that `NativeApi` would use internally.
  *
- * Nexum does NOT depend on `NativeApi.systemOne` directly because that method
- * does not accept an `AbortSignal`, and Nexum's Decision Plane contract
- * preserves the caller's signal end-to-end. Instead, the production adapter
- * ({@link OllamaSystemOneClient} in `./ollama-system-one-client.js`) calls
- * `OllamaClient.runtime.invoke({ operation: systemOneOp, body, signal })`
- * directly — using only SDK public surface — which gives us native abort
- * support. This gateway depends on the small Nexum-owned
+ * The production adapter ({@link OllamaSystemOneClient} in
+ * `./ollama-system-one-client.js`) calls the SDK's public
+ * `OllamaClient.systemOne(request, { signal })`. The SDK applies the
+ * cloud-model version gate and honours the signal for both the gate and the
+ * wire request, so the Decision Plane's deadline is enforced end to end. This gateway depends on the small Nexum-owned
  * {@link SystemOneClient} interface that mirrors the SDK's call shape, so
  * tests can inject a fake without the SDK.
  *
@@ -126,6 +125,7 @@
  *                        only out-of-band id the gateway allows)
  */
 
+import { compareOllamaVersions, OllamaCloudModelVersionError } from "@nemesis-oss/ollama-sdk";
 import type { DecisionGateway } from "./decision-gateway.js";
 import { DecisionError, DecisionProtocolError, DecisionTransportError, DecisionUnavailableError } from "./errors.js";
 import type { DecisionAnswer, DecisionRequest, DecisionResult } from "./types.js";
@@ -250,18 +250,20 @@ export class SystemOneDecisionGateway implements DecisionGateway {
     //    version is permitted so that a local Ollama whose version probe
     //    failed (e.g. wrong host) does not produce a misleading
     //    "version too old" message — the real transport/protocol error is
-    //    more informative.
+    //    more informative. The cloud-model floor (`…:cloud` through a local
+    //    server, 0.40.5) is not checked here: the SDK's systemOne applies it
+    //    before the request and reports it as OllamaCloudModelVersionError,
+    //    which step 4 maps to DecisionUnavailableError.
     const version = await this.environment.getVersion();
-    if (version !== undefined && compareVersions(version, this.minVersion) < 0) {
+    if (version !== undefined && compareOllamaVersions(version, this.minVersion) < 0) {
       throw new DecisionUnavailableError(
         `System One requires Ollama ${this.minVersion}+; local server reports ${version}`,
       );
     }
 
     // 4. Build the tev1 wire request and call the SDK seam. The signal is
-    //    forwarded so the SDK honors cancellation; if it does not, the
-    //    gateway still surfaces the abort as DecisionTransportError via
-    //    the catch below.
+    //    forwarded to the SDK, which honours it on the wire; an abort reaches
+    //    the catch below and surfaces as DecisionTransportError.
     const wire = buildWireRequest(request);
 
     const started = Date.now();
@@ -280,7 +282,7 @@ export class SystemOneDecisionGateway implements DecisionGateway {
     //    request's declared choices.
     const parsed = parseWireResponse(raw, request);
     return {
-      id: request.id ?? `decision-${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      id: request.id ?? `decision-${randomUUID()}`,
       model: parsed.model ?? request.model,
       mode: request.mode,
       decisions: parsed.answers,
@@ -299,19 +301,11 @@ function mapSystemOneError(err: unknown): Error {
   // generic transport failures. Only true transport-layer errors (network,
   // abort) get wrapped as DecisionTransportError.
   if (err instanceof DecisionError) return err;
+  // The SDK's cloud-model gate is a version refusal, the same class as the
+  // gateway's own floor: refused before anything was sent, so not transport.
+  if (err instanceof OllamaCloudModelVersionError) return new DecisionUnavailableError(err.message, err);
   const message = err instanceof Error ? err.message : String(err);
   return new DecisionTransportError(`System One transport failure: ${message}`, err);
-}
-
-function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map((x) => Number.parseInt(x, 10));
-  const pb = b.split(".").map((x) => Number.parseInt(x, 10));
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const ai = pa[i] ?? 0;
-    const bi = pb[i] ?? 0;
-    if (ai !== bi) return ai - bi;
-  }
-  return 0;
 }
 
 /**

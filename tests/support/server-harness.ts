@@ -12,6 +12,7 @@ export interface ServerHarnessOptions {
   host?: string;
   token?: string;
   interactionTimeoutMs?: number;
+  allowedOrigins?: string[];
 }
 
 export class ServerHarness {
@@ -58,6 +59,7 @@ export class ServerHarness {
       port: 0,
       token: opts.token,
       interactionTimeoutMs: opts.interactionTimeoutMs,
+      allowedOrigins: opts.allowedOrigins,
     });
 
     const bound = await this.hostInstance.start();
@@ -92,6 +94,7 @@ export class ServerHarness {
       host: mergedOpts.host ?? "127.0.0.1",
       port: 0,
       token: mergedOpts.token,
+      allowedOrigins: mergedOpts.allowedOrigins,
     });
 
     const bound = await this.hostInstance.start();

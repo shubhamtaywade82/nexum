@@ -94,30 +94,51 @@ describe("AcceptanceController", () => {
 describe("GeneralizationGate (fixed-executor protocol)", () => {
   const gate = new GeneralizationGate();
 
-  it("passes when the candidate holds or improves held-out under the frozen executor", () => {
+  it("generalizes when the candidate holds under every transfer executor, reporting the held-out delta", () => {
     const verdict = gate.evaluate(
       [
         cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.8 }),
         cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.85 }),
+        cell({ harnessId: "H0", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.85 }),
       ],
       "H0",
       "H1",
+      ["gemini"],
     );
     expect(verdict.generalized).toBe(true);
+    expect(verdict.transferDeltas["gemini"]).toBeCloseTo(0.05);
     expect(verdict.heldOutDeltas["qwen"]).toBeCloseTo(0.05);
   });
 
-  it("fails on held-out regression under the primary executor", () => {
+  it("reports a held-out regression without failing the gate: held-out is never a veto", () => {
     const verdict = gate.evaluate(
       [
         cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.8 }),
         cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.7 }),
+        cell({ harnessId: "H0", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+      ],
+      "H0",
+      "H1",
+      ["gemini"],
+    );
+    expect(verdict.generalized).toBe(true);
+    expect(verdict.violations).toEqual([]);
+    expect(verdict.heldOutDeltas["qwen"]).toBeCloseTo(-0.1);
+  });
+
+  it("does not generalize without a transfer executor: there is no decision axis", () => {
+    const verdict = gate.evaluate(
+      [
+        cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.95 }),
       ],
       "H0",
       "H1",
     );
     expect(verdict.generalized).toBe(false);
-    expect(verdict.violations[0]).toContain("Held-out regression");
+    expect(verdict.rationale).toContain("no transfer executor was evaluated");
   });
 
   it("fails when a transfer executor collapses (executor sensitivity check)", () => {
@@ -175,20 +196,37 @@ describe("GeneralizationGate (fixed-executor protocol)", () => {
       "H1",
     );
     expect(verdict.executorSensitivity).toBeNull();
-    expect(verdict.rationale).toContain("needs ≥2 executors");
+    expect(verdict.rationale).toContain("no transfer executor was evaluated");
   });
 
-  it("rejects cells with insufficient runs", () => {
+  it("rejects transfer cells with insufficient runs", () => {
+    const verdict = gate.evaluate(
+      [
+        cell({ harnessId: "H0", executorModel: "gemini", split: "transfer", runs: 1 }),
+        cell({ harnessId: "H1", executorModel: "gemini", split: "transfer", runs: 5 }),
+      ],
+      "H0",
+      "H1",
+      ["gemini"],
+    );
+    expect(verdict.generalized).toBe(false);
+    expect(verdict.violations[0]).toContain("Insufficient runs for transfer evaluation");
+  });
+
+  it("ignores held-out cells with insufficient runs, since they cannot decide", () => {
     const verdict = gate.evaluate(
       [
         cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", runs: 1 }),
         cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", runs: 5 }),
+        cell({ harnessId: "H0", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
       ],
       "H0",
       "H1",
+      ["gemini"],
     );
-    expect(verdict.generalized).toBe(false);
-    expect(verdict.violations[0]).toContain("Insufficient runs");
+    expect(verdict.generalized).toBe(true);
+    expect(verdict.violations).toEqual([]);
   });
 });
 

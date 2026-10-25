@@ -48,8 +48,6 @@ export interface TwoStageThresholds {
   minCapabilityGain: number;
   /** Minimum reliability gain for Stage B (0..1). */
   minReliabilityGain: number;
-  /** Minimum held-out generalization gain for Stage B (0..1). */
-  minHeldOutGain: number;
   /** Maximum tolerated token overhead (negative efficiency delta), 0..1. */
   maxTokenOverhead: number;
 }
@@ -60,9 +58,11 @@ export const DEFAULT_THRESHOLDS: TwoStageThresholds = {
   catastrophicRegressionThreshold: 0.15,
   minCapabilityGain: 0.03,
   minReliabilityGain: 0.04,
-  minHeldOutGain: 0.0,
   maxTokenOverhead: 0.25,
 };
+
+/** Score deltas the selector decides on. Held-out generalization is never one of them. */
+export type DecisionDeltas = Omit<ScoreDeltas, "generalization">;
 
 export type StageADecision = "valid" | "invalid";
 export type StageBDecision = "improved" | "not_improved";
@@ -75,7 +75,7 @@ export interface StageAReport {
 
 export interface StageBReport {
   decision: StageBDecision;
-  deltas: ScoreDeltas;
+  deltas: DecisionDeltas;
   checks: Array<{ check: string; passed: boolean; detail: string }>;
 }
 
@@ -92,10 +92,7 @@ export interface TwoStageInput {
   candidateMetrics: EvaluationMetrics;
   baselineMetrics: EvaluationMetrics;
   validity: ExperimentValidity;
-  /** Share of held-out tasks improved by the candidate (0..1), if measured. */
-  heldOutGain?: number;
-  /** Cross-model transfer delta (0..1), if measured. */
-  transferGain?: number;
+  // Held-out evidence has no field here. The selector cannot read it, so it cannot decide on it.
 }
 
 export class TwoStageSelector {
@@ -126,7 +123,7 @@ export class TwoStageSelector {
         decision: "eligible",
         stageA,
         stageB,
-        rationale: `Valid experiment with genuine improvement: capability +${pct(stageB.deltas.capability)}, reliability +${pct(stageB.deltas.reliability)}, held-out +${pct(stageB.deltas.generalization)}.`,
+        rationale: `Valid experiment with genuine improvement on development tasks: capability +${pct(stageB.deltas.capability)}, reliability +${pct(stageB.deltas.reliability)}.`,
       };
     }
 
@@ -143,12 +140,11 @@ export class TwoStageSelector {
 
   private runStageA(input: TwoStageInput): StageAReport {
     const t = this.thresholds;
-    const deltas = computeDeltas(input.candidateMetrics, input.baselineMetrics);
+    const deltas = decisionDeltas(input);
     const catastrophic =
       input.validity.catastrophicRegression ||
       deltas.reliability < -t.catastrophicRegressionThreshold ||
-      deltas.capability < -t.catastrophicRegressionThreshold ||
-      deltas.generalization < -t.catastrophicRegressionThreshold;
+      deltas.capability < -t.catastrophicRegressionThreshold;
 
     const checks = [
       {
@@ -188,21 +184,15 @@ export class TwoStageSelector {
 
   private runStageB(input: TwoStageInput): StageBReport {
     const t = this.thresholds;
-    const deltas = computeDeltas(input.candidateMetrics, input.baselineMetrics);
-
-    const heldOutGain = input.heldOutGain ?? deltas.generalization;
-    const transferGain = input.transferGain ?? deltas.generalization;
+    const deltas = decisionDeltas(input);
 
     const capabilityGain = deltas.capability >= t.minCapabilityGain;
     const reliabilityGain = deltas.reliability >= t.minReliabilityGain;
-    const heldOutImprovement = heldOutGain >= t.minHeldOutGain;
-    const transferEvidence = transferGain >= t.minHeldOutGain;
     const costAcceptable = deltas.efficiency >= -t.maxTokenOverhead;
 
-    // Improvement requires a genuine capability OR reliability gain, and NO
-    // regression on held-out or transfer, and acceptable cost.
+    // Improvement requires a genuine capability OR reliability gain, at acceptable cost.
     const primaryGain = capabilityGain || reliabilityGain;
-    const improved = primaryGain && heldOutImprovement && transferEvidence && costAcceptable;
+    const improved = primaryGain && costAcceptable;
 
     return {
       decision: improved ? "improved" : "not_improved",
@@ -214,16 +204,6 @@ export class TwoStageSelector {
           detail: `capability ${fmtDelta(deltas.capability)} (min +${(t.minCapabilityGain * 100).toFixed(0)}%), reliability ${fmtDelta(deltas.reliability)} (min +${(t.minReliabilityGain * 100).toFixed(0)}%)`,
         },
         {
-          check: "held_out_improvement",
-          passed: heldOutImprovement,
-          detail: `held-out gain ${fmtDelta(heldOutGain)}${input.heldOutGain === undefined ? " (proxy: generalization delta)" : ""}`,
-        },
-        {
-          check: "transfer_evidence",
-          passed: transferEvidence,
-          detail: `transfer gain ${fmtDelta(transferGain)}${input.transferGain === undefined ? " (proxy: generalization delta — transfer not measured)" : ""}`,
-        },
-        {
           check: "acceptable_cost",
           passed: costAcceptable,
           detail: `efficiency delta ${fmtDelta(deltas.efficiency)} (max overhead ${(t.maxTokenOverhead * 100).toFixed(0)}%)`,
@@ -231,6 +211,15 @@ export class TwoStageSelector {
       ],
     };
   }
+}
+
+/**
+ * Deltas over the development results only. The selector never reads the
+ * generalization term: a held-out signal must not reach a promotion decision.
+ */
+function decisionDeltas(input: TwoStageInput): DecisionDeltas {
+  const { generalization: _heldOut, ...deltas } = computeDeltas(input.candidateMetrics, input.baselineMetrics);
+  return deltas;
 }
 
 function pct(v: number): string {

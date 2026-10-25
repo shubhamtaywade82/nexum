@@ -26,7 +26,7 @@ import { dirname, isAbsolute, join, normalize, sep } from "node:path";
 import { promisify } from "node:util";
 import { HarnessComponent, HarnessDiagnosis } from "../types.js";
 import { ImprovementTarget } from "../targets/target-engine.js";
-import { pathWithinAllowedPrefix } from "./path-scope.js";
+import { pathWithinAllowedPrefix, protectedEvaluationPath } from "./path-scope.js";
 import { MutationScope } from "./mutation-scope.js";
 
 const execFileAsync = promisify(execFile);
@@ -136,13 +136,13 @@ export interface MutationStrategy {
 
 /** Default component → allowed path prefixes (repo-relative, POSIX). */
 export const DEFAULT_COMPONENT_PATHS: Record<HarnessComponent, string[]> = {
-  execution: ["src/runtime/", "src/orchestrator/", "src/evolution/"],
+  execution: ["src/runtime/", "src/orchestration/"],
   tools: ["src/tools/", "src/skills/"],
   context: ["src/context/", "src/intelligence/"],
   state: ["src/memory/", "src/runtime/"],
-  lifecycle: ["src/runtime/", "src/hooks/", "src/evolution/"],
-  verification: ["src/validation/", "src/provider/"],
-  routing: ["src/provider/", "src/intelligence/"],
+  lifecycle: ["src/runtime/", "src/hooks/"],
+  verification: ["src/validation/", "src/models/"],
+  routing: ["src/models/", "src/intelligence/"],
   memory: ["src/memory/", "src/learning/"],
 };
 
@@ -340,6 +340,11 @@ export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
     const actualChangedFiles = await this.actualChangedPaths(workspace);
     const actualDiffViolations: string[] = [];
     for (const path of actualChangedFiles) {
+      // Evaluation code is a violation even when declared or covered by an extra path.
+      if (protectedEvaluationPath(path)) {
+        actualDiffViolations.push(path);
+        continue;
+      }
       if (declaredPaths.has(path)) continue;
       if (this.extraAllowedPaths.some((extra) => pathWithinAllowedPrefix(path, extra))) continue;
       actualDiffViolations.push(path);
@@ -433,6 +438,8 @@ export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
       return "edit path must be repo-relative and must not escape the repository";
     }
     const normalized = this.normalizePath(path);
+    const protectedPath = protectedEvaluationPath(normalized);
+    if (protectedPath) return protectedPath;
     for (const extra of this.extraAllowedPaths) {
       if (pathWithinAllowedPrefix(normalized, extra)) return null;
     }

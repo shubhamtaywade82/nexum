@@ -345,6 +345,120 @@ describe("ClosedLoopEngine (v2 integration)", () => {
     });
     expect(engine.experiments.record("exp-reject").lifecycle.state).toBe("REJECTED");
   });
+
+  describe("held-out results are reported, never decided on", () => {
+    // Development results: the candidate passes 7 of 9 tasks, the baseline 3 of 9.
+    const CANDIDATE_DEV = [true, true, true, true, true, true, true, false, false];
+    const BASELINE_DEV = [true, true, true, false, false, false, false, false, false];
+
+    function tasks(devSuccess: boolean[], heldOutSuccess: boolean[]): TaskExecutionResult[] {
+      const make = (taskId: string, success: boolean, isHeldOut: boolean): TaskExecutionResult => ({
+        taskId,
+        success,
+        verificationPassed: success,
+        toolCalls: 4,
+        toolErrors: success ? 0 : 1,
+        tokens: 1500,
+        tokensEstimated: false,
+        latencyMs: 900,
+        loopAborted: false,
+        isHeldOut,
+      });
+      return [
+        ...devSuccess.map((s, i) => make(`dev-${i}`, s, false)),
+        ...heldOutSuccess.map((s, i) => make(`held-${i}`, s, true)),
+      ];
+    }
+
+    function transferCells(candidateId: string, heldOutSuccess: boolean[]) {
+      const rate = heldOutSuccess.filter(Boolean).length / heldOutSuccess.length;
+      return [
+        {
+          harnessId: "H0",
+          executorModel: "qwen3-coder",
+          split: "held_out" as const,
+          taskSuccessRate: 0.33,
+          verificationPassRate: 0.33,
+          runs: 3,
+        },
+        {
+          harnessId: candidateId,
+          executorModel: "qwen3-coder",
+          split: "held_out" as const,
+          taskSuccessRate: rate,
+          verificationPassRate: rate,
+          runs: 3,
+        },
+        {
+          harnessId: "H0",
+          executorModel: "gemini-2.5",
+          split: "transfer" as const,
+          taskSuccessRate: 0.33,
+          verificationPassRate: 0.33,
+          runs: 5,
+        },
+        {
+          harnessId: candidateId,
+          executorModel: "gemini-2.5",
+          split: "transfer" as const,
+          taskSuccessRate: 0.85,
+          verificationPassRate: 0.85,
+          runs: 5,
+        },
+      ];
+    }
+
+    it("reaches the identical decision whatever the held-out results, which are reported beside it", () => {
+      registry.saveVersion({
+        id: "H0",
+        commitSha: "sha-h0",
+        parentId: null,
+        createdAt: Date.now(),
+        targetComponent: "execution",
+        hypothesis: "baseline",
+        metrics: {
+          capability: { taskSuccessRate: 0.33, verificationPassRate: 0.33 },
+          reliability: { toolErrorRate: 0.3, falseSuccessRate: 0.1, loopAbortRate: 0.1 },
+          efficiency: { avgTokens: 1500, avgLatencyMs: 900 },
+          generalization: { heldOutScore: 0.33, transferScore: 0.33 },
+        },
+        status: "promoted",
+      });
+      const observation = engine.observe([failureEpisode("ep-1", "Fix tool selection")]);
+      const run = (experimentId: string, candidateHeld: boolean[]) => {
+        const candidateId = `H-${experimentId}`;
+        return engine.runExperiment({
+          experimentId,
+          parentHarnessId: "H0",
+          parentCommit: "sha-h0",
+          candidateHarnessId: candidateId,
+          candidateCommit: `sha-${experimentId}`,
+          target: observation.target!,
+          diagnosis: observation.diagnoses[0],
+          scope: observation.mutationScope!,
+          candidateResults: tasks(CANDIDATE_DEV, candidateHeld),
+          baselineResults: tasks(BASELINE_DEV, [true, false, false]),
+          matrixCells: transferCells(candidateId, candidateHeld),
+        });
+      };
+
+      // Same development results; held-out results that collapse versus ones that are perfect.
+      const collapsed = run("exp-held-collapsed", [false, false, false]);
+      const perfect = run("exp-held-perfect", [true, true, true]);
+
+      expect(collapsed.twoStage.decision).toBe("eligible");
+      expect(perfect.twoStage.decision).toBe(collapsed.twoStage.decision);
+      expect(perfect.experiment.decision.result).toBe(collapsed.experiment.decision.result);
+      expect(perfect.generalization?.generalized).toBe(collapsed.generalization?.generalized);
+      expect(perfect.comparison.scoreDeltas.capability).toBe(collapsed.comparison.scoreDeltas.capability);
+      expect(perfect.comparison.scoreDeltas.reliability).toBe(collapsed.comparison.scoreDeltas.reliability);
+
+      // The held-out endpoint is still measured and reported. It is the only thing that differs.
+      expect(collapsed.heldOut.candidateRuns).toBe(3);
+      expect(collapsed.heldOut.gain).toBeLessThan(0);
+      expect(perfect.heldOut.gain).toBeGreaterThan(collapsed.heldOut.gain!);
+    });
+  });
 });
 
 describe("ClosedLoopEngine generalization policy", () => {

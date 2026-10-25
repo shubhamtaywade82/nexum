@@ -27,6 +27,7 @@ import {
   createHash,
   createPrivateKey,
   createPublicKey,
+  randomUUID,
   generateKeyPairSync,
   sign as cryptoSign,
   verify as cryptoVerify,
@@ -149,7 +150,7 @@ export function canonicalGrantPayload(grant: SealedGrant): string {
 }
 
 function newGrantId(): string {
-  return `grant_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+  return `grant_${randomUUID()}`;
 }
 
 // ── Authority ───────────────────────────────────────────────────────────────

@@ -40,8 +40,9 @@ export function evaluateExpression(expression: string): number {
 
 function toJsToken(token: string): string {
   const name = token.toLowerCase();
-  if (name in MATH_FUNCTIONS) return `F.${name}`;
-  if (name in MATH_CONSTANTS) return `C.${name}`;
+  // `in` would also match inherited names such as `constructor`, which resolve to Object.
+  if (Object.hasOwn(MATH_FUNCTIONS, name)) return `F.${name}`;
+  if (Object.hasOwn(MATH_CONSTANTS, name)) return `C.${name}`;
   if (/^[a-z]+$/.test(name)) throw new ToolError(`unknown name "${token}"`);
   if (token === "^") return "**";
   if (token === "×") return "*";

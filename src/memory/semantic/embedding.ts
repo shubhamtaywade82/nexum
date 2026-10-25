@@ -1,3 +1,5 @@
+import { OllamaClient, batchEmbed } from "@nemesis-oss/ollama-sdk";
+
 /**
  * EmbeddingProvider — the pluggable text→vector seam for semantic memory
  * and hybrid RAG.
@@ -134,6 +136,7 @@ export class OllamaEmbedder implements EmbeddingProvider {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly signal?: AbortSignal;
+  private readonly client: OllamaClient;
 
   constructor(opts: OllamaEmbedderOptions) {
     this.baseUrl = (opts.baseUrl ?? "http://localhost:11434").replace(/\/$/, "");
@@ -142,6 +145,9 @@ export class OllamaEmbedder implements EmbeddingProvider {
     this.dimensions = opts.dimensions ?? 0;
     this.signal = opts.signal;
     this.id = `ollama:${this.model}`;
+    // retries: 0 — this class owns the legacy-endpoint fallback; an SDK retry
+    // in front of it would multiply the requests made on every failure.
+    this.client = new OllamaClient({ baseUrl: this.baseUrl, timeoutMs: this.timeoutMs, retries: 0 });
   }
 
   async embed(text: string): Promise<number[]> {
@@ -154,18 +160,18 @@ export class OllamaEmbedder implements EmbeddingProvider {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     this.signal?.addEventListener("abort", () => controller.abort(), { once: true });
     try {
-      const res = await fetch(`${this.baseUrl}/api/embed`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: this.model, input: texts }),
+      // SDK batching: 32 inputs per /api/embed request, 3 requests in flight,
+      // results back in input order. Replaces one unbounded request per call.
+      const { embeddings } = await batchEmbed(this.client, {
+        model: this.model,
+        input: texts,
         signal: controller.signal,
+        timeoutMs: this.timeoutMs,
       });
-      if (!res.ok) throw new Error(`ollama /api/embed HTTP ${res.status}`);
-      const body = (await res.json()) as { embeddings?: number[][] };
-      if (!body.embeddings || body.embeddings.length !== texts.length) {
+      if (embeddings.length !== texts.length) {
         throw new Error("ollama /api/embed returned unexpected payload");
       }
-      return body.embeddings.map((v) => l2Normalize(v));
+      return embeddings.map((v) => l2Normalize([...v]));
     } catch (err) {
       // Legacy single-text endpoint fallback (older Ollama versions).
       if (texts.length !== 1) throw err;

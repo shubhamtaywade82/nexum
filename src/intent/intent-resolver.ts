@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { ClarificationOption, ClarificationRequest, ClarificationResponse, ProjectInfo } from "../runtime/types.js";
 
 interface TopicTemplate {
@@ -133,7 +134,7 @@ export class IntentResolver {
       isCustom: true,
     });
 
-    const id = `clar-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const id = `clar-${randomUUID()}`;
     return { id, prompt: trimmed, question: matched.question, options, allowCustom: true };
   }
 

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { EventBus } from "../../runtime/events/bus.js";
 import type { BalanceResponse, UsageResponse } from "@nemesis-oss/ollama-sdk";
 import type { AccountBalance, AccountUsage } from "../../models/adapters/provider.js";
+import { formatPullProgress } from "../../models/pull-progress.js";
 import { Store } from "../../runtime/store.js";
 import { CommandEffect } from "../../interaction/slash-commands.js";
 import { runDoctor } from "../../cli/doctor.js";
@@ -298,7 +299,7 @@ export function useCommandEffects(
           }
           bus.publish({ type: "notification", kind: "info", text: "Fetching Ollama Cloud usage…" });
           agent
-            .usageAll(effect.range)
+            .usageAll(effect.range, effect.groupBy)
             .then((accounts) =>
               bus.publish({ type: "conversation.message", role: "assistant", text: formatUsage(accounts) }),
             )
@@ -327,6 +328,36 @@ export function useCommandEffects(
                 type: "notification",
                 kind: "error",
                 text: `Balance failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
+        case "pull": {
+          if (!agent?.pullModel) {
+            bus.publish({ type: "notification", kind: "error", text: "Model pull is unavailable" });
+            break;
+          }
+          bus.publish({ type: "notification", kind: "info", text: `Pulling ${effect.model}…` });
+          // Registry frames arrive several times a second; one notification a
+          // second keeps the feed readable and still shows speed and ETA moving.
+          let lastReport = 0;
+          agent
+            .pullModel(effect.model, (event) => {
+              const now = Date.now();
+              if (now - lastReport < PULL_REPORT_INTERVAL_MS) return;
+              lastReport = now;
+              bus.publish({
+                type: "notification",
+                kind: "info",
+                text: `${effect.model}: ${formatPullProgress(event)}`,
+              });
+            })
+            .then(() => bus.publish({ type: "notification", kind: "success", text: `Model ${effect.model} pulled` }))
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Pull failed: ${err instanceof Error ? err.message : String(err)}`,
               }),
             );
           break;
@@ -408,6 +439,9 @@ async function handleEvolveEffect(
 
 const usd = (n: number): string => `$${n.toFixed(n > 0 && n < 0.01 ? 4 : 2)}`;
 
+/** Minimum gap between `/pull` progress notifications. */
+const PULL_REPORT_INTERVAL_MS = 1000;
+
 function usageLines(u: UsageResponse): string {
   const t = u.totals;
   const tokens =
@@ -422,13 +456,28 @@ function usageLines(u: UsageResponse): string {
     ? `\n\nRecent ${u.granularity}s:\n` +
       recent.map((b) => `\u2022 ${b.from} \u2014 ${b.request_count} req, ${usd(b.usage_usd ?? 0)}`).join("\n")
     : "";
+  // `groups` is present only for `/usage ... model`: the server ranks the top
+  // models and rolls everything past that limit into `remainder`.
+  const byModel = t.groups?.length
+    ? `\n\nBy model:\n` +
+      t.groups
+        .map((g) => `\u2022 ${g.model} \u2014 ${g.request_count.toLocaleString()} req, ${usd(g.usage_usd ?? 0)}`)
+        .concat(
+          t.remainder
+            ? [
+                `\u2022 Other \u2014 ${t.remainder.request_count.toLocaleString()} req, ${usd(t.remainder.usage_usd ?? 0)}`,
+              ]
+            : [],
+        )
+        .join("\n")
+    : "";
   return (
     `(${u.range}, ${u.scope})\n\n\u2022 Requests: ${t.request_count.toLocaleString()}\n` +
-    `\u2022 Spend: ${usd(t.usage_usd ?? 0)}${tokens}${rows}`
+    `\u2022 Spend: ${usd(t.usage_usd ?? 0)}${tokens}${byModel}${rows}`
   );
 }
 
-function formatUsage(accounts: AccountUsage[]): string {
+export function formatUsage(accounts: AccountUsage[]): string {
   if (accounts.length === 0) return "**Ollama Cloud usage**\n\nNo Ollama Cloud API key configured.";
   const sections = accounts.map((a) =>
     a.usage ? `**${a.label}**\n${usageLines(a.usage)}` : `**${a.label}**\n\u2022 \u2717 ${a.error ?? "unavailable"}`,

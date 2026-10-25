@@ -203,11 +203,11 @@ CI and review are FIRST-CLASS lifecycle states (v2.1): a passing CI run has its 
 `src/evolution/comparison/two-stage-selector.ts` separates experiment validity from improvement:
 
 - **Stage A — statistical / execution validity**: runs completed, verifier coverage, verifier evidence validity, no catastrophic regressions, sufficient sample size.
-- **Stage B — improvement validity**: capability or reliability gain, no held-out regression, transfer evidence, acceptable token cost.
+- **Stage B — improvement validity**: capability or reliability gain on development tasks, and acceptable token cost. Held-out and transfer results are reported beside the decision and never decide it (§6.22).
 
 ### 6.5 Fixed-Executor Evaluation & the Generalization Gate
 
-`src/evolution/evaluation/fixed-executor.ts` treats evaluator model, harness candidate, and task suite as independent variables and builds the H0..Hn × executor matrix. `src/evolution/generalization/generalization-gate.ts` grants `GENERALIZED` only when the candidate holds or improves held-out success under the primary executor and does not collapse under any transfer executor, and reports **executor sensitivity** (spread of held-out deltas across executors) plus **direction agreement** — the research metrics for separating "the harness improved" from "this model + harness combination got lucky".
+`src/evolution/evaluation/fixed-executor.ts` treats evaluator model, harness candidate, and task suite as independent variables and builds the H0..Hn × executor matrix. `src/evolution/generalization/generalization-gate.ts` grants `GENERALIZED` only when the candidate does not collapse under any transfer executor. Held-out deltas are reported, including **executor sensitivity** (their spread across executors), but never decide the verdict. The gate also reports **direction agreement** — the research metrics for separating "the harness improved" from "this model + harness combination got lucky".
 
 #### Generalization policy
 
@@ -321,7 +321,7 @@ mutation → git commit → push branch → create PR → CI → review → feed
 
 - `deliverExperiment()` commits, pushes the evolution branch, and opens the PR carrying the provenance body.
 - `syncCiFeedback()` polls check-runs and reports the verdict through `reportCiResult()` — including the honest case: a polling timeout reports `pending` and leaves the lifecycle at `CI_PENDING` rather than fabricating a verdict.
-- `syncReviewFeedback()` reads the LATEST human review and reports it through `reportReviewOutcome()` (`APPROVED` / `CHANGES_REQUESTED`).
+- `syncReviewFeedback()` reads the LATEST human review of the PR's head commit and reports it through `reportReviewOutcome()` (`APPROVED` / `CHANGES_REQUESTED`). A review of an earlier commit does not count, and the merge call names the same head SHA, so a commit pushed after approval is not merged unreviewed.
 - Git and HTTP are injectable, so the adapter is fully unit-testable without network access.
 
 ### 6.12 ActivationMonitor — post-activation telemetry
@@ -491,6 +491,7 @@ production implementation.
   harness to a commit (registry lineage first, then any git-resolvable ref),
   verifies the commit exists in the repository, atomically writes the
   `activeHarness` pointer (tmp + rename), and re-reads it to verify.
+  **No runtime consumes the pointer yet:** nothing in the running agent reads `nexum.harness.json`, so an activation records the choice and changes no executing code (`consumedByRuntime: false` in the artifact).
   Fail-closed on unknown harnesses; corrupt manifests are never clobbered;
   `harnessHealth()` is real external reality (git cat-file), so the runtime
   rollback orchestrator's post-switch verification checks the repository,
@@ -512,3 +513,19 @@ nexum evolve --mutate --repo . --strategy agent --verify-profile full \
   --benchmark --github --activate-runtime
 # → accepted candidate becomes the manifest pointer (nexum.harness.json)
 ```
+
+## 6.22 Held-out protocol and token accounting
+
+Modelled on the strict-test protocol of _Can LLMs Improve Their Own Harness?_ (arXiv:2610.30499): test tasks do not influence proposals, acceptance, stopping or selection.
+
+- **Frozen split.** A benchmark case is held out by `sha256(HELD_OUT_SPLIT_VERSION:caseId)`, one case in five (`src/evolution/heldout-split.ts`). The category label is no longer used, because the mutation agent can see and choose labels. The split version is recorded in every held-out report, and `heldOutSplitDigest()` names the exact assignment.
+- **Decisions use development tasks only.** `ClosedLoopEngine.runExperiment` builds its metrics, validity, Stage A/B and the transfer gate from development results. The selector's inputs have no held-out field, so the decision cannot read one.
+- **Held-out is an endpoint.** `ExperimentOutcome.heldOut` reports the held-out success rates and their gain, and the record stores them under `held_out` (empty when no held-out task ran). `promotion precision` counts a promotion as genuinely better only if its held-out gain is positive.
+- **Tokens are measured.** Each benchmark case sums the provider's `prompt_eval_count + eval_count` over every turn (`usageFor()` in `src/benchmark/runner.ts`). Only a provider that reports no counts falls back to a content-length estimate, which is marked `tokensEstimated`.
+- **The evaluator is fixed.** `src/evolution/` (engine, selector, gate, split) and `src/benchmark/` (every case) are protected evaluation paths (`PROTECTED_EVALUATION_PATHS` in `mutation/path-scope.ts`). The agent's worktree view does not list or read them, including through a symlink. Proposals and the executor's planned and actual-diff checks refuse edits to them, ahead of any `extraAllowedPaths` carve-out. An accepted candidate becomes the next parent, so a mutable evaluator would let a lineage grade itself.
+- **The benchmark runs the candidate's agent.** Evolution runs the suite with `--driver agent` (`src/benchmark/agent-driver.ts`). Each agentic case gets a fresh `Agent` from the worktree's own code, in its own scratch workspace, and its request goes through `Agent.runUserMessage`. The system prompt, tool selection, routing, loop control, context management and answer gate all decide how the case is worked, so a mutation to any of them can move the score.
+  - The case is the whole environment: `AgentToolManager.replaceAllTools` swaps every built-in tool for the case's tools, registered as read-risk with no confirmation, so the agent's approval policy is unchanged.
+  - The case's `maxTurns` is enforced as a tool-call budget; past it, calls return an error and the trajectory records `hitMaxTurns`.
+  - Cost includes every model call, background ones too. The conversation summary reports usage through `onBackgroundModelUsage`, and the driver waits on `Agent.whenIdle()` before totalling.
+  - The quick model is pinned to the target. Any other model the router picks is listed in the result's `modelsUsed`.
+  - Single-turn cases are skipped under the agent driver, because they score a raw model response that no harness code touches.

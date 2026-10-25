@@ -20,14 +20,17 @@
  *   nexum serve --host 0.0.0.0               # bind beyond localhost (opt-in)
  *   nexum serve --workspace /path/to/repo    # explicit workspace root
  *
- * Binds to 127.0.0.1 by default — this is a local dev host, not a service
- * meant to be exposed to a network. There is no auth layer yet (see
- * docs/plan): don't bind --host beyond localhost on a shared machine.
+ * Binds to 127.0.0.1 by default. A loopback bind gets a per-user bearer token
+ * (src/host/server-token.ts) that local clients read automatically; `--no-token`
+ * turns that off, and then any local process can call the host. A non-loopback
+ * bind requires NEXUM_SERVER_TOKEN. Browser-driven requests are refused in every
+ * mode by the Host, Origin and body-type checks in src/host/request-guard.ts.
  */
 
 import { CliConfig, loadConfig } from "./config.js";
 import { Agent } from "./agent.js";
 import { createNexumHost } from "../host/index.js";
+import { resolveServeAuth, serverTokenPath, type ServeAuth } from "../host/server-token.js";
 import { readEnv } from "../platform/environment.js";
 import { openDatabase, type NexumDatabase } from "../persistence/database.js";
 import { createRedisClient } from "../infrastructure/redis/client.js";
@@ -40,6 +43,8 @@ export interface ServeCliOptions {
   port?: number;
   databaseUrl?: string;
   redisUrl?: string;
+  /** Run a loopback host without a bearer token. Any local process can then call it. */
+  noToken?: boolean;
 }
 
 export async function startNexumServer(opts: ServeCliOptions = {}): Promise<{ stop: () => Promise<void> }> {
@@ -91,6 +96,14 @@ export async function startNexumServer(opts: ServeCliOptions = {}): Promise<{ st
   const portRaw = opts.port ?? Number(readEnv("HOST_PORT") ?? "3777");
   const port = Number.isFinite(portRaw) && portRaw > 0 ? portRaw : 3777;
 
+  const tokenPath = serverTokenPath();
+  const auth = resolveServeAuth({
+    host,
+    envToken: process.env.NEXUM_SERVER_TOKEN,
+    noToken: opts.noToken === true,
+    tokenPath,
+  });
+
   const nexumHost = createNexumHost({
     createAgent,
     workspaceRoot: cfg.workspaceRoot,
@@ -98,11 +111,13 @@ export async function startNexumServer(opts: ServeCliOptions = {}): Promise<{ st
     eventBus,
     host,
     port,
+    token: auth.kind === "token" ? auth.token : undefined,
   });
   const bound = await nexumHost.start();
   process.stderr.write(`Nexum host listening on http://${bound.host}:${bound.port}\n`);
   process.stderr.write(`  postgres: ${redactUrl(databaseUrl)}\n`);
   process.stderr.write(`  redis:    ${redactUrl(redisUrl)}\n`);
+  process.stderr.write(`  auth:     ${describeAuth(auth, tokenPath)}\n`);
 
   const stop = async (): Promise<void> => {
     await nexumHost.stop(); // also tears down every session's Agent (AgentRegistry.stopAll)
@@ -111,6 +126,12 @@ export async function startNexumServer(opts: ServeCliOptions = {}): Promise<{ st
   };
 
   return { stop };
+}
+
+function describeAuth(auth: ServeAuth, tokenPath: string): string {
+  if (auth.kind === "none") return "none (--no-token): any local process can call this host";
+  if (auth.source === "env") return "bearer token from NEXUM_SERVER_TOKEN";
+  return `bearer token in ${tokenPath} (local clients read it automatically)`;
 }
 
 function redactUrl(url: string): string {
@@ -141,6 +162,8 @@ export async function main(argv: string[] = process.argv.slice(3)): Promise<void
       opts.databaseUrl = argv[++i];
     } else if (arg === "--redis-url") {
       opts.redisUrl = argv[++i];
+    } else if (arg === "--no-token") {
+      opts.noToken = true;
     } else if (arg === "--help" || arg === "-h") {
       process.stderr.write(
         `nexum serve — Nexum Local Host over HTTP + SSE\n\n` +
@@ -148,7 +171,8 @@ export async function main(argv: string[] = process.argv.slice(3)): Promise<void
           `  nexum serve                              Listen on 127.0.0.1:3777\n` +
           `  nexum serve --port 4000                  Custom port\n` +
           `  nexum serve --host 0.0.0.0               Bind beyond localhost (opt-in)\n` +
-          `  nexum serve --workspace /path/to/repo    Explicit workspace root\n\n` +
+          `  nexum serve --workspace /path/to/repo    Explicit workspace root\n` +
+          `  nexum serve --no-token                   Loopback without a bearer token (any local process can call it)\n\n` +
           `Requires PostgreSQL + Redis (docs/plan): set DATABASE_URL and REDIS_URL,\n` +
           `or --database-url / --redis-url, or run \`nexum up\` first.\n\n` +
           `Routes: see src/host/server.ts (GET /health, /capabilities, /sessions; POST /sessions,\n` +

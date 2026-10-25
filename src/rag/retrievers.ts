@@ -144,6 +144,8 @@ export interface SqliteKeywordIndexOptions {
   table?: string;
 }
 
+const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 /** FTS5-backed keyword index (bm25 ranking), sanitized MATCH queries. */
 export class SqliteKeywordIndex implements KeywordIndex {
   private readonly table: string;
@@ -153,6 +155,8 @@ export class SqliteKeywordIndex implements KeywordIndex {
     opts: SqliteKeywordIndexOptions = {},
   ) {
     this.table = opts.table ?? "rag_chunks";
+    // The name is interpolated into SQL, so only a plain identifier is accepted.
+    if (!SQL_IDENTIFIER.test(this.table)) throw new Error(`invalid FTS5 table name "${this.table}"`);
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS ${this.table} USING fts5(
         id UNINDEXED,

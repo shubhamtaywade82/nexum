@@ -168,11 +168,19 @@ export class GitHubDeliveryAdapter {
     return { number: body.number, url: body.html_url ?? "" };
   }
 
-  /** Merges an accepted evolution PR (call after acceptance policy allows). */
-  async mergePullRequest(prNumber: number, method: "merge" | "squash" | "rebase" = "squash"): Promise<boolean> {
+  /**
+   * Merges an accepted evolution PR (call after acceptance policy allows).
+   * `headSha` pins the merge to the commit that CI and review were checked
+   * against; GitHub refuses the merge (409) if the branch has moved since.
+   */
+  async mergePullRequest(
+    prNumber: number,
+    headSha: string,
+    method: "merge" | "squash" | "rebase" = "squash",
+  ): Promise<boolean> {
     const res = await this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}/merge`, {
       method: "PUT",
-      body: { merge_method: method },
+      body: { merge_method: method, sha: headSha },
     });
     return res.status === 200;
   }
@@ -213,16 +221,19 @@ export class GitHubDeliveryAdapter {
    * Only CHANGES_REQUESTED / APPROVED reviews advance the lifecycle; no
    * reviews yet → "pending".
    */
-  async getLatestReview(prNumber: number): Promise<ReviewVerdict> {
+  async getLatestReview(prNumber: number, headSha: string): Promise<ReviewVerdict> {
     const res = await this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}/reviews?per_page=100`);
     const reviews = (res.json ?? []) as Array<{
       state: string;
+      commit_id?: string;
       user?: { login?: string };
       html_url?: string;
       submitted_at?: string;
     }>;
+    // A review of an earlier commit does not cover the code that would merge, so only reviews of headSha count.
     const submitted = reviews
       .filter((r) => r.state === "APPROVED" || r.state === "CHANGES_REQUESTED")
+      .filter((r) => r.commit_id === headSha)
       .sort((a, b) => (a.submitted_at ?? "").localeCompare(b.submitted_at ?? ""));
     const latest = submitted[submitted.length - 1];
     if (!latest) return { state: "pending" };
@@ -261,8 +272,9 @@ export class GitHubDeliveryAdapter {
     controller: ExperimentController,
     experimentId: string,
     prNumber: number,
+    headSha: string,
   ): Promise<ReviewVerdict> {
-    const verdict = await this.getLatestReview(prNumber);
+    const verdict = await this.getLatestReview(prNumber, headSha);
     if (verdict.state !== "pending") {
       controller.reportReviewOutcome(experimentId, verdict.state, verdict.reviewer);
     }
@@ -288,7 +300,7 @@ export class GitHubDeliveryAdapter {
   ): Promise<{ handle: DeliveryHandle; ci: ChecksVerdict; review: ReviewVerdict }> {
     const handle = await this.deliverExperiment(input);
     const ci = await this.syncCiFeedback(controller, experimentId, handle.headSha, input.checksTimeoutMs);
-    const review = await this.syncReviewFeedback(controller, experimentId, handle.prNumber);
+    const review = await this.syncReviewFeedback(controller, experimentId, handle.prNumber, handle.headSha);
     return { handle, ci, review };
   }
 

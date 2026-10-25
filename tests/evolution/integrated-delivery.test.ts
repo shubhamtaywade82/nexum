@@ -103,6 +103,8 @@ function makeFakes(options: {
 }): { runGit: GitCommandRunner; http: GitHubHttpClient; calls: RecordedCall[]; pushedRefs: string[] } {
   const calls: RecordedCall[] = [];
   const pushedRefs: string[] = [];
+  // The head the adapter resolved last. Reviews are bound to it, as GitHub binds a review to a commit.
+  let headSha = "";
   const runGit: GitCommandRunner = async (args, cwd) => {
     if (args.includes("push")) {
       pushedRefs.push(args[args.length - 1]);
@@ -112,6 +114,7 @@ function makeFakes(options: {
       // The adapter passes bare subcommands ("rev-parse", ...); run real git.
       const argv = args[0] === "git" ? args.slice(1) : args;
       const res = await exec("git", argv, { cwd, maxBuffer: 1024 * 1024 });
+      if (argv.includes("rev-parse")) headSha = res.stdout.trim();
       return { stdout: res.stdout, stderr: res.stderr ?? "", exitCode: 0 };
     } catch (err) {
       const e = err as { code?: number; stdout?: string; stderr?: string };
@@ -131,7 +134,7 @@ function makeFakes(options: {
       return { status: 200, json: { check_runs: options.checkRuns ?? [] } };
     }
     if (path.includes("/reviews")) {
-      return { status: 200, json: options.reviews ?? [] };
+      return { status: 200, json: (options.reviews ?? []).map((review) => ({ ...review, commit_id: headSha })) };
     }
     if (path.endsWith("/merge")) {
       return { status: options.mergeStatus ?? 200, json: { merged: true } };

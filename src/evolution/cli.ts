@@ -582,7 +582,9 @@ export async function runBenchmarkInDir(
     // fallback for workspaces prepared without it.)
     symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "junction");
   }
-  const args = [tsxEntry, "src/benchmark/cli.ts", "--json"];
+  // The agent driver runs each case through the worktree's own Agent, so a mutation to the
+  // runtime, prompts, routing or tool selection can move the score. The model driver could not.
+  const args = [tsxEntry, "src/benchmark/cli.ts", "--json", "--driver", "agent"];
   for (const category of categories) args.push("--category", category);
   const { stdout } = await execFileAsync("node", args, { cwd: dir, maxBuffer: 32 * 1024 * 1024 });
   return parseBenchmarkJson(stdout);
@@ -643,7 +645,8 @@ async function activateRuntimeIfNeeded(
   outcome: Awaited<ReturnType<ClosedLoopEngine["runEvolutionCycle"]>>,
 ): Promise<NonNullable<ExperimentArtifactInput["activation"]>> {
   const harnessId = outcome.ok ? outcome.outcome.experiment.candidate.harness : "";
-  const base = { controller: controller.name, harnessId };
+  // No runtime reads nexum.harness.json yet, so an activation records a choice and changes no running code.
+  const base = { controller: controller.name, harnessId, consumedByRuntime: false };
   if (!outcome.ok) {
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error: "cycle did not produce a candidate" };
   }
@@ -660,7 +663,7 @@ async function activateRuntimeIfNeeded(
     }
     const pointer = controller.readPointer();
     console.log(
-      `[Evolution] Runtime activated: harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)} (manifest pointer: nexum.harness.json).`,
+      `[Evolution] Pointer written: harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)} (nexum.harness.json). No runtime consumes this pointer yet, so the running agent is unchanged.`,
     );
     return {
       ...base,

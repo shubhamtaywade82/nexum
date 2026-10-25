@@ -4,6 +4,7 @@ import { BRAND } from "../platform/brand.js";
 import { collectCapabilities, type FeatureStatus } from "./capabilities.js";
 import { buildSandboxImage, checkSandboxImage } from "./sandbox-image.js";
 import { summarizePlan } from "../orchestration/plan-summary.js";
+import type { PullProgressEvent } from "@nemesis-oss/ollama-sdk";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
 import { ModelStack } from "./services/model-stack.js";
@@ -138,6 +139,17 @@ export interface AgentEvents {
     model: string,
     usage?: { promptTokens: number; completionTokens: number; latencyMs: number },
   ) => void;
+  /**
+   * A model call outside the turn loop (background conversation summary). Kept apart from
+   * onModelUsed, which drives "the model answering now" in the UI. Counts are null when the
+   * provider reported none.
+   */
+  onBackgroundModelUsage?: (info: {
+    purpose: "summary";
+    model: string;
+    promptTokens: number | null;
+    completionTokens: number | null;
+  }) => void;
   /** Whole-mission phase system (see runtime/mission-derive.ts): a new mission
    * begins, a phase's status changes, or a live plan step transitions. */
   onMissionStarted?: (goal: string) => void;
@@ -376,6 +388,16 @@ export class Agent {
       stack: this.stack,
       onMemorySummary: (summary) => this.emit("onMemorySummary", summary),
       onError: (e) => this.emit("onError", e),
+      onModelResponse: (response) => {
+        const prompt = response.prompt_eval_count as number | undefined;
+        const completion = response.eval_count as number | undefined;
+        this.emit("onBackgroundModelUsage", {
+          purpose: "summary",
+          model: typeof response.model === "string" ? response.model : this.currentModel,
+          promptTokens: typeof prompt === "number" ? prompt : null,
+          completionTokens: typeof completion === "number" ? completion : null,
+        });
+      },
     });
 
     this.docs = new DocsStore(statePaths.docsDb);
@@ -638,6 +660,11 @@ export class Agent {
   /**
    * Stop the plugin host and drain all services. Called on shutdown.
    */
+  /** Resolves once background model work started by earlier turns (the conversation summary) has finished. */
+  whenIdle(): Promise<void> {
+    return this.sessions.idle();
+  }
+
   async stopHost(): Promise<void> {
     this.controlPlane.drain();
     await this.agentRunWorkerInstance?.stop();
@@ -1584,8 +1611,9 @@ export class Agent {
   }
 
   /** Ollama Cloud request counts + spend, one row per pooled API key. */
-  usageAll(range?: "24h" | "7d" | "30d") {
-    return this.stack.provider.usageAll(range ? { range } : undefined);
+  usageAll(range?: "24h" | "7d" | "30d", groupBy?: "model") {
+    const opts = { ...(range ? { range } : {}), ...(groupBy ? { groupBy } : {}) };
+    return this.stack.provider.usageAll(Object.keys(opts).length > 0 ? opts : undefined);
   }
 
   /** Ollama Cloud remaining included + purchased credits, one row per key. */
@@ -1596,6 +1624,11 @@ export class Agent {
   /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */
   importGguf(model: string, path: string) {
     return this.stack.provider.importGguf(model, path);
+  }
+
+  /** Downloads a model from the Ollama registry; `onEvent` receives every progress frame. */
+  pullModel(model: string, onEvent: (event: PullProgressEvent) => void) {
+    return this.stack.provider.pullModel(model, onEvent);
   }
 
   resetContext(): void {

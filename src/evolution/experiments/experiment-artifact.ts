@@ -168,6 +168,8 @@ export interface ExperimentArtifactPayload {
     activatedAt: number;
     ok: boolean;
     error?: string;
+    /** False: the manifest pointer is written, but no runtime reads it yet. */
+    consumedByRuntime: boolean;
   } | null;
   decision: {
     verdict: "eligible" | "rejected" | "inconclusive" | "failed";
@@ -240,6 +242,8 @@ export interface ExperimentArtifactInput {
     activatedAt: number;
     ok: boolean;
     error?: string;
+    /** False: the manifest pointer is written, but no runtime reads it yet. */
+    consumedByRuntime: boolean;
   } | null;
 }
 

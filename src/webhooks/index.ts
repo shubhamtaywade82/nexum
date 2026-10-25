@@ -33,7 +33,7 @@
  * agent runtime. Unverified events NEVER reach agent sessions.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -444,8 +444,7 @@ function sanitizeHeaders(headers: Record<string, string>): Record<string, string
 }
 
 function randomId(): string {
-  // Avoid importing randomUUID for browser compat (though this is Node-only).
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  return randomUUID();
 }
 
 // Keep imports used (for side-effect typing).

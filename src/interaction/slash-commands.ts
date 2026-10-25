@@ -32,9 +32,10 @@ export type CommandEffect =
   | { kind: "learn"; rule: string }
   | { kind: "replay-session"; id?: string }
   | { kind: "doctor" }
-  | { kind: "usage"; range?: "24h" | "7d" | "30d" }
+  | { kind: "usage"; range?: "24h" | "7d" | "30d"; groupBy?: "model" }
   | { kind: "balance" }
   | { kind: "import-gguf"; model: string; path: string }
+  | { kind: "pull"; model: string }
   | { kind: "capabilities"; action: "show" | "fix" }
   | { kind: "evolve"; action: "diagnose" | "history" | "rollback" | "benchmark"; target?: string }
   | { kind: "error"; text: string };
@@ -397,15 +398,20 @@ export function builtinCommands(): SlashCommandRegistry {
   registry.register({
     name: "usage",
     aliases: ["spend"],
-    description: "Ollama Cloud request counts and spend: /usage [24h|7d|30d]",
+    description: "Ollama Cloud request counts and spend: /usage [24h|7d|30d] [model]",
     category: "General",
     execute: (args) => {
-      const range = args.trim();
-      if (range === "") return { kind: "usage" };
-      if (range === "24h" || range === "7d" || range === "30d") return { kind: "usage", range };
-      return { kind: "error", text: "Usage: /usage [24h|7d|30d]" };
+      // Tokens in either order: a window (24h|7d|30d) and/or `model` for the
+      // per-model breakdown (server-side `groupBy=model`).
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const range = tokens.find((t) => t === "24h" || t === "7d" || t === "30d") as "24h" | "7d" | "30d" | undefined;
+      const groupBy = tokens.includes("model") ? ("model" as const) : undefined;
+      if (!tokens.every((t) => t === range || t === groupBy)) {
+        return { kind: "error", text: "Usage: /usage [24h|7d|30d] [model]" };
+      }
+      return { kind: "usage", ...(range ? { range } : {}), ...(groupBy ? { groupBy } : {}) };
     },
-    argValues: ["24h", "7d", "30d"],
+    argValues: ["24h", "7d", "30d", "model"],
   });
   registry.register({
     name: "balance",
@@ -413,6 +419,16 @@ export function builtinCommands(): SlashCommandRegistry {
     description: "Show remaining Ollama Cloud credits",
     category: "General",
     execute: () => ({ kind: "balance" }),
+  });
+  registry.register({
+    name: "pull",
+    aliases: [],
+    description: "Download a model from the Ollama registry with live progress: /pull <model>",
+    category: "General",
+    execute: (args) => {
+      const model = args.trim();
+      return /^\S+$/.test(model) ? { kind: "pull", model } : { kind: "error", text: "Usage: /pull <model>" };
+    },
   });
   registry.register({
     name: "import-gguf",

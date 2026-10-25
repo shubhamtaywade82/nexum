@@ -26,20 +26,35 @@ function chatResponse(content: string) {
 const QUICK = { name: "minicpm5-1b", capabilities: ["completion", "tools"], details: { parameter_size: "1B" } };
 
 function chatBodies(): Array<{ model: string; messages: Array<{ role: string; content: string }>; tools?: unknown[] }> {
-  return (globalThis.fetch as jest.Mock).mock.calls.filter((c) => c[1]?.body).map((c) => JSON.parse(c[1].body));
+  return (globalThis.fetch as jest.Mock).mock.calls
+    .filter((c) => String(c[0]).endsWith("/api/chat") && c[1]?.body)
+    .map((c) => JSON.parse(c[1].body));
 }
 
 function mockFetch(reply: (body: { model: string; messages: Array<{ content: string }> }) => string) {
   let first = true;
-  (globalThis as any).fetch = jest.fn().mockImplementation(async (_url: string, init?: { body?: string }) => {
-    if (!init?.body) {
-      if (first) {
-        first = false;
+  (globalThis as any).fetch = routeShow(
+    jest.fn().mockImplementation(async (_url: string, init?: { body?: string }) => {
+      if (!init?.body) {
+        if (first) {
+          first = false;
+          return { ok: true, status: 200, json: async () => ({ models: [QUICK] }) };
+        }
         return { ok: true, status: 200, json: async () => ({ models: [QUICK] }) };
       }
-      return { ok: true, status: 200, json: async () => ({ models: [QUICK] }) };
-    }
-    return chatResponse(reply(JSON.parse(init.body)));
+      return chatResponse(reply(JSON.parse(init.body)));
+    }),
+  );
+}
+
+/**
+ * Answers the catalog's per-model `/api/show` probe (native context window), so
+ * the scripted mocks below only ever see the turn's own requests.
+ */
+function routeShow(fetchMock: jest.Mock): jest.Mock {
+  return jest.fn(async (url: string, init?: RequestInit) => {
+    if (String(url).endsWith("/api/show")) return { ok: true, status: 200, json: async () => ({}) };
+    return fetchMock(url, init);
   });
 }
 
@@ -197,17 +212,19 @@ describe("Agent wiring — hooks", () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let chat = 0;
     let first = true;
-    (globalThis as any).fetch = jest.fn().mockImplementation(async (_u: string, init?: { body?: string }) => {
-      if (!init?.body) {
-        const models = first ? [QUICK] : [QUICK];
-        first = false;
-        return { ok: true, status: 200, json: async () => ({ models }) };
-      }
-      chat += 1;
-      if (chat === 1) return toolCall("run_shell", { command: "ls" });
-      if (chat === 2) return toolCall("list_directory", { path: "." });
-      return chatResponse("done");
-    });
+    (globalThis as any).fetch = routeShow(
+      jest.fn().mockImplementation(async (_u: string, init?: { body?: string }) => {
+        if (!init?.body) {
+          const models = first ? [QUICK] : [QUICK];
+          first = false;
+          return { ok: true, status: 200, json: async () => ({ models }) };
+        }
+        chat += 1;
+        if (chat === 1) return toolCall("run_shell", { command: "ls" });
+        if (chat === 2) return toolCall("list_directory", { path: "." });
+        return chatResponse("done");
+      }),
+    );
     const post = jest.fn();
     const agent = new Agent({
       config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
