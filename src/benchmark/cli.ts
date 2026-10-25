@@ -8,6 +8,7 @@ import { createAgentDriver } from "./agent-driver.js";
 import { runBenchmark, BenchmarkTarget } from "./runner.js";
 import { BUILTIN_CASES } from "./cases.js";
 import { buildAgenticCases } from "./cases-agentic.js";
+import { buildHarnessCases } from "./cases-harness.js";
 import { buildExecutionCases } from "./cases-execution.js";
 import { BenchmarkCase } from "./types.js";
 import { scoreByModel, scoreByCategory } from "./score.js";
@@ -78,7 +79,7 @@ async function main() {
   const executionCases = await buildExecutionCases();
   const categoryFilter = values.category;
   const buildCases = (): BenchmarkCase[] => {
-    const all = [...BUILTIN_CASES, ...buildAgenticCases(), ...executionCases];
+    const all = [...BUILTIN_CASES, ...buildAgenticCases(), ...buildHarnessCases(), ...executionCases];
     return categoryFilter ? all.filter((c) => c.category === categoryFilter) : all;
   };
 

@@ -7,6 +7,7 @@
 
 import { BUILTIN_CASES } from "../benchmark/cases.js";
 import { buildAgenticCases } from "../benchmark/cases-agentic.js";
+import { buildHarnessCases } from "../benchmark/cases-harness.js";
 import { buildExecutionCases } from "../benchmark/cases-execution.js";
 import { BenchmarkTarget, runBenchmark } from "../benchmark/runner.js";
 import { BenchmarkCase, BenchmarkResult } from "../benchmark/types.js";
@@ -17,7 +18,7 @@ import { isHeldOutCase } from "./heldout-split.js";
 /** Gathers all benchmark cases across builtin, agentic, and execution suites. */
 export async function getAllBenchmarkCases(): Promise<BenchmarkCase[]> {
   const executionCases = await buildExecutionCases();
-  return [...BUILTIN_CASES, ...buildAgenticCases(), ...executionCases];
+  return [...BUILTIN_CASES, ...buildAgenticCases(), ...buildHarnessCases(), ...executionCases];
 }
 
 /** Filters available cases by recommended category names. */
