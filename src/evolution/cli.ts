@@ -645,8 +645,9 @@ async function activateRuntimeIfNeeded(
   outcome: Awaited<ReturnType<ClosedLoopEngine["runEvolutionCycle"]>>,
 ): Promise<NonNullable<ExperimentArtifactInput["activation"]>> {
   const harnessId = outcome.ok ? outcome.outcome.experiment.candidate.harness : "";
-  // No runtime reads nexum.harness.json yet, so an activation records a choice and changes no running code.
-  const base = { controller: controller.name, harnessId, consumedByRuntime: false };
+  // The launcher in bin/cli.js (src/platform/harness-launcher.ts) runs the pointer's commit for
+  // every agent command started from this checkout, so an activation changes what runs next.
+  const base = { controller: controller.name, harnessId, consumedByRuntime: true };
   if (!outcome.ok) {
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error: "cycle did not produce a candidate" };
   }
@@ -663,7 +664,7 @@ async function activateRuntimeIfNeeded(
     }
     const pointer = controller.readPointer();
     console.log(
-      `[Evolution] Pointer written: harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)} (nexum.harness.json). No runtime consumes this pointer yet, so the running agent is unchanged.`,
+      `[Evolution] Activated harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)}. The next agent command started from this checkout runs it; processes already running keep their code.`,
     );
     return {
       ...base,

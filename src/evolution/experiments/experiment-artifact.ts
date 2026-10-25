@@ -168,7 +168,7 @@ export interface ExperimentArtifactPayload {
     activatedAt: number;
     ok: boolean;
     error?: string;
-    /** False: the manifest pointer is written, but no runtime reads it yet. */
+    /** True when a runtime consumer reads the pointer: `nexum` started from the harness checkout runs that commit. */
     consumedByRuntime: boolean;
   } | null;
   decision: {
@@ -242,7 +242,7 @@ export interface ExperimentArtifactInput {
     activatedAt: number;
     ok: boolean;
     error?: string;
-    /** False: the manifest pointer is written, but no runtime reads it yet. */
+    /** True when a runtime consumer reads the pointer: `nexum` started from the harness checkout runs that commit. */
     consumedByRuntime: boolean;
   } | null;
 }
