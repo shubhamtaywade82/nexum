@@ -8,7 +8,7 @@
  */
 
 import { SessionStore, SessionMeta } from "../../runtime/session.js";
-import { ChatMessage } from "../../models/adapters/provider.js";
+import { ChatMessage, ChatResponse } from "../../models/adapters/provider.js";
 import { MemoryStore } from "../../memory/store.js";
 import { generateSummary } from "../../memory/summarizer.js";
 import type { ModelStack } from "./model-stack.js";
@@ -20,11 +20,14 @@ export interface SessionManagerOptions {
   stack: ModelStack;
   onMemorySummary?: (summary: string) => void;
   onError?: (error: Error) => void;
+  /** Every model response the background summary receives, so its cost is reported like any other call. */
+  onModelResponse?: (response: ChatResponse) => void;
 }
 
 export class SessionManager {
   private currentSessionId: string;
   private isSummarizing = false;
+  private summarizing: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: SessionManagerOptions) {
     this.currentSessionId = this.opts.store.startNew();
@@ -82,13 +85,22 @@ export class SessionManager {
   triggerSummarization(): void {
     if (this.isSummarizing) return;
     this.isSummarizing = true;
-    generateSummary(this.opts.memory, {
-      chat: (messages, opts) => this.opts.stack.routeWithFallback("quick", messages, opts),
+    this.summarizing = generateSummary(this.opts.memory, {
+      chat: async (messages, opts) => {
+        const response = await this.opts.stack.routeWithFallback("quick", messages, opts);
+        this.opts.onModelResponse?.(response);
+        return response;
+      },
     })
       .then((summary) => this.opts.onMemorySummary?.(summary))
       .catch((e) => this.opts.onError?.(e instanceof Error ? e : new Error(String(e))))
       .finally(() => {
         this.isSummarizing = false;
       });
+  }
+
+  /** Resolves once any in-flight background summary has finished. Never rejects. */
+  idle(): Promise<void> {
+    return this.summarizing;
   }
 }

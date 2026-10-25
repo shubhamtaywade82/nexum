@@ -47,6 +47,11 @@ export class Registry {
     return this;
   }
 
+  unregister(name: string): boolean {
+    this.categories.delete(name);
+    return this.tools.delete(name);
+  }
+
   getTools(): Tool[] {
     return [...this.tools.values()];
   }

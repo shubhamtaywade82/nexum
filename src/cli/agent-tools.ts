@@ -13,7 +13,7 @@ import type { SemanticIndex } from "../domains/rails/index.js";
 import type { DocsStore } from "../docs/store.js";
 import type { ToolResult } from "../core/tools/tool-contract.js";
 import { DefaultToolGateway } from "../tools/gateway/tool-gateway.js";
-import { ToolCatalog } from "../tools/gateway/tool-catalog.js";
+import { ToolCatalog, type LegacyToolMetadata } from "../tools/gateway/tool-catalog.js";
 import { mountToolPack, ToolPack } from "../tools/gateway/tool-pack.js";
 import { parityPosture } from "../core/policy/postures.js";
 import {
@@ -195,6 +195,21 @@ export class AgentToolManager {
   registerTool(tool: Tool, category = "General"): void {
     this.registry.register(tool, category);
     this.kernelCatalog.registerLegacy(tool, category);
+  }
+
+  /**
+   * Replaces every registered tool with `tools`. Used by the agent-driven
+   * benchmark: a case defines the agent's whole tool environment, so no
+   * built-in tool (shell, filesystem, network) is reachable during the case.
+   * `meta` sets the policy metadata the gateway enforces for the new tools.
+   */
+  replaceAllTools(tools: Tool[], meta: LegacyToolMetadata = {}, category = "Benchmark"): void {
+    for (const tool of this.registry.getTools()) this.registry.unregister(tool.name);
+    for (const id of this.kernelCatalog.ids()) this.kernelCatalog.unregister(id);
+    for (const tool of tools) {
+      this.registry.register(tool, category);
+      this.kernelCatalog.registerLegacy(tool, category, meta);
+    }
   }
 
   /** Options for MCP registration with trust gating (P2 trust tier).

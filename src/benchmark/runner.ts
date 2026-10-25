@@ -13,13 +13,22 @@ export interface BenchmarkTarget {
   provider: Provider;
 }
 
-interface CaseRunOutcome {
+export interface CaseRunOutcome {
   pass: boolean;
   reason?: string;
   tokensPerSec: number | null;
   tokens: number;
   tokensEstimated: boolean;
+  /** Models the harness actually called. Only the agent driver sets it: its router may pick models besides the target. */
+  modelsUsed?: string[];
 }
+
+/**
+ * Runs one agentic case through something other than the runner's own model
+ * loop. The agent driver (agent-driver.ts) runs it through the candidate's
+ * `Agent`, so the score reflects the harness, not just the model.
+ */
+export type AgenticCaseDriver = (target: BenchmarkTarget, testCase: AgenticBenchmarkCase) => Promise<CaseRunOutcome>;
 
 export interface BenchmarkProgressEvent {
   model: string;
@@ -57,6 +66,12 @@ export interface RunBenchmarkOptions {
   /** Fires per tool call inside an agentic case, as it resolves — the only way
    * to see what's happening mid-case before it either finishes or times out. */
   onToolCall?: (event: BenchmarkToolCallEvent) => void;
+  /**
+   * Runs agentic cases through this driver instead of the runner's standalone
+   * loop. Single-turn cases are skipped under a driver: they score one raw model
+   * response, which no harness code touches.
+   */
+  agentDriver?: AgenticCaseDriver;
 }
 
 const DEFAULT_CASE_TIMEOUT_MS = 120_000;
@@ -78,7 +93,9 @@ export async function runBenchmark(
     target.provider.setModel(target.model);
     target.provider.setTier(target.tier);
 
-    const caseList = typeof cases === "function" ? cases() : cases;
+    const allCases = typeof cases === "function" ? cases() : cases;
+    const caseList = opts.agentDriver ? allCases.filter((c) => c.kind === "agentic") : allCases;
+    const driver: BenchmarkResult["driver"] = opts.agentDriver ? "agent" : "model";
     const total = caseList.length;
     let modelUnavailableError: string | null = null;
 
@@ -91,6 +108,7 @@ export async function runBenchmark(
           tier: target.tier,
           caseId: testCase.id,
           category: testCase.category,
+          driver,
           pass: false,
           latencyMs: 0,
           tokensPerSec: null,
@@ -125,7 +143,9 @@ export async function runBenchmark(
       try {
         const outcome = await withTimeout(
           testCase.kind === "agentic"
-            ? runAgenticTurn(target, testCase, opts.onToolCall)
+            ? opts.agentDriver
+              ? opts.agentDriver(target, testCase)
+              : runAgenticTurn(target, testCase, opts.onToolCall)
             : runSingleTurn(target, testCase),
           timeoutMs,
         );
@@ -135,6 +155,7 @@ export async function runBenchmark(
           tier: target.tier,
           caseId: testCase.id,
           category: testCase.category,
+          driver,
           latencyMs,
           ...outcome,
         });
@@ -160,6 +181,7 @@ export async function runBenchmark(
           tier: target.tier,
           caseId: testCase.id,
           category: testCase.category,
+          driver,
           pass: false,
           latencyMs,
           tokensPerSec: null,
