@@ -27,6 +27,7 @@ const EXIT_CONFIRM_MS = 1500;
 
 function setupTerminalFailsafe(): () => void {
   if (!process.stdin.isTTY) return () => {};
+  process.stdout.write("\x1b[?1049h\x1b[2J\x1b[3J\x1b[H");
   let restored = false;
   const cleanup = () => {
     if (restored) return;
@@ -230,8 +231,6 @@ const cfg = loadConfig();
       exitOnCtrlC: false,
       alternateScreen: true,
       mouse: true,
-      incrementalRendering: true,
-      kittyKeyboard: { mode: "auto" },
     },
   );
   registerForceQuitHandlers(() => instance.unmount(), restoreFailsafe);
