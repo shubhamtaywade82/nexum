@@ -18,14 +18,30 @@
 
 import { readEnv } from "../platform/environment.js";
 import type { NexumRunEvent } from "../protocol/types.js";
+import { isLoopbackHostHeader } from "../host/request-guard.js";
+import { readServerToken, serverTokenPath } from "../host/server-token.js";
 
 function baseUrl(explicit?: string): string {
   const url = explicit ?? readEnv("HOST_URL") ?? "http://127.0.0.1:3777";
   return url.replace(/\/$/, "");
 }
 
+function loopbackToken(baseUrl: string): string | undefined {
+  try {
+    const host = new URL(baseUrl).host;
+    return isLoopbackHostHeader(host) ? readServerToken(serverTokenPath()) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function authHeaders(url: string): Record<string, string> {
+  const token = process.env.NEXUM_SERVER_TOKEN ?? loopbackToken(url);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders(url) });
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}: ${await res.text().catch(() => "")}`);
   }
@@ -72,7 +88,7 @@ async function showSession(url: string, sessionId: string): Promise<void> {
 async function attachAndRun(url: string, sessionId: string, goal: string): Promise<void> {
   const postRes = await fetch(`${url}/sessions/${encodeURIComponent(sessionId)}/runs`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders(url) },
     body: JSON.stringify({ goal }),
   });
   if (!postRes.ok) {
@@ -81,7 +97,7 @@ async function attachAndRun(url: string, sessionId: string, goal: string): Promi
   const { run } = (await postRes.json()) as { run: { id: string } };
 
   const res = await fetch(`${url}/runs/${encodeURIComponent(run.id)}/events?stream=1`, {
-    headers: { Accept: "text/event-stream" },
+    headers: { Accept: "text/event-stream", ...authHeaders(url) },
   });
   if (!res.ok || !res.body) {
     throw new Error(`${res.status} ${res.statusText}: ${await res.text().catch(() => "")}`);
