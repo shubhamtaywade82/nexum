@@ -1,0 +1,12 @@
+# Keeps @nemesis-oss/ollama-sdk current. Only that package is updated here.
+# The sdk-auto-merge workflow merges minor and patch upgrades after CI passes.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: "@nemesis-oss/ollama-sdk"
+    commit-message:
+      prefix: "chore(deps)"
