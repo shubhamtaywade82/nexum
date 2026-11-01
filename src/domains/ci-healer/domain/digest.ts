@@ -7,7 +7,8 @@
 
 // eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
-const GH_PREFIX = /^[^\t]*\t[^\t]*\t(?:\d{4}-\d{2}-\d{2}T\S+\s?)?/;
+// `gh run view --log-failed` prefixes job<TAB>step<TAB>timestamp. REST job logs carry only a timestamp.
+const GH_PREFIX = /^(?:[^\t]*\t[^\t]*\t)?(?:\d{4}-\d{2}-\d{2}T\S+\s?)?/;
 const SIGNALS: readonly RegExp[] = [
   /\b(?:error|errors|fail|failed|failing|failure|failures|exception|traceback|panic|expected|undefined|cannot|assertion|not found|no such file)\b/i,
   /\b(?:TypeError|NameError|NoMethodError|LoadError|ArgumentError|RuntimeError|SyntaxError|ReferenceError)\b/,
@@ -73,7 +74,9 @@ export class Digester {
 
 function normalize(raw: string): string[] {
   const cleaned: string[] = [];
-  for (const line of raw.split("\n")) {
+  // REST job logs begin with a UTF-8 byte-order mark.
+  const withoutBom = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  for (const line of withoutBom.split("\n")) {
     const text = line.replace(/\r$/, "").replace(ANSI, "").replace(GH_PREFIX, "").trimEnd();
     if (text.trim().length > 0) cleaned.push(text);
   }
