@@ -2,10 +2,12 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentEnv } from "../../../src/domains/ci-healer/adapters/agent-env.js";
+import { AgentRouter } from "../../../src/domains/ci-healer/adapters/agent-router.js";
 import { NodeCommandRunner } from "../../../src/domains/ci-healer/adapters/command-runner.js";
 import { GitCli } from "../../../src/domains/ci-healer/adapters/git-cli.js";
 import { NexumRpcAgent } from "../../../src/domains/ci-healer/adapters/nexum-rpc.js";
-import { Healer } from "../../../src/domains/ci-healer/application/healer.js";
+import { HostRepoCommands } from "../../../src/domains/ci-healer/adapters/repo-commands.js";
+import { Healer, selectScanWindow } from "../../../src/domains/ci-healer/application/healer.js";
 import { LogSource } from "../../../src/domains/ci-healer/application/log-source.js";
 import { parseConfig } from "../../../src/domains/ci-healer/config.js";
 import { Digester } from "../../../src/domains/ci-healer/domain/digest.js";
@@ -20,10 +22,12 @@ const AGENT_BRANCH = "fix/ci-main-111";
 const NO_SHA = "0".repeat(40);
 
 /**
- * Real git (bare origin, clone, worktrees, pushes) and the real NexumRpcAgent client
- * against a protocol-compatible agent double. GitHub is the in-memory fake.
+ * Real git (bare origin, clone, worktrees, pushes), the real NexumRpcAgent client
+ * behind an AgentRouter, and a protocol-compatible agent double. GitHub is the
+ * in-memory fake. Repo commands run on the host here, which the config must
+ * acknowledge. The Docker path is covered by unit tests of its arguments.
  */
-describe("Healer end to end (real git, real rpc client, fake GitHub)", () => {
+describe("Healer end to end (real git, real rpc client, router, fake GitHub)", () => {
   let root: string;
   let fx: Fixture;
   let github: FakeGitHub;
@@ -60,31 +64,41 @@ describe("Healer end to end (real git, real rpc client, fake GitHub)", () => {
       setup_timeout_sec: 30,
       verify_commands: ["test -f fixed.txt"],
       verify_timeout_sec: 30,
+      sandbox: { mode: "host", acknowledge_host_execution: true },
       ...overrides,
     });
     const runner = new NodeCommandRunner();
     const log = createLogger({ level: "debug", sink: (line) => lines.push(line) });
-    const git = new GitCli({
+    const gitPort = new GitCli({
       command: runner,
       repoDir: fx.work,
       author: config.git_author,
       log,
       sleep: async () => undefined,
     });
-    const agent = new NexumRpcAgent({
+    const nexum = new NexumRpcAgent({
       command: config.nexum_command,
       timeoutMs: 30_000,
       env: agentEnv({ ...process.env, FAKE_NEXUM: mode, FAKE_NEXUM_LOG: nexumLog }, ["FAKE_NEXUM", "FAKE_NEXUM_LOG"]),
       log,
     });
+    const router = new AgentRouter({
+      repository: REPO,
+      candidates: [{ name: "nexum", agent: nexum }],
+      store,
+      log,
+      policy: { rateLimitCooldownMs: 1_800_000, breakerThreshold: 3, breakerCooldownMs: 900_000 },
+      now: () => new Date("2026-11-01T00:00:00Z"),
+      reset: (workspace) => gitPort.resetWorktree(workspace),
+    });
     const logs = new LogSource({ github, digester: new Digester(), log, byteCap: config.log_byte_cap });
     return new Healer({
       config,
       github,
-      git,
-      agent,
+      git: gitPort,
+      agent: router,
+      repo: new HostRepoCommands(runner),
       logs,
-      command: runner,
       store,
       log,
       now: () => new Date("2026-11-01T00:00:00Z"),
@@ -110,8 +124,9 @@ describe("Healer end to end (real git, real rpc client, fake GitHub)", () => {
     }
   };
 
+  /** Simulates CI failing on the default branch's current head. */
   const mainFailure = (sha: string, runId = 111) => {
-    github.failed = [ciRun(runId, { headBranch: "main", headSha: sha })];
+    github.setBranchRun("main", ciRun(runId, { headBranch: "main", headSha: sha }));
   };
 
   /** Simulates CI failing on the agent branch's current head. */
@@ -285,13 +300,14 @@ describe("Healer end to end (real git, real rpc client, fake GitHub)", () => {
     });
   });
 
-  describe("candidate filtering", () => {
-    it("skips a failure whose SHA is no longer the branch head", async () => {
-      github.failed = [ciRun(150, { headBranch: "main", headSha: NO_SHA })];
+  describe("branch-head discovery", () => {
+    it("ignores failures on runs whose SHA is not the current branch head, and says so", async () => {
+      github.setBranchRun("main", ciRun(150, { headBranch: "main", headSha: NO_SHA }));
       await healer().tick();
 
       expect(await nexumInvocations()).toBe(0);
       expect(github.created).toEqual([]);
+      expect(lines.join("\n")).toContain("no runs report the branch head");
     });
 
     it("allows only one open agent lineage per base branch", async () => {
@@ -300,7 +316,7 @@ describe("Healer end to end (real git, real rpc client, fake GitHub)", () => {
       github.setPull(1, await remoteSha(AGENT_BRANCH));
 
       const m2 = await publish(fx.seed, { branch: "main", file: "app.rb", content: "v2\n" });
-      github.failed = [ciRun(112, { headBranch: "main", headSha: m2 })];
+      mainFailure(m2, 112);
       await healer().tick();
 
       expect(await nexumInvocations()).toBe(1);
@@ -319,16 +335,16 @@ describe("Healer end to end (real git, real rpc client, fake GitHub)", () => {
           isDraft: false,
         },
       ];
-      github.failed = [ciRun(301, { headBranch: "feature/x", headSha: f1 })];
+      github.setBranchRun("feature/x", ciRun(301, { headBranch: "feature/x", headSha: f1 }));
       await healer().tick();
 
       expect(await remoteBranchExists("fix/ci-feature-x-301")).toBe(true);
       expect(github.created).toEqual([expect.objectContaining({ base: "feature/x", head: "fix/ci-feature-x-301" })]);
     });
 
-    it("ignores a failing branch that has no open PR", async () => {
+    it("never scans a branch without an open PR, even when it is failing", async () => {
       const o1 = await publish(fx.seed, { branch: "orphan", file: "o.rb", content: "o\n" });
-      github.failed = [ciRun(302, { headBranch: "orphan", headSha: o1 })];
+      github.setBranchRun("orphan", ciRun(302, { headBranch: "orphan", headSha: o1 }));
       await healer().tick();
 
       expect(await nexumInvocations()).toBe(0);
@@ -341,7 +357,7 @@ describe("Healer end to end (real git, real rpc client, fake GitHub)", () => {
       mainFailure(m1);
       const planned = await healer().plan();
 
-      expect(planned.join("\n")).toContain(`would heal run=111 branch=main base=main head=${m1.slice(0, 7)}`);
+      expect(planned.join("\n")).toContain(`would heal branch=main run=111 base=main head=${m1.slice(0, 7)}`);
       expect(await remoteBranchExists(AGENT_BRANCH)).toBe(false);
       expect(await nexumInvocations()).toBe(0);
       expect(store.recentEvents(REPO, 10)).toEqual([]);
@@ -362,5 +378,41 @@ describe("Healer end to end (real git, real rpc client, fake GitHub)", () => {
       const outcome = await agent.execute({ workspace: fx.work, goal: "report credentials" });
       expect(outcome.output).toBe("GH=absent OLLAMA=model-key");
     });
+  });
+});
+
+describe("selectScanWindow", () => {
+  it("always includes the default branch first", () => {
+    expect(selectScanWindow("main", ["feat/a", "feat/b"], undefined, 5)).toEqual(["main", "feat/a", "feat/b"]);
+  });
+
+  it("resumes after the cursor and wraps around, so every PR is reached", () => {
+    const branches = ["feat/a", "feat/b", "feat/c", "feat/d"];
+    expect(selectScanWindow("main", branches, "feat/b", 3)).toEqual(["main", "feat/c", "feat/d"]);
+    expect(selectScanWindow("main", branches, "feat/d", 3)).toEqual(["main", "feat/a", "feat/b"]);
+  });
+
+  it("restarts from the beginning when the cursor branch has closed", () => {
+    expect(selectScanWindow("main", ["feat/a", "feat/b"], "gone", 5)).toEqual(["main", "feat/a", "feat/b"]);
+  });
+
+  it("never exceeds the budget, and still scans the default branch with a budget of one", () => {
+    expect(selectScanWindow("main", ["feat/a", "feat/b"], undefined, 1)).toEqual(["main"]);
+  });
+});
+
+describe("branch scan cursor", () => {
+  it("advances across ticks so a large PR set is scanned in rotation", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cursor-"));
+    const ledger = new LedgerStore(join(dir, "state.db"));
+    try {
+      expect(ledger.scanCursor(REPO)).toBeUndefined();
+      ledger.setScanCursor(REPO, "feat/b");
+      ledger.setScanCursor(REPO, "feat/c");
+      expect(ledger.scanCursor(REPO)).toBe("feat/c");
+    } finally {
+      ledger.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

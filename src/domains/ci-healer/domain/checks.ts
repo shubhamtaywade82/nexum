@@ -3,6 +3,11 @@ import type { WorkflowRun } from "./types.js";
 const PASSING = new Set(["success", "skipped", "neutral"]);
 const FAILING = new Set(["failure", "timed_out"]);
 
+/** A run that finished and failed. Cancelled or unknown conclusions are not failures. */
+export function isFailing(run: WorkflowRun): boolean {
+  return run.status === "completed" && FAILING.has(run.conclusion);
+}
+
 export type CheckVerdict =
   | { verdict: "pending" }
   | { verdict: "indeterminate" }

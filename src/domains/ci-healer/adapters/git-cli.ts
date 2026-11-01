@@ -65,6 +65,15 @@ export class GitCli implements GitPort {
     await this.run(["git", "branch", "-D", branch], { cwd: this.options.repoDir, allowFailure: true });
   }
 
+  /**
+   * Discards the failed runtime's edits. `clean -fd` removes untracked files but not
+   * ignored ones, so installed dependencies from setup survive.
+   */
+  async resetWorktree(path: string): Promise<void> {
+    await this.run(["git", "reset", "--hard", "-q"], { cwd: path });
+    await this.run(["git", "clean", "-fd", "-q"], { cwd: path });
+  }
+
   async stageAllAndList(path: string): Promise<string[]> {
     await this.run(["git", "add", "-A"], { cwd: path });
     const result = await this.run(["git", "diff", "--cached", "--name-only", "-z"], { cwd: path });

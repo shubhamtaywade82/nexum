@@ -17,10 +17,6 @@ export class FakeGitHub implements GitHubPort {
     return this.defaultName;
   }
 
-  async failedRuns(): Promise<WorkflowRun[]> {
-    return this.failed;
-  }
-
   async runsForBranch(branch: string): Promise<WorkflowRun[]> {
     return this.branchRuns.get(branch) ?? [];
   }

@@ -87,23 +87,6 @@ export class GitHubCli implements GitHubPort {
     return data.defaultBranchRef.name;
   }
 
-  async failedRuns(limit: number): Promise<WorkflowRun[]> {
-    const data = await this.json([
-      "gh",
-      "run",
-      "list",
-      "-R",
-      this.repo(),
-      "--status",
-      "failure",
-      "--limit",
-      String(limit),
-      "--json",
-      RUN_FIELDS,
-    ]);
-    return parse(z.array(runSchema), data, "failed runs");
-  }
-
   async runsForBranch(branch: string, limit = 30): Promise<WorkflowRun[]> {
     const data = await this.json([
       "gh",

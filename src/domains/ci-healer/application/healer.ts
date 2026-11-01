@@ -1,27 +1,35 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { deriveChecks, type CheckVerdict } from "../domain/checks.js";
+import { deriveChecks, isFailing, type CheckVerdict } from "../domain/checks.js";
 import { healBranchName, forbiddenPaths, targetFor } from "../domain/policy.js";
 import { buildPrompt } from "../domain/prompt.js";
 import { attemptsExhausted } from "../domain/lineage.js";
 import type { OpenPullRequest, WorkflowRun } from "../domain/types.js";
-import { CommandError, isRecoverable } from "../errors.js";
-import { repoCommandEnv } from "../adapters/agent-env.js";
+import { CommandError, isRecoverable, TimeoutError } from "../errors.js";
 import type { Lineage, LedgerStore } from "../persistence/ledger-store.js";
-import type { AgentOutcome, AgentPort, CommandPort, GitHubPort, GitPort, LogPort, Logger } from "./ports.js";
 import type { HealerConfig } from "../config.js";
+import type { AgentOutcome, AgentPort, GitHubPort, GitPort, LogPort, Logger, RepoCommandPort } from "./ports.js";
 
 export interface HealerDeps {
   config: HealerConfig;
   github: GitHubPort;
   git: GitPort;
+  /** The runtime chain, usually an AgentRouter. */
   agent: AgentPort;
+  /** Setup and verify commands, run in the configured sandbox. */
+  repo: RepoCommandPort;
   logs: LogPort;
-  command: CommandPort;
   store: LedgerStore;
   log: Logger;
   now?: () => Date;
+}
+
+/** A branch whose head is the unit of work. Heals are per head, not per run. */
+export interface BranchTarget {
+  branch: string;
+  kind: "default" | "feature";
+  base: string;
 }
 
 export interface Candidate {
@@ -32,7 +40,7 @@ export interface Candidate {
 }
 
 export interface Verdict {
-  run: WorkflowRun;
+  branch: string;
   candidate: Candidate | null;
   reason: string | null;
 }
@@ -40,11 +48,29 @@ export interface Verdict {
 type AttemptResult = "committed" | "no_patch";
 
 /**
+ * Chooses which branches to scan this tick. The default branch is always scanned.
+ * The remaining branches rotate: scanning resumes after the cursor and wraps around,
+ * so every open PR is reached within a few ticks even when there are more PRs than the
+ * per-tick budget.
+ */
+export function selectScanWindow(
+  defaultBranch: string,
+  branches: readonly string[],
+  cursor: string | undefined,
+  budget: number,
+): string[] {
+  const rest = branches.filter((name) => name !== defaultBranch).sort();
+  const start = cursor === undefined ? 0 : rest.indexOf(cursor) + 1;
+  const rotated = [...rest.slice(start), ...rest.slice(0, start)];
+  return [defaultBranch, ...rotated].slice(0, Math.max(1, budget));
+}
+
+/**
  * One scheduler tick. Order:
  *   1. reconcile existing agent lineages against GitHub: closed or merged, green, or
  *      failing on the current head (in-place iteration within the attempt budget)
- *   2. evaluate newly failing runs on the default branch and open same-repo PRs
- *   3. heal at most max_heals_per_tick new failures
+ *   2. scan branch heads: the default branch and open same-repo PR heads
+ *   3. heal at most max_heals_per_tick failing heads
  *
  * Every side effect goes through an injected port. The ledger is the only source of
  * truth for whether a head has already been acted on.
@@ -75,13 +101,9 @@ export class Healer {
       await this.reconcile();
 
       let budget = config.max_heals_per_tick;
-      for (const verdict of await this.evaluate(await github.defaultBranch())) {
+      for (const verdict of await this.discover(await github.defaultBranch(), true)) {
         if (!verdict.candidate) {
-          log.debug("skipped run", {
-            run: verdict.run.databaseId,
-            branch: verdict.run.headBranch,
-            reason: verdict.reason,
-          });
+          log.debug("skipped branch", { branch: verdict.branch, reason: verdict.reason });
           continue;
         }
         if (budget <= 0) break;
@@ -110,14 +132,18 @@ export class Healer {
         (lineage) =>
           `lineage ${lineage.healBranch} state=${lineage.state} attempts=${lineage.attempts} pr=#${lineage.prNumber}`,
       );
-    for (const verdict of await this.evaluate(await this.deps.github.defaultBranch())) {
+    for (const verdict of await this.discover(await this.deps.github.defaultBranch(), false)) {
       lines.push(
         verdict.candidate
-          ? `would heal run=${verdict.run.databaseId} branch=${verdict.run.headBranch} base=${verdict.candidate.base} head=${short(verdict.candidate.head)}`
-          : `skip run=${verdict.run.databaseId} branch=${verdict.run.headBranch}: ${verdict.reason}`,
+          ? `would heal branch=${verdict.branch} run=${verdict.candidate.run.databaseId} base=${verdict.candidate.base} head=${short(verdict.candidate.head)}`
+          : `skip branch=${verdict.branch}: ${verdict.reason}`,
       );
     }
     return lines;
+  }
+
+  private now(): Date {
+    return this.deps.now ? this.deps.now() : new Date();
   }
 
   // ── reconciliation of existing lineages ───────────────────────────────────
@@ -161,7 +187,9 @@ export class Healer {
   }
 
   private async checksFor(branch: string, head: string): Promise<CheckVerdict> {
-    const runs = (await this.deps.github.runsForBranch(branch)).filter((run) => run.headSha === head);
+    const runs = (await this.deps.github.runsForBranch(branch, this.config.run_scan_limit)).filter(
+      (run) => run.headSha === head,
+    );
     return deriveChecks(runs);
   }
 
@@ -222,34 +250,81 @@ export class Healer {
     }
   }
 
-  // ── new failures ──────────────────────────────────────────────────────────
+  // ── branch-head discovery ─────────────────────────────────────────────────
 
-  private async evaluate(defaultBranch: string): Promise<Verdict[]> {
-    const openPrs = await this.deps.github.openPullRequests();
-    const runs = await this.deps.github.failedRuns(this.config.run_scan_limit);
+  /**
+   * Scans branch heads, not a run list. A run-window cutoff can miss a current failure
+   * that sits behind newer runs. Starting from the head avoids that, because only runs
+   * whose headSha equals the branch head count. The scan is bounded by
+   * max_branches_per_tick, and the rest rotate through a persisted cursor.
+   */
+  private async discover(defaultBranch: string, advanceCursor: boolean): Promise<Verdict[]> {
+    const { github, store, config } = this.deps;
+    const openPrs = await github.openPullRequests();
+    const targets = this.targetsFor(defaultBranch, openPrs);
+    const window = selectScanWindow(
+      defaultBranch,
+      targets.map((target) => target.branch),
+      store.scanCursor(this.repo),
+      config.max_branches_per_tick,
+    );
+    if (advanceCursor && window.length > 1) store.setScanCursor(this.repo, window[window.length - 1]);
+
+    const byBranch = new Map(targets.map((target) => [target.branch, target]));
     const verdicts: Verdict[] = [];
-    for (const run of runs) verdicts.push(await this.verdictFor(run, defaultBranch, openPrs));
+    for (const name of window) {
+      const target = byBranch.get(name);
+      if (target) verdicts.push(await this.verdictForBranch(target));
+    }
     return verdicts;
   }
 
-  private async verdictFor(run: WorkflowRun, defaultBranch: string, openPrs: OpenPullRequest[]): Promise<Verdict> {
-    const { git, store } = this.deps;
-    const skip = (reason: string): Verdict => ({ run, candidate: null, reason });
+  private targetsFor(defaultBranch: string, openPrs: OpenPullRequest[]): BranchTarget[] {
+    const byBranch = new Map<string, BranchTarget>();
+    byBranch.set(defaultBranch, { branch: defaultBranch, kind: "default", base: defaultBranch });
+    for (const pr of [...openPrs].sort((a, b) => a.number - b.number)) {
+      const target = targetFor(pr.headRefName, defaultBranch, openPrs);
+      if (target.ok) byBranch.set(pr.headRefName, { branch: pr.headRefName, kind: target.kind, base: target.base });
+    }
+    return [...byBranch.values()];
+  }
 
-    const target = targetFor(run.headBranch, defaultBranch, openPrs);
-    if (!target.ok) return skip(target.reason);
+  private async verdictForBranch(target: BranchTarget): Promise<Verdict> {
+    const { git, github, store, log } = this.deps;
+    const skip = (reason: string): Verdict => ({ branch: target.branch, candidate: null, reason });
 
-    const head = await git.remoteHead(run.headBranch);
+    const head = await git.remoteHead(target.branch);
     if (!head) return skip("branch not present on origin");
-    if (head !== run.headSha) return skip(`stale: run ${short(run.headSha)} is not the branch head ${short(head)}`);
-    if (store.handledOutcome(this.repo, target.base, head))
+
+    const runs = await github.runsForBranch(target.branch, this.config.run_scan_limit);
+    const onHead = runs.filter((run) => run.headSha === head);
+    if (onHead.length === 0 && runs.length > 0) {
+      // Diagnostic for the open question: whether GitHub reports the PR head SHA for
+      // pull_request runs. If it reports a merge SHA, the head never matches and nothing
+      // heals, which is the safe failure. This log makes that visible.
+      log.info("no runs report the branch head", {
+        branch: target.branch,
+        head: short(head),
+        reported: [...new Set(runs.map((run) => short(run.headSha)))].slice(0, 5),
+      });
+    }
+
+    const failing = onHead.filter(isFailing).sort((a, b) => b.databaseId - a.databaseId);
+    if (failing.length === 0) return skip("head is not failing");
+    if (store.handledOutcome(this.repo, target.base, head)) {
       return skip(`already handled ${target.base}@${short(head)}`);
+    }
 
     const active = store.activeForBase(this.repo, target.base).length;
-    if (active >= this.config.max_open_prs_per_base)
+    if (active >= this.config.max_open_prs_per_base) {
       return skip(`${active} open agent lineage(s) against ${target.base}`);
+    }
 
-    return { run, candidate: { run, kind: target.kind, base: target.base, head }, reason: null };
+    return {
+      branch: target.branch,
+      candidate: { run: failing[0], kind: target.kind, base: target.base, head },
+      reason: null,
+    };
   }
 
   private async healNew(candidate: Candidate): Promise<void> {
@@ -313,8 +388,8 @@ export class Healer {
   // ── shared attempt pipeline ───────────────────────────────────────────────
 
   /**
-   * Runs the agent, verifies, and commits in the worktree. Nothing is pushed here.
-   * Returns "committed" only for a verified, policy-clean change.
+   * Runs the runtime chain, verifies, and commits in the worktree. Nothing is pushed
+   * here. Returns "committed" only for a verified, policy-clean change.
    */
   private async attemptFix(
     worktree: string,
@@ -336,16 +411,16 @@ export class Healer {
       outcome = await agent.execute({ workspace: worktree, goal });
     } catch (error) {
       if (!isRecoverable(error)) throw error;
-      log.warn("nexum failed; no patch", { error: (error as Error).message });
+      log.warn("runtime failed; no patch", { error: (error as Error).message });
       return "no_patch";
     }
     if (outcome.status !== "completed") {
-      return giveUp(log, "nexum did not complete", { status: outcome.status, error: outcome.error });
+      return giveUp(log, "no runtime completed", { status: outcome.status, error: outcome.error?.slice(0, 500) });
     }
-    if (!(await this.verify(worktree))) return giveUp(log, "verification failed");
+    if (!(await this.verify(worktree))) return giveUp(log, "verification failed", { runtime: outcome.runtime });
 
     const changed = await git.stageAllAndList(worktree);
-    if (changed.length === 0) return giveUp(log, "no file changes");
+    if (changed.length === 0) return giveUp(log, "no file changes", { runtime: outcome.runtime });
     if (changed.length > config.max_changed_files) {
       return giveUp(log, "patch too large", { files: changed.length, cap: config.max_changed_files });
     }
@@ -358,35 +433,35 @@ export class Healer {
       if (!(error instanceof CommandError)) throw error;
       return giveUp(log, "commit rejected by repository hooks", { error: error.stderr.split("\n")[0]?.trim() });
     }
+    log.info("patch verified and committed", { runtime: outcome.runtime, files: changed.length });
     return "committed";
   }
 
-  /** Repo-controlled commands run with the repoCommandEnv allowlist: no credentials visible. */
   private async setup(worktree: string): Promise<void> {
     for (const command of this.config.setup_commands) {
-      await this.deps.command.run(["sh", "-c", command], {
+      await this.deps.repo.run(command, {
         cwd: worktree,
         timeoutMs: this.config.setup_timeout_sec * 1000,
-        env: repoCommandEnv(),
+        phase: "setup",
       });
     }
   }
 
   private async verify(worktree: string): Promise<boolean> {
-    const { command, log, config } = this.deps;
-    for (const cmd of config.verify_commands) {
+    const { repo, log, config } = this.deps;
+    for (const command of config.verify_commands) {
       try {
-        const result = await command.run(["sh", "-c", cmd], {
+        const result = await repo.run(command, {
           cwd: worktree,
           timeoutMs: config.verify_timeout_sec * 1000,
-          env: repoCommandEnv(),
+          phase: "verify",
           allowFailure: true,
         });
-        log.info("verify", { command: cmd, status: result.status });
+        log.info("verify", { command, status: result.status });
         if (result.status !== 0) return false;
       } catch (error) {
-        if (!isRecoverable(error)) throw error;
-        log.warn("verify timed out", { command: cmd, error: (error as Error).message });
+        if (!(error instanceof TimeoutError)) throw error;
+        log.warn("verify timed out", { command, error: (error as Error).message });
         return false;
       }
     }
@@ -395,10 +470,6 @@ export class Healer {
 
   private worktreePath(runId: number, head: string): string {
     return join(this.config.worktree_base, `${this.config.repo_name}-${runId}-${short(head)}`);
-  }
-
-  private now(): Date {
-    return this.deps.now ? this.deps.now() : new Date();
   }
 }
 
@@ -422,7 +493,7 @@ function prBody(run: WorkflowRun, base: string, head: string, verifyCommands: re
     "",
     `- Failed run: ${run.url} (${run.workflowName}, run ${run.databaseId})`,
     `- Target branch: \`${base}\` at \`${short(head)}\``,
-    `- Verified locally before push: ${verify}`,
+    `- Verified in a sandbox before push: ${verify}`,
     "- Opened as a draft. Not auto-merged; review the diff before marking it ready.",
     "",
     "_Generated by ci-healer_",

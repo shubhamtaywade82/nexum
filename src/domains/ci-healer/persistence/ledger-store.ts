@@ -10,7 +10,26 @@ import { dirname } from "node:path";
 import { assertTransition, type HeadOutcome, type LineageState } from "../domain/lineage.js";
 import { StateError } from "../errors.js";
 
-export const SCHEMA_VERSION = 1;
+/** Version 2 adds runtime circuit-breaker state and the branch-scan cursor. Existing rows are untouched. */
+const SCHEMA_V2 = `
+  CREATE TABLE runtime_health (
+    repository TEXT NOT NULL,
+    runtime TEXT NOT NULL,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+    cooldown_until_ms INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (repository, runtime)
+  );
+
+  CREATE TABLE scan_cursors (
+    repository TEXT PRIMARY KEY,
+    last_branch TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`;
+
+export const SCHEMA_VERSION = 2;
 
 const SCHEMA_V1 = `
   CREATE TABLE lineages (
@@ -141,12 +160,91 @@ export class LedgerStore {
     if (version > SCHEMA_VERSION) {
       throw new StateError(`ledger schema ${version} is newer than this build (${SCHEMA_VERSION})`);
     }
-    if (version === 0) {
+    // Each migration runs once, in its own transaction, and bumps user_version as it commits.
+    const migrations: { to: number; sql: string }[] = [
+      { to: 1, sql: SCHEMA_V1 },
+      { to: 2, sql: SCHEMA_V2 },
+    ];
+    for (const migration of migrations) {
+      if (version >= migration.to) continue;
       this.db.transaction(() => {
-        this.db.exec(SCHEMA_V1);
-        this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
+        this.db.exec(migration.sql);
+        this.db.pragma(`user_version = ${migration.to}`);
       })();
     }
+  }
+
+  /** Whether a runtime is inside its cooldown window. */
+  runtimeCoolingDown(repository: string, runtime: string, nowMs: number): boolean {
+    const row = this.db
+      .prepare("SELECT cooldown_until_ms FROM runtime_health WHERE repository = ? AND runtime = ?")
+      .get(repository, runtime) as { cooldown_until_ms: number } | undefined;
+    return row !== undefined && row.cooldown_until_ms > nowMs;
+  }
+
+  recordRuntimeSuccess(repository: string, runtime: string): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO runtime_health (repository, runtime, consecutive_failures, cooldown_until_ms, last_error, updated_at)
+         VALUES (?, ?, 0, 0, NULL, ?)
+         ON CONFLICT(repository, runtime) DO UPDATE SET consecutive_failures = 0, cooldown_until_ms = 0, updated_at = excluded.updated_at`,
+        )
+        .run(repository, runtime, this.timestamp());
+    })();
+  }
+
+  /**
+   * Counts a failure. A rate-limit error opens the breaker for the long cooldown. A
+   * run of consecutive failures opens it for the breaker cooldown. Otherwise the
+   * runtime stays available.
+   */
+  recordRuntimeFailure(
+    repository: string,
+    runtime: string,
+    input: {
+      rateLimited: boolean;
+      nowMs: number;
+      rateLimitCooldownMs: number;
+      breakerThreshold: number;
+      breakerCooldownMs: number;
+      error: string;
+    },
+  ): { consecutiveFailures: number; cooldownUntilMs: number } {
+    return this.db.transaction(() => {
+      const previous = this.db
+        .prepare("SELECT consecutive_failures FROM runtime_health WHERE repository = ? AND runtime = ?")
+        .get(repository, runtime) as { consecutive_failures: number } | undefined;
+      const failures = (previous?.consecutive_failures ?? 0) + 1;
+      let cooldownUntilMs = 0;
+      if (input.rateLimited) cooldownUntilMs = input.nowMs + input.rateLimitCooldownMs;
+      else if (failures >= input.breakerThreshold) cooldownUntilMs = input.nowMs + input.breakerCooldownMs;
+      this.db
+        .prepare(
+          `INSERT INTO runtime_health (repository, runtime, consecutive_failures, cooldown_until_ms, last_error, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(repository, runtime) DO UPDATE SET consecutive_failures = excluded.consecutive_failures,
+           cooldown_until_ms = excluded.cooldown_until_ms, last_error = excluded.last_error, updated_at = excluded.updated_at`,
+        )
+        .run(repository, runtime, failures, cooldownUntilMs, input.error, this.timestamp());
+      return { consecutiveFailures: failures, cooldownUntilMs };
+    })();
+  }
+
+  /** Branch to scan after on the next tick, or undefined on the first scan. */
+  scanCursor(repository: string): string | undefined {
+    const row = this.db.prepare("SELECT last_branch FROM scan_cursors WHERE repository = ?").get(repository) as
+      { last_branch: string } | undefined;
+    return row?.last_branch;
+  }
+
+  setScanCursor(repository: string, branch: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO scan_cursors (repository, last_branch, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(repository) DO UPDATE SET last_branch = excluded.last_branch, updated_at = excluded.updated_at`,
+      )
+      .run(repository, branch, this.timestamp());
   }
 
   /**

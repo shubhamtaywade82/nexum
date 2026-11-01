@@ -21,9 +21,24 @@ export interface CommandPort {
   run(argv: readonly string[], options: CommandOptions): Promise<CommandResult>;
 }
 
+/**
+ * Repo-controlled shell commands (setup and verify). Repository code is untrusted
+ * relative to the daemon, so these run through a sandbox, not directly on the host.
+ */
+export interface RepoCommandOptions {
+  cwd: string;
+  timeoutMs: number;
+  phase: "setup" | "verify";
+  allowFailure?: boolean;
+}
+
+export interface RepoCommandPort {
+  run(command: string, options: RepoCommandOptions): Promise<CommandResult>;
+}
+
 export interface GitHubPort {
   defaultBranch(): Promise<string>;
-  failedRuns(limit: number): Promise<WorkflowRun[]>;
+  /** Recent runs for one branch. The caller filters them to the branch head. */
   runsForBranch(branch: string, limit?: number): Promise<WorkflowRun[]>;
   openPullRequests(): Promise<OpenPullRequest[]>;
   pullRequest(number: number): Promise<PullRequestState>;
@@ -41,6 +56,8 @@ export interface GitPort {
   /** Never throws: cleanup is best effort. */
   removeWorktree(path: string): Promise<void>;
   deleteLocalBranch(branch: string): Promise<void>;
+  /** Discards tracked and untracked changes, keeping ignored files (dependency installs). */
+  resetWorktree(path: string): Promise<void>;
   stageAllAndList(path: string): Promise<string[]>;
   commit(path: string, message: string): Promise<void>;
   headSha(path: string): Promise<string>;
@@ -51,10 +68,15 @@ export interface AgentOutcome {
   status: string;
   output: string;
   error?: string;
+  /** Which runtime in the chain produced this outcome. */
+  runtime?: string;
 }
 
 export interface AgentPort {
-  /** Runs one repair in `workspace`. Completed means the agent returned, not that the fix works. */
+  /**
+   * Runs one repair in `workspace`. "completed" means the runtime returned, not that
+   * the fix works. Verification decides that.
+   */
   execute(input: { workspace: string; goal: string }): Promise<AgentOutcome>;
 }
 
