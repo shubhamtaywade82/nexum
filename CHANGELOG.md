@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### CI healer and nexum rpc
+
+- New command `nexum ci-healer <tick|plan|status> --config <path>`. It heals failing GitHub Actions runs: each repair runs in an isolated worktree, the change is verified in a sandbox, and a draft PR is opened. Start with `plan`, which only reads. See `src/domains/ci-healer/README.md`.
+- `nexum rpc` no longer exits right after it starts. Before this fix, every JSON-RPC request went unanswered.
+
 ### Security — the host refuses browser-driven requests
 
 A loopback `nexum serve` with no `NEXUM_SERVER_TOKEN` accepted any request that reached its socket, including a page open in the user's browser. Two requests from a foreign origin created a session with a 201: a cross-site `text/plain` POST, and a request whose `Host` named an attacker's domain (DNS rebinding). Every host route now runs `checkRequestGuard` before authentication:

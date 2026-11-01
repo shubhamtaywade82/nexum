@@ -233,6 +233,11 @@ nexum evolve --history
 # Run system, workspace, model, Docker, and LSP diagnostics
 nexum doctor
 
+# CI healer: read-only plan, one healing pass, and run status
+nexum ci-healer plan --config ~/.config/ci-healer/config.json
+nexum ci-healer tick --config ~/.config/ci-healer/config.json
+nexum ci-healer status --config ~/.config/ci-healer/config.json
+
 # Explicitly migrate a legacy DevAgent workspace (also happens automatically)
 nexum migrate
 
@@ -407,6 +412,10 @@ npm run docs:ingest -- node typescript react rails
 ```
 
 Re-running for the same id atomically replaces its sections (safe to re-run to pick up upstream updates — DevDocs rebuilds monthly). See `src/docs/catalog.ts` for the full list of supported ids. Ingestion is a one-off/periodic step — the `search_docs`/`get_doc` tools never hit the network at inference time, only the local index.
+
+## CI Healer
+
+`nexum ci-healer` heals failing GitHub Actions runs: it repairs in a worktree, verifies in a sandbox, and opens a draft PR. Start with `plan`, which only reads. See [docs/guide/ci-healer.md](docs/guide/ci-healer.md) and the [CLI reference](docs/guide/cli-reference.md).
 
 ## Docker Sandbox
 
