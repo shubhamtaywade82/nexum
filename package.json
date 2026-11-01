@@ -1,6 +1,6 @@
 {
   "name": "@nemesis-oss/nexum",
-  "version": "2.0.0-alpha.2",
+  "version": "2.0.0-alpha.3",
   "description": "Nexum — open-source agent runtime and harness for autonomous software engineering: capability-routed local & cloud models, Docker sandbox, LSP code intelligence, and a terminal UI.",
   "keywords": [
     "nexum",

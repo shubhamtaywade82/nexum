@@ -330,4 +330,4 @@ See [STABILITY.md](./STABILITY.md) for API stability tiers.
 
 ---
 
-**Last updated:** 2026-09-29 · **Nexum version:** 2.0.0-alpha.2 (plus unreleased changes on this branch)
+**Last updated:** 2026-09-29 · **Nexum version:** 2.0.0-alpha.3 (plus unreleased changes on this branch)
