@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test test.mjs",
+    "e2e": "node e2e-nexum.mjs",
     "start": "node server.mjs"
   },
   "dependencies": {

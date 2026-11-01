@@ -7,7 +7,8 @@ A read-only MCP server that wraps a broker REST API with [contractful-ts](https:
 ```bash
 cd examples/broker-mcp
 npm ci
-npm test
+npm test        # unit and stdio tests, no nexum build needed
+npm run e2e     # nexum integration; needs the nexum root built first
 ```
 
 ## Files
@@ -16,6 +17,7 @@ npm test
 - `wrapper.mjs`: `defineBroker` (the contractful-ts client), `makeGetQuoteHandler` (builds contract arguments field by field), and `buildMcpServer` (registers `get_quote` only).
 - `mock-broker.mjs`: a local HTTP stand-in used by the tests. It records every request.
 - `test.mjs`: 11 tests covering retry and closed-schema behaviour, meta-key handling, `tools/list` and `tools/call` over stdio, error redaction, and transport failure.
+- `e2e-nexum.mjs` (`npm run e2e`): connects this server through nexum's own `AgentToolManager` and real MCP client, with the trust policy applied. Needs the nexum root built (`npm ci && npm run build` at the repo root). It uses a temporary approval store.
 - `nexum-config.example.json`: the nexum `mcpServers` entry. Copy it into a config file; do not commit a real `.nexum/config.json` with your values.
 
 ## nexum configuration
@@ -76,4 +78,5 @@ HOME="$SCRATCH_HOME" node "$REPO_ROOT/bin/cli.js" mcp trust policy     # expect:
 - `placeOrder` is defined on the client but not registered. Exposing it needs a separate trust review and a broker idempotency strategy.
 - nexum's `ask` approval fingerprint covers the command, the args and the cwd (when set). It does not cover `env` or the server's file contents. Editing `server.mjs` does not re-trigger approval. Re-run `nexum mcp trust approve` after any change to the server code, and review it before approving.
 - `BROKER_BASE_URL` lives in `env`, so it is outside the approval fingerprint. In a workspace `.nexum/config.json`, any change to the file re-triggers workspace trust, which covers `mcpServers`. In the global `~/.nexum/config.json`, the user owns the file.
-- Not verified end to end: the agent actually registering only `get_quote` after connecting, and the real `tools/list` filtering inside nexum.
+- Verified by `npm run e2e`: nexum refuses the server before approval with no broker traffic, registers only `get_quote` after approval, and one direct tool call reaches the broker with the bearer token and returns no token.
+- Not verified: a model-issued `get_quote` call inside an agent turn (nexum's ToolGateway path for a live call), and the real broker API.
