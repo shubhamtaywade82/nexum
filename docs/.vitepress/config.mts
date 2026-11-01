@@ -34,6 +34,7 @@ export default defineConfig({
           { text: "Getting Started", link: "/guide/getting-started" },
           { text: "Configuration & Diagnostics", link: "/guide/configuration" },
           { text: "Terminal UI & Keybindings", link: "/guide/tui" },
+          { text: "CLI Reference", link: "/guide/cli-reference" },
         ],
       },
       {
@@ -74,6 +75,14 @@ export default defineConfig({
           { text: "Artifacts", link: "/guide/artifacts" },
           { text: "Telemetry (OpenTelemetry)", link: "/guide/telemetry" },
           { text: "Durable Job Queue", link: "/guide/durable-jobs" },
+        ],
+      },
+      {
+        text: "CI Healer",
+        items: [
+          { text: "Guide", link: "/guide/ci-healer" },
+          { text: "Design", link: "/ci-healer/DESIGN" },
+          { text: "Backlog", link: "/ci-healer/BACKLOG" },
         ],
       },
       {

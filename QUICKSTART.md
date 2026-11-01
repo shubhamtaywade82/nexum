@@ -6,12 +6,12 @@
 
 This guide covers the four ways to use Nexum, in order of maturity:
 
-| Path | What you want | Stability |
-| ---- | -------------- | --------- |
-| **A. CLI coding agent** | "Just give me a local coding agent" | Stable |
-| **B. Local-first LLM playground** | "I want to use local Ollama models" | Stable |
-| **C. SDK embedding** | "I want to build my own agent product on Nexum" | Experimental |
-| **D. Plugin authoring** | "I want to extend Nexum with tools/skills/plugins" | Experimental |
+| Path                              | What you want                                      | Stability    |
+| --------------------------------- | -------------------------------------------------- | ------------ |
+| **A. CLI coding agent**           | "Just give me a local coding agent"                | Stable       |
+| **B. Local-first LLM playground** | "I want to use local Ollama models"                | Stable       |
+| **C. SDK embedding**              | "I want to build my own agent product on Nexum"    | Experimental |
+| **D. Plugin authoring**           | "I want to extend Nexum with tools/skills/plugins" | Experimental |
 
 ## Path A: CLI Coding Agent (Stable)
 
@@ -24,7 +24,7 @@ This guide covers the four ways to use Nexum, in order of maturity:
 ### Install
 
 ```bash
-npm install -g @nemesis-oss/nexum@2.0.0-alpha.1
+npm install -g @nemesis-oss/nexum@2.0.0-alpha.3
 ```
 
 Verify the install:
@@ -184,14 +184,14 @@ automatically and injects it when relevant.
 
 ## Troubleshooting
 
-| Problem | Fix |
-| ------- | --- |
-| `nexum doctor` says Docker unavailable | Install Docker, or set `sandbox: false` (less safe) |
-| `nexum doctor` says Ollama unreachable | `ollama serve` in another terminal |
-| Model not found | `ollama pull <model-name>` |
-| Slow first response | Local model cold-start; subsequent turns are fast |
-| `nexum rpc` child exits immediately | Ensure the workspace is valid + `nexum doctor` passes |
-| Approval dialog blocks everything | Set `autoApprove: true` in config (less safe) |
+| Problem                                | Fix                                                   |
+| -------------------------------------- | ----------------------------------------------------- |
+| `nexum doctor` says Docker unavailable | Install Docker, or set `sandbox: false` (less safe)   |
+| `nexum doctor` says Ollama unreachable | `ollama serve` in another terminal                    |
+| Model not found                        | `ollama pull <model-name>`                            |
+| Slow first response                    | Local model cold-start; subsequent turns are fast     |
+| `nexum rpc` child exits immediately    | Ensure the workspace is valid + `nexum doctor` passes |
+| Approval dialog blocks everything      | Set `autoApprove: true` in config (less safe)         |
 
 ## Next Steps
 

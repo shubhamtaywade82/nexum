@@ -58,7 +58,7 @@ unverified change.
 ```
 domain/       pure rules: lineage state machine, branch policy, checks, digest, prompt
 application/  Healer (orchestration) and LogSource; depends on ports only
-adapters/     gh and git CLIs; nexum rpc client; opencode and agy CLIs; AgentRouter;
+adapters/     GitHub REST API (via `gh api`) and git CLIs; nexum rpc client; opencode and agy CLIs; AgentRouter;
               Docker and host command runners; environment policy; Ollama condenser
 persistence/  LedgerStore: SQLite, versioned migrations, leases, events
 ```
@@ -102,11 +102,7 @@ refused. A file that is not SQLite is refused. Neither is replaced.
 
 ## Still open
 
-Live GitHub, a Docker daemon, and the `opencode` and `agy` binaries were not available
-when this was built, so those paths are tested with fakes. The unverified items and how
-to check them are in `docs/ci-healer/BACKLOG.md` (B-01 to B-08). The most important one is
-whether GitHub reports the PR head SHA for `pull_request` runs. The tick logs it when runs
-do not match the head.
+A live `tick`, a Docker daemon, and the `opencode` and `agy` binaries were not available when this was built. `plan` has run against the real repository over the REST API, which settled B-01: GitHub reports the PR head SHA for `pull_request` runs. The remaining unverified items, and how to check each, are in `docs/ci-healer/BACKLOG.md`.
 
 ## Tests
 

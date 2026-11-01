@@ -1,7 +1,7 @@
 # Nexum API Stability Tiers
 
 > **Status:** Developer Preview. The public API is **not yet** covered by
-> a stability guarantee. This document describes the *intended* tiers
+> a stability guarantee. This document describes the _intended_ tiers
 > and marks which subsystems currently belong to each.
 
 Nexum's public API (everything exported from `src/index.ts`) is organized
@@ -83,13 +83,9 @@ part of the supported API contract.
 These are explicitly **incomplete** and should not be relied on in
 production. They may be removed or significantly reworked in any release.
 
-- `KeychainCredentialProvider` — throws "not yet implemented"
-- `VaultCredentialProvider` — throws "not yet implemented"
-- `NpmMarketplaceSource` discovery scope — works but lacks publisher
-  authenticity / signature verification
-- `GitMarketplaceSource` download — works but no signature verification
+- `KeychainCredentialProvider` on Linux — writes go through `secret-tool`, and
+  that write path has no round-trip test yet (see `docs/PRODUCTION_AUDIT.md`, item 8)
 - Plugin runtime capability enforcement — not yet implemented
-- Plugin sandbox isolation — not yet implemented
 - `ProcessSubagentProvider` — spawns real subprocesses but requires a
   working `nexum rpc` server (now wired up via `src/cli/rpc.ts`)
 
@@ -115,7 +111,7 @@ announced with a "Breaking change" note and a migration guide.
 
 For production use:
 
-1. Pin the exact version (`"dependencies": { "@nemesis-oss/nexum": "2.0.0-alpha.1" }`).
+1. Pin the exact version (`"dependencies": { "@nemesis-oss/nexum": "2.0.0-alpha.3" }`).
 2. Only import from Tier 1 (Stable).
 3. Subscribe to the changelog for Experimental → Stable promotions.
 4. If you need an Experimental export, file an issue requesting promotion
@@ -123,7 +119,7 @@ For production use:
 
 For early adoption / contribution:
 
-1. Pin to a minor version (`"@nemesis-oss/nexum": "~2.0.0-alpha.1"`).
+1. Pin to a minor version (`"@nemesis-oss/nexum": "~2.0.0-alpha.3"`).
 2. Feel free to import from Tier 2 (Experimental).
 3. Report breakage in issues — we'll either fix or document the migration.
 

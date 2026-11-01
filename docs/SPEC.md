@@ -1,5 +1,7 @@
 # Nexum Terminal Specification (Frozen)
 
+> **Historical design spec.** It predates the current layout: the UI lives in `src/ui/` (not `src/tui/`), and the view list is out of date. For the current architecture, see the [Architecture](/guide/architecture) guide. Kept for context, not as a reference.
+
 This document freezes the product model. Changes here are breaking changes
 and require deliberate review — the point of this file is that the product
 cannot drift back into a web-dashboard shape.
