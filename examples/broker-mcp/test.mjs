@@ -184,3 +184,17 @@ test("a broker error returns status only, never the response body", async () => 
     assert.ok(!resultText(result).includes("SECRET-ACCT-7781"));
   });
 });
+
+test("a transport failure returns the error kind only, never the broker address or token", async () => {
+  // Start a broker to get a real loopback port, then stop it so the port refuses connections.
+  const broker = await startMockBroker();
+  const closedUrl = broker.url;
+  await broker.close();
+  const handler = makeGetQuoteHandler(defineBroker(closedUrl, TOKEN));
+  const result = await handler({ securityId: "2885", exchangeSegment: "NSE_EQ" });
+  const text = result.content.map((part) => part.text ?? "").join("\n");
+  assert.equal(result.isError, true);
+  assert.equal(text, "request failed: network");
+  assert.ok(!text.includes(closedUrl), "error text must not echo the broker address");
+  assert.ok(!text.includes(TOKEN), "error text must not contain the token");
+});

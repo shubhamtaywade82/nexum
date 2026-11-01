@@ -1,0 +1,16 @@
+{
+  "mcpServers": [
+    {
+      "name": "broker-quotes",
+      "command": "node",
+      "args": ["/absolute/path/to/nexum/examples/broker-mcp/server.mjs"],
+      "trust": "ask",
+      "tools": { "allow": ["get_quote"] },
+      "maxRisk": "low",
+      "env": {
+        "BROKER_BASE_URL": "https://broker.example.invalid",
+        "BROKER_TOKEN": "credential:BROKER_TOKEN"
+      }
+    }
+  ]
+}
