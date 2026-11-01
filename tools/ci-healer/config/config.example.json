@@ -1,0 +1,37 @@
+{
+  "repo": {
+    "slug": "owner/your-repo",
+    "dir": "~/workspace/your-repo"
+  },
+  "state_file": "~/.local/share/ci-healer/state.json",
+  "kill_switch_file": "~/.local/share/ci-healer/DISABLED",
+  "worktree_base": "/tmp/ci-healer-worktrees",
+
+  "nexum_command": ["node", "/home/you/src/nexum/bin/cli.js"],
+  "nexum_timeout_sec": 1800,
+
+  "setup_commands": ["npm ci"],
+  "setup_timeout_sec": 900,
+  "verify_commands": ["npm test", "npm run lint"],
+  "verify_timeout_sec": 900,
+
+  "max_heal_attempts_per_lineage": 3,
+  "max_heals_per_tick": 1,
+  "max_open_prs_per_base": 1,
+  "max_changed_files": 10,
+  "run_scan_limit": 30,
+  "log_byte_cap": 2000000,
+
+  "forbidden_paths": [".github/workflows/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key"],
+
+  "git_author": { "name": "ci-healer", "email": "ci-healer@localhost" },
+
+  "condenser": {
+    "type": "ollama",
+    "url": "http://127.0.0.1:11434",
+    "model": "qwen2.5-coder:7b",
+    "timeout_sec": 60
+  },
+
+  "agent_env_allow": []
+}

@@ -56,6 +56,8 @@ Usage:
   nexum rpc                     Start JSON-RPC agent server over stdio
   nexum serve                   Start the Nexum Local Host (HTTP + SSE)
   nexum session <list|show|attach>  Client commands against a running nexum serve
+  nexum ci-healer <tick|plan|status> --config <path>
+                                Heal failing GitHub Actions runs (see src/domains/ci-healer)
   nexum doctor                  Run system, workspace, and model diagnostics
   nexum migrate                 Migrate legacy .devagent state to .nexum
   nexum trust [status|revoke]   Review and trust this workspace's settings and .env
@@ -98,6 +100,7 @@ if (command === "trust") {
     "rpc",
     "migrate",
     "asl",
+    "ci-healer",
   ];
   const { ensureWorkspaceTrust } = await import("../dist/cli/trust.js");
   await ensureWorkspaceTrust({ interactive: !nonInteractive.includes(command) });
@@ -134,15 +137,22 @@ if (["plugins", "marketplace", "mcp", "credentials", "capabilities"].includes(co
 
 if (command === "rpc") {
   const { main } = await import("../dist/cli/rpc.js");
+  // main() returns once the server is wired; it must not exit here. The stdin 'end'
+  // and SIGINT/SIGTERM handlers own process exit, so a premature exit(0) here would
+  // kill the server before the first request is answered.
   await main(process.argv.slice(3));
-  // The RPC server blocks on stdin; exit happens via the stdin 'end' handler.
-  process.exit(0);
 }
 
 if (command === "serve") {
   const { main } = await import("../dist/cli/serve.js");
   await main(process.argv.slice(3));
   // Blocks until SIGINT/SIGTERM; the cleanup handler calls process.exit(0).
+}
+
+// Non-interactive by design: a scheduled run must never prompt about workspace trust.
+if (command === "ci-healer") {
+  const { runCiHealerCli } = await import("../dist/domains/ci-healer/index.js");
+  process.exit(await runCiHealerCli(process.argv.slice(3)));
 }
 
 if (command === "session") {
