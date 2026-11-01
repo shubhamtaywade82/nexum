@@ -134,9 +134,10 @@ if (["plugins", "marketplace", "mcp", "credentials", "capabilities"].includes(co
 
 if (command === "rpc") {
   const { main } = await import("../dist/cli/rpc.js");
+  // main() returns once the server is wired; it must not exit here. The stdin 'end'
+  // and SIGINT/SIGTERM handlers own process exit, so a premature exit(0) here would
+  // kill the server before the first request is answered.
   await main(process.argv.slice(3));
-  // The RPC server blocks on stdin; exit happens via the stdin 'end' handler.
-  process.exit(0);
 }
 
 if (command === "serve") {
