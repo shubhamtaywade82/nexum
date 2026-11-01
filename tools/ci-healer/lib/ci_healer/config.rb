@@ -27,7 +27,8 @@ module CiHealer
       "log_byte_cap" => 2_000_000,
       "forbidden_paths" => [".github/workflows/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key"],
       "git_author" => { "name" => "ci-healer", "email" => "ci-healer@localhost" },
-      "condenser" => { "type" => "deterministic" }
+      "condenser" => { "type" => "deterministic" },
+      "agent_env_allow" => []
     }.freeze
 
     POSITIVE_INTEGER_KEYS = %w[
@@ -38,7 +39,7 @@ module CiHealer
     SIMPLE_KEYS = %w[
       nexum_command nexum_timeout_sec setup_commands setup_timeout_sec verify_commands verify_timeout_sec
       max_heal_attempts_per_lineage max_heals_per_tick max_open_prs_per_base max_changed_files
-      run_scan_limit log_byte_cap forbidden_paths git_author condenser
+      run_scan_limit log_byte_cap forbidden_paths git_author condenser agent_env_allow
     ].freeze
 
     SIMPLE_KEYS.each { |key| define_method(key) { @data[key] } }
@@ -100,6 +101,7 @@ module CiHealer
       raise ConfigError, "nexum_command must be a non-empty array of strings" unless non_empty_string_array?(@data["nexum_command"])
       raise ConfigError, "setup_commands must be an array of strings" unless string_array?(@data["setup_commands"])
       raise ConfigError, "forbidden_paths must be an array of strings" unless string_array?(@data["forbidden_paths"])
+      raise ConfigError, "agent_env_allow must be an array of strings" unless string_array?(@data["agent_env_allow"])
 
       POSITIVE_INTEGER_KEYS.each do |key|
         value = @data[key]

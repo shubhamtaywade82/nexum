@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ci_healer/errors"
+require_relative "ci_healer/agent_env"
 require_relative "ci_healer/log"
 require_relative "ci_healer/shell"
 require_relative "ci_healer/config"

@@ -41,6 +41,10 @@ while (line = $stdin.gets)
     # Changes files but does not make the verify command pass.
     File.write("notes.txt", "investigated\n")
     reply(request["id"], "completed", output: "edited the wrong thing")
+  when "env"
+    # Reports which credentials the child process can see, so tests can prove the policy.
+    reply(request["id"], "completed",
+          output: "GH=#{ENV.fetch("GH_TOKEN", "absent")} OLLAMA=#{ENV.fetch("OLLAMA_API_KEY", "absent")}")
   when "fail"
     reply(request["id"], "failed", error: "model unavailable")
   when "crash"

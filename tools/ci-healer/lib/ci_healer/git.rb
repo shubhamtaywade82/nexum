@@ -8,7 +8,7 @@ module CiHealer
   class Git
     RETRY_DELAYS = [2, 4, 8, 16].freeze
     # Failures that retrying cannot fix: rejected pushes, auth and permission errors.
-    NON_RETRYABLE = /non-fast-forward|fetch first|rejected|authentication failed|permission denied|could not read username|protected branch/i
+    NON_RETRYABLE = /non-fast-forward|fetch first|rejected|authentication failed|permission denied|could not read username|protected branch|does not appear to be a git repository/i
 
     def initialize(shell:, repo_dir:, author:, log:, sleeper: ->(seconds) { sleep(seconds) }, timeout: 300)
       @shell = shell

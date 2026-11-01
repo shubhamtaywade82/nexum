@@ -37,7 +37,8 @@ RSpec.describe CiHealer::NexumClient do
   end
 
   def client(command: [RbConfig.ruby, fixture], timeout: 20)
-    described_class.new(command: command, timeout: timeout, log: log)
+    described_class.new(command: command, timeout: timeout, log: log,
+                        env: CiHealer::AgentEnv.agent(ENV, allow: %w[FAKE_NEXUM]))
   end
 
   it "returns completed when agent.execute replies completed, ignoring non-JSON stdout noise" do

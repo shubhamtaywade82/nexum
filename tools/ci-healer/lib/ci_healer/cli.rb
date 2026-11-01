@@ -54,7 +54,8 @@ module CiHealer
     def build_healer(config, shell, log)
       github = GitHub.new(shell: shell, slug: config.repo_slug, cwd: config.repo_dir)
       git = Git.new(shell: shell, repo_dir: config.repo_dir, author: config.git_author, log: log)
-      nexum = NexumClient.new(command: config.nexum_command, timeout: config.nexum_timeout_sec, log: log)
+      nexum = NexumClient.new(command: config.nexum_command, timeout: config.nexum_timeout_sec, log: log,
+                              env: AgentEnv.agent(ENV, allow: config.agent_env_allow))
       logs = LogSource.new(github: github, digester: Digester.new, log: log,
                            condenser: build_condenser(config.condenser), byte_cap: config.log_byte_cap)
       Healer.new(config: config, github: github, git: git, nexum: nexum, logs: logs, shell: shell, log: log)

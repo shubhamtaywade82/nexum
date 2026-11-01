@@ -15,10 +15,14 @@ module CiHealer
 
     KILL_GRACE_SEC = 5
 
-    def run(argv, chdir: nil, stdin: nil, timeout: 120, env: {}, allow_failure: false)
+    # clean_env: true replaces the inherited environment entirely with `env`, so
+    # nothing from the daemon's own environment leaks into the child process.
+    def run(argv, chdir: nil, stdin: nil, timeout: 120, env: {}, allow_failure: false, clean_env: false)
       stdout = stderr = status = nil
+      options = { chdir: chdir || Dir.pwd, pgroup: true }
+      options[:unsetenv_others] = true if clean_env
 
-      Open3.popen3(env, *argv, chdir: chdir || Dir.pwd, pgroup: true) do |inp, out, err, waiter|
+      Open3.popen3(env, *argv, **options) do |inp, out, err, waiter|
         out_reader = Thread.new { out.read.to_s }
         err_reader = Thread.new { err.read.to_s }
 

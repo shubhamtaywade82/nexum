@@ -1,4 +1,9 @@
-# ci-healer
+# ci-healer (Ruby, reference implementation)
+
+> The primary implementation is now the TypeScript port in
+> `src/domains/ci-healer/` (`nexum ci-healer`), with SQLite state. This Ruby tool is
+> kept as a reference. Both read the same config keys and enforce the same safety rules.
+> See `src/domains/ci-healer/README.md`.
 
 A local poller that heals failing GitHub Actions runs. For each failure it extracts
 a log digest, drives `nexum rpc` in an isolated git worktree, **verifies the patch

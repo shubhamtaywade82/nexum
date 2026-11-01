@@ -47,7 +47,8 @@ RSpec.describe CiHealer::Healer do
 
   def healer(cfg = config)
     git = CiHealer::Git.new(shell: shell, repo_dir: cfg.repo_dir, author: cfg.git_author, log: log, sleeper: ->(_s) {})
-    nexum = CiHealer::NexumClient.new(command: cfg.nexum_command, timeout: cfg.nexum_timeout_sec, log: log)
+    nexum = CiHealer::NexumClient.new(command: cfg.nexum_command, timeout: cfg.nexum_timeout_sec, log: log,
+                                      env: CiHealer::AgentEnv.agent(ENV, allow: %w[FAKE_NEXUM FAKE_NEXUM_LOG]))
     logs = CiHealer::LogSource.new(github: github, digester: CiHealer::Digester.new, log: log)
     described_class.new(config: cfg, github: github, git: git, nexum: nexum, logs: logs, shell: shell, log: log)
   end

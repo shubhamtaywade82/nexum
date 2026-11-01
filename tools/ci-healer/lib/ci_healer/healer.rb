@@ -285,15 +285,19 @@ module CiHealer
       :no_patch
     end
 
+    # Repo-controlled commands run with a clean, allowlisted environment: no GitHub,
+    # SSH, or model credentials are visible to them.
     def setup(worktree)
       config.setup_commands.each do |command|
-        shell.run(["sh", "-c", command], chdir: worktree, timeout: config.setup_timeout_sec)
+        shell.run(["sh", "-c", command], chdir: worktree, timeout: config.setup_timeout_sec,
+                  env: AgentEnv.repo_command(ENV), clean_env: true)
       end
     end
 
     def verify(worktree)
       config.verify_commands.all? do |command|
-        result = shell.run(["sh", "-c", command], chdir: worktree, timeout: config.verify_timeout_sec, allow_failure: true)
+        result = shell.run(["sh", "-c", command], chdir: worktree, timeout: config.verify_timeout_sec,
+                           allow_failure: true, env: AgentEnv.repo_command(ENV), clean_env: true)
         log.info("verify", command: command, status: result.status)
         result.ok?
       end

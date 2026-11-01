@@ -22,15 +22,17 @@ module CiHealer
       end
     end
 
-    def initialize(command:, timeout:, log:)
+    def initialize(command:, timeout:, log:, env: nil)
       @command = command
       @timeout = timeout
       @log = log
+      @env = env || AgentEnv.agent(ENV)
     end
 
+    # The child gets only the agent environment policy, never the daemon's full env.
     def execute(workspace:, goal:)
       argv = @command + ["rpc", "--workspace", workspace]
-      Open3.popen3(*argv, chdir: workspace, pgroup: true) do |stdin, stdout, stderr, waiter|
+      Open3.popen3(@env, *argv, chdir: workspace, pgroup: true, unsetenv_others: true) do |stdin, stdout, stderr, waiter|
         stderr_reader = Thread.new { stderr.read.to_s }
         begin
           request = { jsonrpc: "2.0", id: RPC_ID, method: "agent.execute", params: { goal: goal } }
