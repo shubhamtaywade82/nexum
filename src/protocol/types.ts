@@ -157,6 +157,10 @@ export type NexumRunEvent =
       ts: number;
     }
   | { type: "thought"; runId: string; text: string; ts: number }
+  // Live-only text fragments (never persisted or replayed): the run's final `thought` / `run.completed`
+  // carry the authoritative text, so clients treat deltas as a draft that the final event replaces.
+  | { type: "thought.delta"; runId: string; text: string; ts: number }
+  | { type: "answer.delta"; runId: string; text: string; ts: number }
   | {
       type: "tool.started";
       runId: string;

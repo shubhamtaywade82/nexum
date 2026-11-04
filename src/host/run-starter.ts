@@ -12,6 +12,8 @@ import type { RunEventBridge } from "./event-bridge.js";
 import { describeError } from "./http.js";
 import { presentationInstructions, presentOutput } from "./presentation.js";
 
+const LIVE_ONLY_EVENTS: ReadonlySet<string> = new Set(["answer.delta", "thought.delta"]);
+
 export interface Repos {
   sessions: SessionRepository;
   messages: MessageRepository;
@@ -89,7 +91,8 @@ async function runAgentInBackground(
   const publish = (event: NexumRunEvent): void => {
     publishChain = publishChain
       .then(async () => {
-        const seq = await ctx.repos.events.append(event);
+        // Deltas are a live preview: persisting one row per token chunk would dwarf the real history.
+        const seq = LIVE_ONLY_EVENTS.has(event.type) ? 0 : await ctx.repos.events.append(event);
         await ctx.eventBus.publish(channel, { seq, ...event });
       })
       .catch((err) => {
