@@ -21,6 +21,14 @@ import { Capability } from "../../models/catalog.js";
 import type { ExecutionResult, ExecutionContext, ExecutionStatus, StrategyName } from "../../core/types.js";
 import { LoopDetector } from "../../orchestration/loop-detector.js";
 import type { PreparedToolCall, StrategyHooks, StrategyModelCallOptions } from "./strategy-hooks.js";
+import { CriticService, type CriticSeverity } from "../critic/critic.js";
+import { SelfCorrectionLoop, type SelfCorrectionResult } from "../critic/reflection.js";
+
+// A bare "rejected" reads to small models like a transient error, and they retry with a tweaked path or
+// another tool; spelling out that the decision is final stops the re-asking loop.
+const APPROVAL_REJECTED_MESSAGE =
+  "The user denied this action. This is a decision, not an error: do not retry it, rephrase it, or reach the same " +
+  "result with another tool. Continue without it, or explain what you could not do and ask the user how to proceed.";
 
 export interface ExecutionStrategy {
   readonly name: StrategyName;
@@ -38,6 +46,8 @@ export interface StrategyRunRequest {
   toolCapabilities?: string[];
   /** Product-side policies; omit for a fully kernel-native run. */
   hooks?: StrategyHooks;
+  /** In-loop critic policy (see runtime/critic); omit to disable. */
+  critic?: CriticPolicy;
   onProgress?: (message: string) => void;
 }
 
@@ -74,6 +84,8 @@ export interface LoopOutcome {
   output: string;
   terminal?: string;
   thrown?: Error;
+  /** Extra result metadata (e.g. the critic's reflection trail). */
+  metadata?: Record<string, unknown>;
 }
 
 /** Common wrapper: map abort/budget errors onto ExecutionResult statuses. */
@@ -95,7 +107,9 @@ export async function runGuarded(
       strategy,
       output: resolved.output,
       usage: usage(),
-      ...(resolved.terminal ? { metadata: { terminal: resolved.terminal } } : {}),
+      ...(resolved.terminal || resolved.metadata
+        ? { metadata: { ...(resolved.terminal ? { terminal: resolved.terminal } : {}), ...(resolved.metadata ?? {}) } }
+        : {}),
     };
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
@@ -116,11 +130,31 @@ export async function runGuarded(
   }
 }
 
+// ── In-loop critic policy (see runtime/critic) ─────────────────────────────
+
+/** How aggressively the ReAct loop self-corrects its final answer. */
+export interface CriticPolicy {
+  /** Max regeneration attempts after the first answer (default 1). */
+  maxAttempts?: number;
+  /** Minimum weakness severity that triggers a revision (default "medium"). */
+  minSeverity?: CriticSeverity;
+  /** Capability used to route critique calls (default "reasoning"). */
+  capability?: Capability;
+  /**
+   * Cheap pre-check before the critic (e.g. DecisionVerificationGate). When it
+   * says `escalate: false` the answer is accepted without critique; any
+   * failure inside the gate must surface as `escalate: true`.
+   */
+  gate?: { shouldEscalate(task: { goal: string; input?: string }): Promise<{ escalate: boolean }> };
+}
+
 // ── ReAct strategy ──────────────────────────────────────────────────────────
 
 export interface ReActStrategyOptions {
   /** Loop-detector window tuning (defaults match the Agent's current behavior). */
   loopThreshold?: number;
+  /** In-loop critic (final answer gets critiqued and revised when weak). */
+  critic?: CriticPolicy;
 }
 
 /**
@@ -132,9 +166,11 @@ export interface ReActStrategyOptions {
 export class ReActStrategy implements ExecutionStrategy {
   readonly name: StrategyName = "react";
   private readonly loopThreshold?: number;
+  private readonly criticPolicy?: CriticPolicy;
 
   constructor(opts: ReActStrategyOptions = {}) {
     this.loopThreshold = opts.loopThreshold;
+    this.criticPolicy = opts.critic;
   }
 
   async run(request: StrategyRunRequest): Promise<ExecutionResult> {
@@ -190,7 +226,36 @@ export class ReActStrategy implements ExecutionStrategy {
         if (toolCalls.length === 0) {
           const hasContent = (response.message?.content ?? "").trim().length > 0;
           if (hasContent) {
-            return { output: hooks?.finalAnswer?.() ?? lastText ?? "", terminal: "answered" };
+            const answer = hooks?.finalAnswer?.() ?? lastText ?? "";
+            // In-loop self-correction (runtime/critic): critique the final
+            // answer and, when it is weak, push the feedback and let the
+            // loop regenerate it — all inside THIS execution.
+            if (!this.criticPolicy || ctx.signal.aborted) {
+              return { output: answer, terminal: "answered" };
+            }
+            if (
+              this.criticPolicy.gate &&
+              !(await this.criticPolicy.gate.shouldEscalate({ goal: ctx.task.goal, input: answer })).escalate
+            ) {
+              return {
+                output: answer,
+                terminal: "answered",
+                metadata: { critique: { attempts: 0, verdict: "gated" } },
+              };
+            }
+            const correction = await this.selfCorrect(ctx, answer);
+            return {
+              output: correction.answer,
+              terminal: "answered",
+              metadata: {
+                critique: {
+                  attempts: correction.attempts,
+                  verdict: correction.critiques[correction.critiques.length - 1]?.verdict ?? "pass",
+                  weaknesses: correction.critiques[correction.critiques.length - 1]?.weaknesses.length ?? 0,
+                  source: correction.critiques[correction.critiques.length - 1]?.source ?? "heuristic",
+                },
+              },
+            };
           }
           if (turn < maxTurns - 1) {
             ctx.context.pushSystem(
@@ -261,8 +326,8 @@ export class ReActStrategy implements ExecutionStrategy {
                   })
                 : {
                     ok: false,
-                    data: { error: "ApprovalRejected", message: "The user rejected this action." },
-                    error: { code: "ApprovalRejected", message: "The user rejected this action." },
+                    data: { error: "ApprovalRejected", message: APPROVAL_REJECTED_MESSAGE },
+                    error: { code: "ApprovalRejected", message: APPROVAL_REJECTED_MESSAGE },
                   };
             }
           } catch (e) {
@@ -343,5 +408,42 @@ export class ReActStrategy implements ExecutionStrategy {
       }
     }
     return {};
+  }
+
+  /**
+   * In-loop self-correction for the final answer (runtime/critic): critique
+   * → on "revise", push the feedback into the context and regenerate
+   * (text-only revision — bounded, no new tool calls mid-answer). Critique
+   * and regeneration calls are budget-accounted like any other model call.
+   */
+  private async selfCorrect(ctx: ExecutionContext, answer: string): Promise<SelfCorrectionResult> {
+    const policy = this.criticPolicy;
+    const critic = new CriticService({
+      modelGateway: ctx.modelGateway,
+      ...(policy?.capability ? { capability: policy.capability } : {}),
+      ...(policy?.minSeverity ? { minSeverity: policy.minSeverity } : {}),
+    });
+    const loop = new SelfCorrectionLoop(critic, { maxAttempts: policy?.maxAttempts ?? 1 });
+
+    const result = await loop.improve(
+      { goal: ctx.task.goal, ...(ctx.task.input ? { input: ctx.task.input } : {}) },
+      answer,
+      async (feedback) => {
+        ctx.context.pushSystem(feedback);
+        const revised = await ctx.modelGateway.route(
+          policy?.capability ?? "reasoning",
+          ctx.context.messages() as ChatMessage[],
+        );
+        ctx.budget.consumeModelCall(usageOf(revised as Record<string, unknown>));
+        const revisedText = revised.message?.content ?? "";
+        ctx.context.push({ role: "assistant", content: revisedText });
+        return revisedText;
+      },
+    );
+    // Budget-account the critique calls themselves (token counts best-effort).
+    for (const critique of result.critiques) {
+      ctx.budget.consumeModelCall(critique.usage ?? { promptTokens: 0, completionTokens: 0 });
+    }
+    return result;
   }
 }

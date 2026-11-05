@@ -106,6 +106,7 @@ export function initialRuntimeState(opts: InitialStateOptions = {}): RuntimeStat
     diagnosticsByPath: {},
     approval: null,
     clarification: null,
+    mcpElicitation: null,
     notifications: [],
     lastError: null,
     theme: opts.theme ?? "default",
@@ -524,6 +525,14 @@ export function reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState {
       if (!state.clarification || state.clarification.id !== event.response.id) return state;
       return { ...state, clarification: null, mode: "idle" };
     }
+    case "mcp.elicitation.requested":
+      return withActor({ ...state, mcpElicitation: event.request, mode: "elicitation" }, "conversation", {
+        health: "waiting",
+        detail: "?",
+      });
+    case "mcp.elicitation.resolved":
+      if (!state.mcpElicitation || state.mcpElicitation.id !== event.response.id) return state;
+      return { ...state, mcpElicitation: null, mode: "idle" };
     case "execution.goal":
       return withActor(
         {

@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { MISSION_PHASE_LABELS, MissionState } from "../../runtime/types.js";
 import { STEP_GLYPH, glyphForStepStatus } from "../layout/step-glyphs.js";
 import { tail, truncate } from "../layout/truncate.js";

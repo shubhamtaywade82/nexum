@@ -1,5 +1,5 @@
 import React from "react";
-import { Box } from "ink";
+import { Box } from "@nemesis-oss/termina-core";
 import { UniversalPicker } from "./UniversalPicker.js";
 import { StatusMessage } from "../ui/status-message.js";
 import { OverlayFrame } from "./OverlayFrame.js";

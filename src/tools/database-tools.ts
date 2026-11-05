@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { Tool } from "./tool.js";
-import { resolveWorkspacePath } from "./path-utils.js";
+import { guardPath, toGuard, PathEscapeError, SensitivePathError, type WorkspaceBoundary } from "./path-utils.js";
+import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
 
 // ponytail: read-only by design (SELECT/PRAGMA/EXPLAIN only) — a DB tool that
 // lets an LLM silently DROP/DELETE a project's database is a real destructive-
@@ -8,8 +9,11 @@ import { resolveWorkspacePath } from "./path-utils.js";
 const READ_ONLY_PATTERN = /^\s*(select|pragma|explain)\b/i;
 
 export class SqliteQueryTool extends Tool {
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
 
   get name(): string {
@@ -49,9 +53,15 @@ export class SqliteQueryTool extends Tool {
 
     let fullPath: string;
     try {
-      fullPath = resolveWorkspacePath(this.root, dbPath);
+      fullPath = guardPath(this.guard, "read", dbPath);
     } catch (e) {
-      return { error: "PathEscapeError", message: (e as Error).message };
+      const error =
+        e instanceof SensitivePathError
+          ? "SensitivePathError"
+          : e instanceof PathEscapeError
+            ? "PathEscapeError"
+            : "DatabaseOpenError";
+      return { error, message: (e as Error).message };
     }
 
     let db: Database.Database;

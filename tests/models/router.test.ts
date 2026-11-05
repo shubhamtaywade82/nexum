@@ -1,4 +1,11 @@
-import { Provider, RateLimitError, ProviderError, ChatResponse } from "../../src/models/adapters/provider.js";
+import {
+  Provider,
+  RateLimitError,
+  ProviderError,
+  ChatResponse,
+  PaymentRequiredError,
+  TransportFailure,
+} from "../../src/models/adapters/provider.js";
 import { ModelCatalog } from "../../src/models/catalog.js";
 import { Router } from "../../src/models/router/router.js";
 
@@ -239,6 +246,38 @@ describe("Router.route", () => {
 // summarization racing the next turn, or parallel plan steps) overwrote each
 // other: both requests went to whichever model was set last, while routedModel
 // reported the candidate each call had picked.
+describe("Router — SDK transport and billing failures", () => {
+  async function routerWithLocalAndCloud() {
+    const local = new Provider({ tier: "local", model: "x" });
+    const cloud = new Provider({ tier: "cloud", model: "x", apiKey: "k" });
+    const catalog = new ModelCatalog(local, cloud);
+    jest.spyOn(local, "availableModels").mockResolvedValue({ models: [{ name: "qwen3:8b" }] });
+    jest.spyOn(cloud, "availableModels").mockResolvedValue({ data: [{ id: "qwen3.5:8b" }] });
+    await catalog.refresh();
+    return { local, cloud, router: new Router({ local, cloud, catalog, logger: { warn: jest.fn() } }) };
+  }
+
+  it("fails over when the local candidate is unreachable (TransportFailure from OllamaNetworkError)", async () => {
+    const { local, cloud, router } = await routerWithLocalAndCloud();
+    jest.spyOn(local, "chat").mockRejectedValue(new TransportFailure("Ollama local unreachable"));
+    jest.spyOn(cloud, "chat").mockResolvedValue(okResponse("from cloud"));
+
+    const result = await router.route("coding", [{ role: "user", content: "hi" }]);
+
+    expect(result.message.content).toBe("from cloud");
+  });
+
+  it("fails over when a candidate is billing-gated (PaymentRequiredError, HTTP 402)", async () => {
+    const { local, cloud, router } = await routerWithLocalAndCloud();
+    jest.spyOn(local, "chat").mockRejectedValue(new PaymentRequiredError("Ollama local 402: upgrade"));
+    jest.spyOn(cloud, "chat").mockResolvedValue(okResponse("from cloud"));
+
+    const result = await router.route("coding", [{ role: "user", content: "hi" }]);
+
+    expect(result.message.content).toBe("from cloud");
+  });
+});
+
 describe("Router concurrency", () => {
   it("does not let concurrent routes clobber each other's model", async () => {
     const local = new Provider({ tier: "local", model: "base" });

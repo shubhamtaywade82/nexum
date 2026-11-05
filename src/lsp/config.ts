@@ -1,9 +1,3 @@
-export interface LanguageOverrideConfig {
-  enabled?: boolean;
-  server?: string;
-  args?: string[];
-}
-
 export interface LspGlobalConfig {
   idleTimeoutMs: number;
   maxServers: number;

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "@jest/globals";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WorkspaceManager, migrateGlobalState, readMigrationMarker } from "../../src/platform/workspace.js";
+import { WorkspaceManager, migrateGlobalState } from "../../src/platform/workspace.js";
 import { CheckpointStore } from "../../src/runtime/checkpoint.js";
 import { SessionStore } from "../../src/runtime/session.js";
 
@@ -112,7 +112,7 @@ describe("platform/workspace — WorkspaceManager migration", () => {
       buildLegacyWorkspace(root);
       const report = new WorkspaceManager(root).migrate();
       expect(report.marker).toBe(join(root, ".nexum", ".migrated-from-devagent.json"));
-      const marker = readMigrationMarker(join(root, ".nexum"));
+      const marker = JSON.parse(readFileSync(report.marker!, "utf8")) as Record<string, unknown> | null;
       expect(marker).not.toBeNull();
       expect(marker?.["source"]).toBe(".devagent");
       expect(Array.isArray(marker?.["entries"])).toBe(true);

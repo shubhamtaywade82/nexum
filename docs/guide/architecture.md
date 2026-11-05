@@ -4,7 +4,7 @@ Nexum is built around an event-driven, sandboxed, multi-tier agent architecture 
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                   Ink React Terminal UI                  │
+│                 termina React Terminal UI                │
 │       Conversation · Plan · Tasks · Changes · Logs       │
 └────────────────────────────┬─────────────────────────────┘
                              │ Events & Dispatch
@@ -67,15 +67,15 @@ Agent Runtime     (src/runtime)        AgentRuntime — the composition root.
 
 The old god-class `Agent` was decomposed into focused services, composed by `AgentRuntime`:
 
-| Service | Responsibility |
-|----------|----------------|
-| `ModelGateway` | Scored model routing (`ModelRouter → ModelSelection → ProviderAdapter`) — transport-free selection, config-driven preferences |
-| `ToolGateway` | The tool pipeline: registry → schema validation → capability check → policy check → budget guard → idempotency → executor |
-| `PolicyEngine` | Centralized rule chain + execution profiles (readonly / development / testing / devops / networked / production) |
-| `ContextManager` | Request-scoped `ExecutionContext` — runId, messages, budget, policy, cancellation signal |
-| `SessionManager` | Session lifecycle and durable history |
-| `ExecutionManager` | Run orchestration, retries, checkpoints, recording |
-| `ApprovalManager` | Confirmation flows for high-risk / financial tools |
+| Service            | Responsibility                                                                                                                |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `ModelGateway`     | Scored model routing (`ModelRouter → ModelSelection → ProviderAdapter`) — transport-free selection, config-driven preferences |
+| `ToolGateway`      | The tool pipeline: registry → schema validation → capability check → policy check → budget guard → idempotency → executor     |
+| `PolicyEngine`     | Centralized rule chain + execution profiles (readonly / development / testing / devops / networked / production)              |
+| `ContextManager`   | Request-scoped `ExecutionContext` — runId, messages, budget, policy, cancellation signal                                      |
+| `SessionManager`   | Session lifecycle and durable history                                                                                         |
+| `ExecutionManager` | Run orchestration, retries, checkpoints, recording                                                                            |
+| `ApprovalManager`  | Confirmation flows for high-risk / financial tools                                                                            |
 
 ### Execution contracts
 
@@ -83,3 +83,31 @@ Every tool declares a contract (risk, capabilities, side effects, idempotency, r
 
 Domain logic (trading, Rails intelligence, Ruby tooling) lives in `src/domains` packages layered on top of the runtime — the runtime itself stays domain-neutral. The trading pipeline in particular enforces `LLM proposal → deterministic validation → risk engine → execution policy → paper/live executor`, so the LLM is never the authoritative risk or execution layer.
 
+---
+
+## The Decision Plane (System One)
+
+Nexum has a separate, **bounded** Decision Plane alongside the Generation Plane. System One is not modeled as another `Provider.chat()` model — it is a small bounded decision engine used for tool-domain selection, ambiguous routing hints, and a cheap verification gate.
+
+```
+Nexum Model Plane
+      │
+   ┌──┴───┐
+   │      │
+Generation   Decision
+   │      │
+Provider/   DecisionGateway
+Gateway     │
+            SystemOneDecisionGateway (local-only, non-streaming)
+            │
+            SystemOneClient (SDK seam — pending upstream re-export)
+```
+
+Key invariants:
+
+- The Decision Plane never falls back from a decision call to `Provider.chat()`.
+- It is **off by default** (`NEXUM_DECISION=true` to enable) and **auto-disabled in a cloud tier** (System One is local-only).
+- The decision model is independently configurable (`NEXUM_DECISION_MODEL`), independent of the primary generation `model`.
+- The Decision Plane only changes _which_ tools are surfaced or _whether_ the expensive critic is entered — it never executes a tool, never bypasses the `ApprovalBroker`, never replaces deterministic verification.
+
+See `docs/guide/decision-plane.md` for the full guide (gateway contract, error model, SDK adapter seam, integrations, configuration, telemetry/replay, evaluation harness).

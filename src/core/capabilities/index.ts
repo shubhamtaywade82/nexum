@@ -97,3 +97,23 @@ export class CapabilityRegistry<T> {
  * back to the host (rare) can lookup this token.
  */
 export const PLUGIN_HOST = defineCapabilityToken<unknown>("nexum:plugin:host");
+
+// Capability attestation (P2 trust tier).
+export {
+  AttestationAuthority,
+  AttestationLedger,
+  attestHostGrants,
+  generateAttestationKeyPair,
+  loadOrCreateAuthority,
+  canonicalGrantPayload,
+  type AttestationSubject,
+  type AttestationSubjectType,
+  type CapabilityGrant,
+  type SealedGrant,
+  type CapabilityAttestation,
+  type AttestationVerification,
+  type AttestationAuthorityOptions,
+  type AuthorityKeyPair,
+  type LedgerEntry,
+  type CapabilityGrantsSnapshot,
+} from "./attestation.js";

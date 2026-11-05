@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { ViewProps } from "./ConversationView.js";
 import { AGENT_MODE_LABELS, THEME_ORDER } from "../../runtime/types.js";
 import { themeColors } from "../layout/theme-map.js";

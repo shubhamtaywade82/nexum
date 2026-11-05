@@ -1,11 +1,15 @@
 import { watch as fsWatch } from "node:fs/promises";
 import { Tool } from "./tool.js";
-import { resolveWorkspacePath } from "./path-utils.js";
+import { guardPath, toGuard, type WorkspaceBoundary } from "./path-utils.js";
+import type { WorkspaceGuard } from "../core/fs/workspace-guard.js";
 
 export class WatchTool extends Tool {
   private watchers = new Map<string, AbortController>();
-  constructor(private readonly root: string) {
+  private readonly guard: WorkspaceGuard;
+
+  constructor(boundary: WorkspaceBoundary) {
     super();
+    this.guard = toGuard(boundary);
   }
   get name(): string {
     return "watch";
@@ -19,7 +23,7 @@ export class WatchTool extends Tool {
   async call(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const path = args.path as string;
     if (!path) return { error: "ArgumentError", message: "missing path" };
-    const target = resolveWorkspacePath(this.root, path);
+    const target = guardPath(this.guard, "watch", path);
     const ac = new AbortController();
     this.watchers.set(path, ac);
     try {

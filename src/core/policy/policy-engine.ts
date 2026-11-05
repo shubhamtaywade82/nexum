@@ -337,15 +337,16 @@ export class RulePolicyEngine implements PolicyEngine {
   private readonly boundProfile?: ExecutionProfile;
 
   constructor(opts: RulePolicyEngineOptions = {}) {
-    this.rules = [...(opts.rules ?? [])];
     this.boundProfile = opts.profile;
-    if (opts.denyRiskAbove) this.rules.push(new DenyRiskAboveRule(opts.denyRiskAbove));
-    if (opts.deniedToolIds?.length) this.rules.push(new DenyToolsRule(opts.deniedToolIds));
-    // execution profile first: permissions gate before confirmations
-    if (opts.profile) this.rules.push(new ExecutionProfileRule());
-    this.rules.push(new ModeRestrictionRule());
-    this.rules.push(new BudgetGuardRule());
-    this.rules.push(new ConfirmationRule(opts.requireConfirmationFor));
+    // Denials run FIRST. The first decision wins, and product rules may return
+    // `allow` (e.g. parity's benign-shell allowance) — which must never bypass a
+    // deny list, risk ceiling, execution profile, read-only mode or depleted budget.
+    const denials: PolicyRule[] = [];
+    if (opts.denyRiskAbove) denials.push(new DenyRiskAboveRule(opts.denyRiskAbove));
+    if (opts.deniedToolIds?.length) denials.push(new DenyToolsRule(opts.deniedToolIds));
+    if (opts.profile) denials.push(new ExecutionProfileRule());
+    denials.push(new ModeRestrictionRule(), new BudgetGuardRule());
+    this.rules = [...denials, ...(opts.rules ?? []), new ConfirmationRule(opts.requireConfirmationFor)];
   }
 
   check(request: PolicyRequest): PolicyDecision {

@@ -16,8 +16,6 @@
  *   - Plugin ids are kebab-case strings (matching ToolPack / AgentDescriptor ids).
  */
 
-import type { EventSink } from "../../core/types.js";
-
 /** A plugin identifier (kebab-case, unique within a PluginHost). */
 export type PluginId = string;
 
@@ -213,6 +211,3 @@ export function pluginFromRegistration(
 
 /** Sentinel event sink token for plugins that want to subscribe to kernel events. */
 export const PLUGIN_EVENT_SINK_TOKEN = "nexum:plugin:event-sink";
-
-/** Type helper for fetching the event sink capability. */
-export type PluginEventSinkCapability = EventSink;

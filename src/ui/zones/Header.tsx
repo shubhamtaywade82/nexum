@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Spacer, Text } from "ink";
+import { Box, Spacer, Text } from "@nemesis-oss/termina-core";
 import { AGENT_MODE_LABELS, RuntimeState } from "../../runtime/types.js";
 import { truncate } from "../layout/truncate.js";
 import { useTheme } from "../ui/hooks/use-theme.js";
@@ -23,7 +23,10 @@ function formatClock(now: number): string {
 export function Header({ state, width, now = Date.now() }: HeaderProps): React.JSX.Element {
   const theme = useTheme();
   const modeLabel = AGENT_MODE_LABELS[state.agentMode].label.toUpperCase();
-  const modelName = state.model.name || "-";
+  // lastTurnModel reflects what actually answered the last turn (routedTier/routedModel
+  // from onModelUsed), which can differ from state.model.name (the configured primary) —
+  // e.g. "quick" routing serves a small local model while the primary stays cloud.
+  const modelName = state.lastTurnModel ?? state.model.name ?? "-";
   const clock = formatClock(now);
 
   const showSubtitle = width >= 95;

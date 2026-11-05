@@ -32,6 +32,11 @@ export type CommandEffect =
   | { kind: "learn"; rule: string }
   | { kind: "replay-session"; id?: string }
   | { kind: "doctor" }
+  | { kind: "usage"; range?: "24h" | "7d" | "30d"; groupBy?: "model" }
+  | { kind: "balance" }
+  | { kind: "import-gguf"; model: string; path: string }
+  | { kind: "pull"; model: string }
+  | { kind: "capabilities"; action: "show" | "fix" }
   | { kind: "evolve"; action: "diagnose" | "history" | "rollback" | "benchmark"; target?: string }
   | { kind: "error"; text: string };
 
@@ -375,6 +380,67 @@ export function builtinCommands(): SlashCommandRegistry {
     description: "Run system diagnostics (Ollama, models, LSP servers, workspace)",
     category: "General",
     execute: () => ({ kind: "doctor" }),
+  });
+  registry.register({
+    name: "capabilities",
+    aliases: ["caps", "features"],
+    description:
+      "Show which features are active, on-demand, degraded or off: /capabilities [fix] (fix builds the sandbox image)",
+    category: "General",
+    execute: (args) => {
+      const action = args.trim().toLowerCase();
+      if (action === "fix") return { kind: "capabilities", action: "fix" };
+      if (action === "" || action === "show") return { kind: "capabilities", action: "show" };
+      return { kind: "error", text: "Usage: /capabilities [fix]" };
+    },
+    argValues: ["show", "fix"],
+  });
+  registry.register({
+    name: "usage",
+    aliases: ["spend"],
+    description: "Ollama Cloud request counts and spend: /usage [24h|7d|30d] [model]",
+    category: "General",
+    execute: (args) => {
+      // Tokens in either order: a window (24h|7d|30d) and/or `model` for the
+      // per-model breakdown (server-side `groupBy=model`).
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const range = tokens.find((t) => t === "24h" || t === "7d" || t === "30d") as "24h" | "7d" | "30d" | undefined;
+      const groupBy = tokens.includes("model") ? ("model" as const) : undefined;
+      if (!tokens.every((t) => t === range || t === groupBy)) {
+        return { kind: "error", text: "Usage: /usage [24h|7d|30d] [model]" };
+      }
+      return { kind: "usage", ...(range ? { range } : {}), ...(groupBy ? { groupBy } : {}) };
+    },
+    argValues: ["24h", "7d", "30d", "model"],
+  });
+  registry.register({
+    name: "balance",
+    aliases: ["credits"],
+    description: "Show remaining Ollama Cloud credits",
+    category: "General",
+    execute: () => ({ kind: "balance" }),
+  });
+  registry.register({
+    name: "pull",
+    aliases: [],
+    description: "Download a model from the Ollama registry with live progress: /pull <model>",
+    category: "General",
+    execute: (args) => {
+      const model = args.trim();
+      return /^\S+$/.test(model) ? { kind: "pull", model } : { kind: "error", text: "Usage: /pull <model>" };
+    },
+  });
+  registry.register({
+    name: "import-gguf",
+    aliases: ["gguf"],
+    description: "Publish a local GGUF file as an Ollama model: /import-gguf <model> <path>",
+    category: "General",
+    execute: (args) => {
+      const [model, path] = args.trim().split(/\s+/);
+      return model && path
+        ? { kind: "import-gguf", model, path }
+        : { kind: "error", text: "Usage: /import-gguf <model> <path-to-gguf>" };
+    },
   });
   registry.register({
     name: "evolve",

@@ -9,6 +9,7 @@ import {
   ScriptedAgentRuntime,
 } from "../../src/evolution/mutation/agent-mutation.js";
 import { pathWithinAllowedPrefix } from "../../src/evolution/mutation/path-scope.js";
+import { isHeldOutCase } from "../../src/evolution/heldout-split.js";
 import { GitWorktreeMutationExecutor } from "../../src/evolution/mutation/mutation-executor.js";
 import {
   NEXUM_FAST_PROFILE,
@@ -61,8 +62,14 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
       expect(buildMutationStrategy("heuristic", cfg())).toBeNull();
     });
 
-    it("wires AgentMutationStrategy backed by NexumEngineeringAgentRuntime for 'agent'", () => {
+    it("wires AgentMutationStrategy backed by the kernel runtime for 'agent'", () => {
       const strategy = buildMutationStrategy("agent", cfg());
+      expect(strategy).toBeInstanceOf(AgentMutationStrategy);
+      expect(strategy!.name).toBe("agent:nexum-engineering-kernel");
+    });
+
+    it("keeps the pre-kernel loop available as 'agent-legacy'", () => {
+      const strategy = buildMutationStrategy("agent-legacy", cfg());
       expect(strategy).toBeInstanceOf(AgentMutationStrategy);
       expect(strategy!.name).toBe("agent:nexum-engineering");
     });
@@ -105,16 +112,19 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
             pass: true,
             latencyMs: 120,
             tokensPerSec: 9.5,
+            tokens: 1200,
+            tokensEstimated: false,
           },
           {
             model: "m",
             tier: "local",
             caseId: "case-2",
-            category: "reasoning", // held-out split
             pass: false,
             reason: "wrong answer",
             latencyMs: 80,
             tokensPerSec: null,
+            tokens: 0,
+            tokensEstimated: false,
           },
           {
             model: "m",
@@ -124,6 +134,8 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
             error: "aborted: maxTurns exceeded",
             latencyMs: 10,
             tokensPerSec: null,
+            tokens: 0,
+            tokensEstimated: false,
           },
         ]),
       ].join("\n");
@@ -131,8 +143,33 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
       const results = parseBenchmarkJson(stdout);
       expect(results).toHaveLength(3);
       expect(results[0]).toMatchObject({ taskId: "case-1", success: true, verificationPassed: true, toolErrors: 0 });
-      expect(results[1]).toMatchObject({ taskId: "case-2", success: false, isHeldOut: true });
+      expect(results[1]).toMatchObject({
+        taskId: "case-2",
+        success: false,
+        isHeldOut: isHeldOutCase("case-2"),
+      });
       expect(results[2]).toMatchObject({ taskId: "case-3", loopAborted: true });
+    });
+
+    it("ignores bracketed logger prefixes on stdout", () => {
+      const stdout = [
+        "[Learning] absorbed 2 lesson(s) from partial episode",
+        JSON.stringify([
+          {
+            model: "m",
+            tier: "local",
+            caseId: "case-1",
+            pass: true,
+            latencyMs: 120,
+            tokensPerSec: 9.5,
+            tokens: 1200,
+            tokensEstimated: false,
+          },
+        ]),
+      ].join("\n");
+      const results = parseBenchmarkJson(stdout);
+      expect(results).toHaveLength(1);
+      expect(results[0].taskId).toBe("case-1");
     });
 
     it("throws when the subprocess produced no results array", () => {

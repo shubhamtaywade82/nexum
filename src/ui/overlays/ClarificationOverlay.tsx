@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput } from "@nemesis-oss/termina-core";
 import { ClarificationOption, ClarificationRequest, ClarificationResponse } from "../../runtime/types.js";
 import { useTheme } from "../ui/hooks/use-theme.js";
 import { OverlayFrame } from "./OverlayFrame.js";
@@ -24,7 +24,7 @@ export function ClarificationOverlay({
   const [customText, setCustomText] = useState("");
   const theme = useTheme();
 
-  const handleCustomInput = (input: string, key: import("ink").Key) => {
+  const handleCustomInput = (input: string, key: import("@nemesis-oss/termina-core").Key) => {
     if (key.return) {
       onSubmit({ id: request.id, selectedId: "custom", customText });
     } else if (key.escape) {
@@ -36,7 +36,7 @@ export function ClarificationOverlay({
     }
   };
 
-  const handleSelectionInput = (input: string, key: import("ink").Key) => {
+  const handleSelectionInput = (input: string, key: import("@nemesis-oss/termina-core").Key) => {
     if (key.escape) {
       onCancel();
       return;

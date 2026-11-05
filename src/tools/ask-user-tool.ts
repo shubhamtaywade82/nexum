@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Tool } from "./tool.js";
 import { ClarificationOption, ClarificationRequest, ClarificationResponse } from "../runtime/types.js";
 
@@ -61,7 +62,7 @@ export class AskUserTool extends Tool {
       isCustom: true,
     });
 
-    const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const id = `ask-${randomUUID()}`;
     const response = await this.requester.requestClarification({
       id,
       prompt: question,

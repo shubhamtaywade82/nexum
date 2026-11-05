@@ -6,6 +6,24 @@
  * Rails, no Binance, no browser — those mount via tool packs.
  */
 
+// Shared MCP elicitation contracts
+export type {
+  McpElicitationMode,
+  McpElicitationAction,
+  McpElicitationValue,
+  McpElicitationOneOf,
+  McpElicitationFieldSchema,
+  McpElicitationFormSchema,
+  McpElicitationRequest,
+  McpElicitationResponse,
+  McpElicitationHandler,
+} from "./user-input.js";
+export {
+  validateMcpElicitationRequest,
+  validateMcpElicitationForm,
+  normalizeMcpElicitationResponse,
+} from "./user-input.js";
+
 // Core contracts
 export type {
   RunId,

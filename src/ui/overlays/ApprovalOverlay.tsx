@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { ApprovalRequest } from "../../runtime/types.js";
 import { wrapText, tail } from "../layout/truncate.js";
 import { useTheme } from "../ui/hooks/use-theme.js";

@@ -6,6 +6,8 @@ export interface CheckpointData {
   steps: PlanStep[];
   history: HistoryEntry[];
   replanCount: number;
+  /** Mission goal, so a resumed plan's step briefs keep their context. */
+  goal?: string;
   updatedAt: number;
 }
 

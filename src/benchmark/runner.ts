@@ -13,11 +13,22 @@ export interface BenchmarkTarget {
   provider: Provider;
 }
 
-interface CaseRunOutcome {
+export interface CaseRunOutcome {
   pass: boolean;
   reason?: string;
   tokensPerSec: number | null;
+  tokens: number;
+  tokensEstimated: boolean;
+  /** Models the harness actually called. Only the agent driver sets it: its router may pick models besides the target. */
+  modelsUsed?: string[];
 }
+
+/**
+ * Runs one agentic case through something other than the runner's own model
+ * loop. The agent driver (agent-driver.ts) runs it through the candidate's
+ * `Agent`, so the score reflects the harness, not just the model.
+ */
+export type AgenticCaseDriver = (target: BenchmarkTarget, testCase: AgenticBenchmarkCase) => Promise<CaseRunOutcome>;
 
 export interface BenchmarkProgressEvent {
   model: string;
@@ -55,6 +66,12 @@ export interface RunBenchmarkOptions {
   /** Fires per tool call inside an agentic case, as it resolves — the only way
    * to see what's happening mid-case before it either finishes or times out. */
   onToolCall?: (event: BenchmarkToolCallEvent) => void;
+  /**
+   * Runs agentic cases through this driver instead of the runner's standalone
+   * loop. Single-turn cases are skipped under a driver: they score one raw model
+   * response, which no harness code touches.
+   */
+  agentDriver?: AgenticCaseDriver;
 }
 
 const DEFAULT_CASE_TIMEOUT_MS = 120_000;
@@ -76,7 +93,9 @@ export async function runBenchmark(
     target.provider.setModel(target.model);
     target.provider.setTier(target.tier);
 
-    const caseList = typeof cases === "function" ? cases() : cases;
+    const allCases = typeof cases === "function" ? cases() : cases;
+    const caseList = opts.agentDriver ? allCases.filter((c) => c.kind === "agentic") : allCases;
+    const driver: BenchmarkResult["driver"] = opts.agentDriver ? "agent" : "model";
     const total = caseList.length;
     let modelUnavailableError: string | null = null;
 
@@ -89,9 +108,12 @@ export async function runBenchmark(
           tier: target.tier,
           caseId: testCase.id,
           category: testCase.category,
+          driver,
           pass: false,
           latencyMs: 0,
           tokensPerSec: null,
+          tokens: 0,
+          tokensEstimated: false,
           error: modelUnavailableError,
         });
         opts.onProgress?.({
@@ -121,7 +143,9 @@ export async function runBenchmark(
       try {
         const outcome = await withTimeout(
           testCase.kind === "agentic"
-            ? runAgenticTurn(target, testCase, opts.onToolCall)
+            ? opts.agentDriver
+              ? opts.agentDriver(target, testCase)
+              : runAgenticTurn(target, testCase, opts.onToolCall)
             : runSingleTurn(target, testCase),
           timeoutMs,
         );
@@ -131,6 +155,7 @@ export async function runBenchmark(
           tier: target.tier,
           caseId: testCase.id,
           category: testCase.category,
+          driver,
           latencyMs,
           ...outcome,
         });
@@ -156,9 +181,12 @@ export async function runBenchmark(
           tier: target.tier,
           caseId: testCase.id,
           category: testCase.category,
+          driver,
           pass: false,
           latencyMs,
           tokensPerSec: null,
+          tokens: 0,
+          tokensEstimated: false,
           error,
         });
         opts.onProgress?.({
@@ -207,7 +235,12 @@ async function runSingleTurn(target: BenchmarkTarget, testCase: SingleTurnBenchm
     stream: false,
   });
   const { pass, reason } = testCase.validate(response);
-  return { pass, reason, tokensPerSec: estimateTokensPerSec(response, Date.now() - start) };
+  return {
+    pass,
+    reason,
+    tokensPerSec: estimateTokensPerSec(response, Date.now() - start),
+    ...usageFor(response),
+  };
 }
 
 // Standalone ReAct-style loop, deliberately not reusing Agent.runUserMessage —
@@ -226,10 +259,16 @@ async function runAgenticTurn(
   let hitMaxTurns = true;
   let turns = 0;
   let lastResponse: ChatResponse | undefined;
+  // Every turn bills its full prompt again, so the case's cost is the sum over all turns.
+  let tokens = 0;
+  let tokensEstimated = false;
 
   for (; turns < testCase.maxTurns; turns++) {
     const response = await target.provider.chat(messages, { tools: testCase.tools, stream: false });
     lastResponse = response;
+    const usage = usageFor(response);
+    tokens += usage.tokens;
+    tokensEstimated ||= usage.tokensEstimated;
     const assistantMessage = response.message as {
       content?: string;
       tool_calls?: Array<{ function: { name: string; arguments: unknown } }>;
@@ -269,6 +308,8 @@ async function runAgenticTurn(
     pass,
     reason,
     tokensPerSec: lastResponse ? estimateTokensPerSec(lastResponse, Date.now() - start) : null,
+    tokens,
+    tokensEstimated,
   };
 }
 
@@ -278,6 +319,22 @@ function tryParseJson(text: string): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Tokens one response consumed: the provider's prompt and completion counts
+ * (Ollama's prompt_eval_count and eval_count). Only when the provider reports
+ * neither does it fall back to a content-length estimate, which counts the
+ * completion alone and so is a lower bound; `tokensEstimated` marks that case.
+ */
+export function usageFor(response: ChatResponse): { tokens: number; tokensEstimated: boolean } {
+  const promptTokens = response.prompt_eval_count as number | undefined;
+  const completionTokens = response.eval_count as number | undefined;
+  if (typeof promptTokens === "number" && typeof completionTokens === "number") {
+    return { tokens: promptTokens + completionTokens, tokensEstimated: false };
+  }
+  const content = response.message?.content ?? "";
+  return { tokens: Math.ceil(content.length / 4), tokensEstimated: true };
 }
 
 // Ollama's /api/chat response includes eval_count/eval_duration (ns) on the

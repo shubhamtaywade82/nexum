@@ -64,17 +64,3 @@ export function parseSgrMouseEvent(input: string): MouseEventInfo | null {
     doubleClick: isDoubleClick,
   };
 }
-
-/** Enable SGR 1006 mouse tracking mode in terminal */
-export function enableMouseSupport(): void {
-  if (process.stdout.isTTY) {
-    process.stdout.write("\x1b[?1000h\x1b[?1006h");
-  }
-}
-
-/** Disable SGR 1006 mouse tracking mode in terminal */
-export function disableMouseSupport(): void {
-  if (process.stdout.isTTY) {
-    process.stdout.write("\x1b[?1000l\x1b[?1006l");
-  }
-}

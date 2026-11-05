@@ -11,23 +11,39 @@ import { PlanStep, StepStatus } from "../orchestration/types.js";
 import {
   ApprovalRequest,
   ClarificationRequest,
+  ClarificationResponse,
   ExecutionStep,
   MissionPhase,
   MissionPhaseId,
 } from "../runtime/types.js";
+import type { NexumClient } from "../assistant/client/index.js";
+import type { NexumRunEvent } from "../protocol/types.js";
+import type { McpElicitationResponse } from "../core/user-input.js";
+import type { SessionMeta } from "../runtime/session.js";
+import type { ShellAgent } from "./App.js";
+import { readFileSync } from "node:fs";
+import { EditTracker } from "./edit-tracker.js";
+import { parseTestSummary } from "./test-summary.js";
+import { workspaceFile } from "../context-providers/index.js";
+
+/** Tools whose effect is a whole-file change the bridge diffs itself. */
+const SNAPSHOT_TOOLS = new Set(["write_file", "patch_file", "append_file"]);
+/** Tools whose result already carries a unified diff. */
+const DIFF_RESULT_TOOLS = new Set(["apply_patch", "edit_file_lines"]);
+const TEST_TOOLS = new Set(["run_tests", "run_rspec"]);
 
 // PlanStep tracks a fine-grained ASL (analyzing/planning/implementing/
 // testing/reviewing/...); the TUI only renders the coarse 5-state model.
 const STEP_STATUS_MAP: Record<StepStatus, ExecutionStep["status"]> = {
   pending: "pending",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
   analyzing: "running",
   planning: "running",
   implementing: "running",
   testing: "running",
   reviewing: "running",
-  running: "running",
-  completed: "completed",
-  failed: "failed",
   blocked: "failed",
   rejected: "failed",
   paused: "failed",
@@ -45,8 +61,38 @@ export interface BridgeableAgent {
   getSkillsRegistry?(): { list(): SkillMeta[] };
 }
 
-export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
+export interface BridgeOptions {
+  /** Enables diff previews for file edits (files are read through workspaceFile's boundary). */
+  workspaceRoot?: string;
+}
+
+function readWorkspaceText(root: string | undefined, path: unknown): string | null {
+  if (!root || typeof path !== "string") return null;
+  const real = workspaceFile(root, path);
+  if (!real) return null;
+  try {
+    return readFileSync(real, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function toUnifiedText(path: string, tracker: EditTracker, after: string): string {
+  const body = tracker
+    .diff(path, after)
+    .filter((l) => l.type !== "context")
+    .flatMap((l) =>
+      l.text
+        .replace(/\n$/, "")
+        .split("\n")
+        .map((t) => `${l.type === "add" ? "+" : "-"}${t}`),
+    );
+  return body.length ? [`--- a/${path}`, `+++ b/${path}`, ...body].join("\n") : "";
+}
+
+export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus, opts: BridgeOptions = {}): void {
   let toolSeq = 0;
+  const edits = new EditTracker();
   interface OpenCall {
     id: string;
     args: Record<string, unknown>;
@@ -65,6 +111,10 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
     const stack = openCalls.get(name) ?? [];
     stack.push({ id, args });
     openCalls.set(name, stack);
+    // Snapshot before the tool runs (onToolCall fires just before execution).
+    if (SNAPSHOT_TOOLS.has(name) && typeof args.path === "string") {
+      edits.snapshot(args.path, readWorkspaceText(opts.workspaceRoot, args.path) ?? "");
+    }
     bus.publish({ type: "tool.started", id, name, args });
     bus.publish({ type: "conversation.tool_call", id, name, args, status: "running" });
     bus.publish({ type: "logs.appended", level: "info", source: "tool", message: `${name} started` });
@@ -85,8 +135,36 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
       bus.publish({ type: "tool.completed", id, result: resultObj });
       bus.publish({ type: "conversation.tool_call", id, name, args, status: "completed", result: resultStr });
       bus.publish({ type: "logs.appended", level: "info", source: "tool", message: `${name} completed` });
+      publishDiff(name, args, resultObj);
+      publishTestResult(name, resultObj);
     }
   });
+  function publishDiff(name: string, args: Record<string, unknown>, result: Record<string, unknown>): void {
+    const path = typeof args.path === "string" ? args.path : undefined;
+    if (!path || result.dry_run === true) return;
+    let diff = "";
+    if (DIFF_RESULT_TOOLS.has(name) && typeof result.diff === "string") {
+      diff = result.diff;
+    } else if (SNAPSHOT_TOOLS.has(name) && edits.hasSnapshot(path)) {
+      const after = readWorkspaceText(opts.workspaceRoot, path);
+      if (after !== null) diff = toUnifiedText(path, edits, after);
+    }
+    if (diff) bus.publish({ type: "conversation.diff", filePath: path, diff, status: "approved" });
+  }
+
+  function publishTestResult(name: string, result: Record<string, unknown>): void {
+    if (!TEST_TOOLS.has(name)) return;
+    const output = [result.stdout, result.stderr].filter((p) => typeof p === "string").join("\n");
+    const summary = parseTestSummary(output);
+    if (!summary) return;
+    bus.publish({
+      type: "conversation.test_result",
+      command: typeof result.command === "string" ? result.command : name,
+      ...summary,
+      durationMs: typeof result.duration === "number" ? Math.round(result.duration * 1000) : 0,
+    });
+  }
+
   agent.on("onStatus", (status: string) => {
     bus.publish({ type: "status.changed", status });
     // Model-routing decisions (which tier/model handled this turn) matter after
@@ -121,33 +199,223 @@ export function wireAgentBridge(agent: BridgeableAgent, bus: EventBus): void {
   agent.on("onLspStateChange", (servers: LspServerState[]) => {
     bus.publish({ type: "lsp.changed", servers });
   });
-  agent.on("onApprovalRequested", (request: ApprovalRequest) => {
-    bus.publish({ type: "approval.requested", request });
-  });
-  agent.on("onClarificationRequested", (request: ClarificationRequest) => {
-    bus.publish({ type: "clarification.requested", request });
-  });
-  agent.on("onModelUsed", (tier: string, model: string) => {
-    bus.publish({ type: "model.answered", tier, model });
-  });
+  agent.on("onApprovalRequested", (request: ApprovalRequest) => bus.publish({ type: "approval.requested", request }));
+  agent.on("onClarificationRequested", (request: ClarificationRequest) =>
+    bus.publish({ type: "clarification.requested", request }),
+  );
+  agent.on("onMcpElicitationRequested", (request) => bus.publish({ type: "mcp.elicitation.requested", request }));
+  agent.on(
+    "onModelUsed",
+    (tier: string, model: string, usage?: { promptTokens: number; completionTokens: number; latencyMs: number }) => {
+      bus.publish({ type: "model.answered", tier, model, ...usage });
+    },
+  );
   agent.on("onPlanUpdate", (goal: string, steps: PlanStep[], status: "running" | "completed" | "failed") => {
     bus.publish({ type: "conversation.plan", goal, steps: toExecutionSteps(steps), status });
   });
-  agent.on("onMissionStarted", (goal: string) => {
-    bus.publish({ type: "mission.started", goal });
-  });
-  agent.on("onMissionPhase", (id: MissionPhaseId, status: MissionPhase["status"]) => {
-    bus.publish({ type: "mission.phase", id, status });
-  });
-  agent.on("onMissionStep", (step: PlanStep) => {
-    bus.publish({ type: "mission.step", step });
-  });
-  agent.on(
-    "onUsage",
-    (info: { promptTokens: number; completionTokens: number; tokensPerSecond: number; latencyMs: number }) => {
-      const used = info.promptTokens + info.completionTokens;
-      bus.publish({ type: "context.changed", used, limit: 0, latencyMs: info.latencyMs });
-      bus.publish({ type: "usage.changed", promptTokens: info.promptTokens, completionTokens: info.completionTokens });
-    },
+  agent.on("onMissionStarted", (goal: string) => bus.publish({ type: "mission.started", goal }));
+  agent.on("onMissionPhase", (id: MissionPhaseId, status: MissionPhase["status"]) =>
+    bus.publish({ type: "mission.phase", id, status }),
   );
+  agent.on("onMissionStep", (step: PlanStep) => bus.publish({ type: "mission.step", step }));
+  agent.on("onUsage", (info: { promptTokens: number; completionTokens: number; latencyMs: number }) => {
+    bus.publish({
+      type: "context.changed",
+      used: info.promptTokens + info.completionTokens,
+      limit: 0,
+      latencyMs: info.latencyMs,
+    });
+    bus.publish({ type: "usage.changed", promptTokens: info.promptTokens, completionTokens: info.completionTokens });
+  });
+}
+
+function dispatchToolEvent(bus: EventBus, ev: NexumRunEvent): boolean {
+  if (ev.type === "tool.started") {
+    bus.publish({ type: "tool.started", id: ev.callId, name: ev.name, args: ev.args });
+    bus.publish({ type: "conversation.tool_call", id: ev.callId, name: ev.name, args: ev.args, status: "running" });
+    bus.publish({ type: "logs.appended", level: "info", source: "tool", message: `${ev.name} started` });
+    return true;
+  }
+  if (ev.type === "tool.completed") {
+    bus.publish({ type: "tool.completed", id: ev.callId, result: ev.result });
+    bus.publish({
+      type: "conversation.tool_call",
+      id: ev.callId,
+      name: ev.name,
+      args: {},
+      status: "completed",
+      result: JSON.stringify(ev.result),
+    });
+    bus.publish({ type: "logs.appended", level: "info", source: "tool", message: `${ev.name} completed` });
+    return true;
+  }
+  return false;
+}
+
+function dispatchInteractionEvent(bus: EventBus, ev: NexumRunEvent): boolean {
+  if (ev.type === "run.approval.required") {
+    bus.publish({
+      type: "approval.requested",
+      request: {
+        id: ev.interactionId,
+        title: ev.title,
+        summary: ev.summary,
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+      },
+    });
+    return true;
+  }
+  if (ev.type === "run.approval.resolved") {
+    bus.publish({ type: "approval.resolved", id: ev.interactionId, approved: ev.approved });
+    return true;
+  }
+  if (ev.type === "run.clarification.required") {
+    bus.publish({
+      type: "clarification.requested",
+      request: { id: ev.interactionId, prompt: ev.question, question: ev.question, options: ev.options },
+    });
+    return true;
+  }
+  if (ev.type === "run.clarification.resolved") {
+    bus.publish({ type: "clarification.resolved", response: { id: ev.interactionId, selectedId: ev.selectedId } });
+    return true;
+  }
+  return false;
+}
+
+function dispatchMcpElicitation(bus: EventBus, ev: NexumRunEvent): boolean {
+  if (ev.type === "run.mcp_elicitation.required") {
+    bus.publish({
+      type: "mcp.elicitation.requested",
+      request: { id: ev.interactionId, serverId: ev.serverName, mode: "form", message: ev.prompt },
+    });
+    return true;
+  }
+  if (ev.type === "run.mcp_elicitation.resolved") {
+    bus.publish({ type: "mcp.elicitation.resolved", response: { id: ev.interactionId, action: "accept" } });
+    return true;
+  }
+  return false;
+}
+
+function dispatchLifecycleEvent(bus: EventBus, ev: NexumRunEvent): boolean {
+  if (ev.type === "thought") {
+    bus.publish({ type: "conversation.chunk", role: "thinking", chunk: ev.text });
+    return true;
+  }
+  if (ev.type === "model.used") {
+    bus.publish({ type: "model.answered", tier: ev.tier, model: ev.model });
+    return true;
+  }
+  if (ev.type === "plan.updated") {
+    const steps = ev.steps.map((s) => ({
+      id: s.id,
+      description: s.text,
+      status: s.done ? ("completed" as const) : ("running" as const),
+    }));
+    bus.publish({ type: "conversation.plan", goal: ev.goal, steps, status: ev.status });
+    return true;
+  }
+  if (ev.type === "run.completed") {
+    bus.publish({ type: "conversation.chunk", role: "assistant", chunk: ev.output.content });
+    bus.publish({ type: "status.changed", status: "completed" });
+    return true;
+  }
+  if (ev.type === "run.failed") {
+    bus.publish({ type: "error", message: ev.error });
+    return true;
+  }
+  if (ev.type === "run.interrupted") {
+    bus.publish({ type: "error", message: `Run interrupted: ${ev.reason}` });
+    return true;
+  }
+  return false;
+}
+
+export function dispatchServerEvent(bus: EventBus, ev: NexumRunEvent): void {
+  if (dispatchToolEvent(bus, ev)) return;
+  if (dispatchInteractionEvent(bus, ev)) return;
+  if (dispatchMcpElicitation(bus, ev)) return;
+  dispatchLifecycleEvent(bus, ev);
+}
+
+export interface RemoteAgentOptions {
+  sessionId?: string;
+}
+
+export function createRemoteAgentBridge(
+  client: NexumClient,
+  bus: EventBus,
+  options: RemoteAgentOptions = {},
+): ShellAgent {
+  let activeSessionId = options.sessionId;
+  let activeRunId: string | null = null;
+  let cachedSessions: SessionMeta[] = [];
+
+  const refreshSessions = async (): Promise<void> => {
+    try {
+      const summaries = await client.listSessions();
+      cachedSessions = summaries.map((s) => ({
+        id: s.id,
+        startedAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        messageCount: s.messageCount,
+        firstUserLine: s.title ?? "Remote Session",
+      }));
+    } catch {
+      // Retain existing cached list on network glitch
+    }
+  };
+
+  void refreshSessions();
+
+  return {
+    async runUserMessage(message: string): Promise<unknown> {
+      if (!activeSessionId) {
+        const title = message.slice(0, 50).trim();
+        const sess = await client.createSession({ title });
+        activeSessionId = sess.id;
+        void refreshSessions();
+      }
+      const run = await client.createRun(activeSessionId, message);
+      activeRunId = run.id;
+      try {
+        for await (const env of client.streamEvents(run.id)) {
+          dispatchServerEvent(bus, env.payload);
+        }
+      } finally {
+        activeRunId = null;
+      }
+      return run;
+    },
+    resolveApproval(id: string, approved: boolean): void {
+      if (activeRunId) {
+        client.resolveInteraction(activeRunId, id, { approved }).catch(() => {});
+      }
+    },
+    resolveClarification(response: ClarificationResponse): void {
+      if (activeRunId) {
+        client.resolveInteraction(activeRunId, response.id, { selectedId: response.selectedId }).catch(() => {});
+      }
+    },
+    resolveMcpElicitation(response: McpElicitationResponse): void {
+      if (activeRunId) {
+        const text = response.action === "accept" ? JSON.stringify(response.content ?? {}) : undefined;
+        client.resolveInteraction(activeRunId, response.id, { response: text }).catch(() => {});
+      }
+    },
+    listSessions(): SessionMeta[] {
+      return cachedSessions;
+    },
+    hasResumableSession(): boolean {
+      return cachedSessions.length > 0;
+    },
+    resumeSessionById(id: string): Array<{ role: string; content: string }> | null {
+      activeSessionId = id;
+      client.getSession(id).catch(() => {});
+      return null;
+    },
+  };
 }

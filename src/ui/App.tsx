@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdout } from "ink";
+import { Box, Text, useApp, useInput, usePaste, useStdout } from "@nemesis-oss/termina-core";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { historyFile as flatHistoryFile, legacyHistoryFile, workspaceStateDir } from "../platform/paths.js";
@@ -42,7 +42,9 @@ import { HelpOverlay } from "./overlays/HelpOverlay.js";
 import { ActorsOverlay } from "./overlays/ActorsOverlay.js";
 import { ApprovalOverlay } from "./overlays/ApprovalOverlay.js";
 import { ClarificationOverlay } from "./overlays/ClarificationOverlay.js";
+import { McpElicitationOverlay } from "./overlays/McpElicitationOverlay.js";
 import { ClarificationResponse } from "../runtime/types.js";
+import type { McpElicitationResponse } from "../core/user-input.js";
 import { ModelSwitcher } from "./overlays/ModelSwitcher.js";
 import { ModeSwitcher } from "./overlays/ModeSwitcher.js";
 import { ThemeSwitcher } from "./overlays/ThemeSwitcher.js";
@@ -51,6 +53,8 @@ import { SkillsOverlay } from "./overlays/SkillsOverlay.js";
 import { SessionHistory } from "./overlays/SessionHistory.js";
 import { SessionMeta } from "../runtime/session.js";
 import { ToolPaletteOverlay, ToolInfo } from "./overlays/ToolPaletteOverlay.js";
+import { ExecutionDagOverlay } from "./overlays/ExecutionDagOverlay.js";
+import { executionNodesFromState } from "../runtime/event-node.js";
 import { Sidebar, ToolCategoryCount } from "./zones/Sidebar.js";
 import { SkillsRegistry } from "../skills/registry.js";
 import { useCommandEffects } from "./hooks/useCommandEffects.js";
@@ -69,8 +73,11 @@ export interface ShellAgent {
   getTools?(): ToolInfo[];
   runPlan?(goal: string): Promise<unknown>;
   hasResumablePlan?(): boolean;
+  getCapabilities?(): Promise<Array<import("../cli/capabilities.js").FeatureStatus>>;
+  buildSandboxImage?(): Promise<{ ok: boolean; message: string }>;
   resolveApproval?(id: string, approved: boolean): void;
   resolveClarification?(response: ClarificationResponse): void;
+  resolveMcpElicitation?(response: McpElicitationResponse): void;
   listModels?(): Promise<string[]>;
   /** Cache-only: which of the given models are known to require a Cloud subscription. */
   modelAvailability?(models: string[]): Record<string, boolean>;
@@ -81,6 +88,20 @@ export interface ShellAgent {
   getSkillsRegistry?(): SkillsRegistry;
   pinSkill?(id: string | null): void;
   addLearning?(category: string, context: string, lesson: string): void;
+  /** Ollama Cloud request counts + spend for every configured API key. */
+  usageAll?(
+    range?: "24h" | "7d" | "30d",
+    groupBy?: "model",
+  ): Promise<Array<import("../models/adapters/provider.js").AccountUsage>>;
+  /** Ollama Cloud remaining included + purchased credits, one row per key. */
+  balanceAll?(): Promise<Array<import("../models/adapters/provider.js").AccountBalance>>;
+  /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */
+  importGguf?(model: string, path: string): Promise<unknown>;
+  /** Downloads a model from the Ollama registry, reporting each progress frame. */
+  pullModel?(
+    model: string,
+    onEvent: (event: import("@nemesis-oss/ollama-sdk").PullProgressEvent) => void,
+  ): Promise<void>;
 }
 
 export interface AppProps {
@@ -142,10 +163,13 @@ function TerminalSizeListener({ onSize, rows }: { onSize: (w: number, h: number)
   const { stdout } = useStdout();
   useEffect(() => {
     if (!stdout) return;
-    const onResize = () => onSize(stdout.columns, rows ?? stdout.rows);
-    stdout.on("resize", onResize);
+    // termina types stdout as a bare WritableStream; at runtime it is the TTY
+    // WriteStream (or the test stream) that carries columns, rows and resize.
+    const tty = stdout as NodeJS.WriteStream;
+    const onResize = () => onSize(tty.columns, rows ?? tty.rows);
+    tty.on("resize", onResize);
     return () => {
-      stdout.off("resize", onResize);
+      tty.off("resize", onResize);
     };
   }, [stdout, onSize, rows]);
   return null;
@@ -238,6 +262,11 @@ export function App({
   const { width, height, listener: sizeListener } = useTerminalSize(columns, rows);
   const [ui, uiDispatch] = useReducer(uiReduce, undefined, initialUiState);
   const [prompt, setPrompt] = useState("");
+  const [cursor, setCursor] = useState(0);
+  const promptRef = useRef(prompt);
+  promptRef.current = prompt;
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
   const [busy, setBusy] = useState(false);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [history] = useState(() => {
@@ -262,8 +291,6 @@ export function App({
   const [modelAvailability, setModelAvailability] = useState<Record<string, boolean>>({});
   const [modelCapabilities, setModelCapabilities] = useState<Record<string, string[]>>({});
   const commandRegistry = useMemo(() => registry ?? builtinCommands(), [registry]);
-  const pastingRef = useRef(false);
-  const pasteBufRef = useRef("");
   const pasteCountRef = useRef(0);
   const focusReportRef = useRef(false);
   const lastCtrlCTimeRef = useRef(0);
@@ -324,53 +351,12 @@ export function App({
     });
   }, [appendPasted]);
 
-  // Detect bracketed paste markers on stdin.
-  // Uses prependListener so our handler runs BEFORE Ink's — once pastingRef
-  // is true, useInput bails out and lets this handler set the prompt directly.
-  useEffect(() => {
-    if (!process.stdin.isTTY) return;
-    let buf = "";
-    const handler = (data: Buffer) => {
-      buf += data.toString();
-
-      if (buf.includes("\x1b[200~")) {
-        pastingRef.current = true;
-        pasteBufRef.current = "";
-        buf = buf.replace("\x1b[200~", "");
-      }
-
-      if (pastingRef.current) {
-        if (buf.includes("\x1b[201~")) {
-          const parts = buf.split("\x1b[201~");
-          pasteBufRef.current += parts[0] ?? "";
-          // Some terminals encode pasted line breaks as bare \r (confirmed
-          // via DEVAGENT_DEBUG_STDIN capture) rather than \n. Normalize both
-          // \r\n and lone \r to \n so line counting/collapsing sees them —
-          // otherwise the raw \r survives into the prompt and, once actually
-          // written to a real terminal, repeatedly carriage-returns the
-          // cursor, leaving only the last segment visible on screen.
-          const pasted = pasteBufRef.current.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-          pasteBufRef.current = "";
-          setPrompt((p) => appendPasted(p, pasted));
-          buf = parts.slice(1).join("\x1b[201~");
-          // Defer turning off pastingRef so any useInput callbacks queued
-          // from INK's buffer see pastingRef.current = true and bail out.
-          setTimeout(() => {
-            pastingRef.current = false;
-          }, 0);
-        } else {
-          pasteBufRef.current += buf;
-          buf = "";
-        }
-      }
-
-      if (!pastingRef.current) buf = "";
-    };
-    process.stdin.prependListener("data", handler);
-    return () => {
-      process.stdin.off("data", handler);
-    };
-  }, []);
+  // Termina handles bracketed paste markers natively via usePaste.
+  // Normalize \r\n and bare \r to \n so line counting/collapsing sees them properly.
+  usePaste((text) => {
+    const pasted = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    setPrompt((p) => appendPasted(p, pasted));
+  });
 
   // Terminal focus tracking (DECSET 1004): most modern terminals (iTerm2,
   // kitty, WezTerm, Alacritty, Windows Terminal) report window focus in/out
@@ -387,8 +373,7 @@ export function App({
     // falls through Ink's keypress parser as literal "[I"/"[O" text typed
     // into the prompt. Same fix as the bracketed-paste handler above:
     // prependListener runs before Ink's own stdin listener, and
-    // focusReportRef tells useInput to swallow the resulting keypresses
-    // instead of appending them (see the pastingRef check below).
+    // focusReportRef tells useInput to swallow the resulting keypresses.
     const handler = (data: Buffer) => {
       const s = data.toString();
       if (s !== "\x1b[I" && s !== "\x1b[O") return;
@@ -462,7 +447,7 @@ export function App({
     return () => clearInterval(interval);
   }, [ui.overlay, models, agent]);
 
-  const completionItems = completions(prompt, commandRegistry);
+  const completionItems = completions(prompt, commandRegistry, undefined, history.all());
   // A list whose only entry is the command the user already typed in full is
   // not an actionable completion — treating it as one made Enter re-insert the
   // same text instead of submitting, so every zero-argument slash command
@@ -594,9 +579,11 @@ export function App({
           if (activeCompletion) {
             // Dismiss completion by clearing the trigger prefix
             setPrompt("");
+            setCursor(0);
             setCompletionIndex(0);
           } else {
             setPrompt("");
+            setCursor(0);
             setCompletionIndex(0);
             history.stopBrowsing();
           }
@@ -609,7 +596,6 @@ export function App({
   );
 
   useInput((input, key) => {
-    if (pastingRef.current) return; // let the data handler manage paste content
     if (focusReportRef.current) return; // terminal focus in/out escape, not real text
     if (MOUSE_SGR_PATTERN.test(input)) return; // scroll/click artifact, never real text
 
@@ -623,6 +609,7 @@ export function App({
       lastCtrlCTimeRef.current = now;
       if (prompt.length > 0) {
         setPrompt("");
+        setCursor(0);
         setCompletionIndex(0);
         history.stopBrowsing();
       }
@@ -645,11 +632,15 @@ export function App({
       handleCommand(command);
       return;
     }
-    if (ui.overlay || state.clarification != null) return; // remaining keys belong to the overlay's own handler
+    if (ui.overlay || state.clarification != null || state.mcpElicitation != null) return; // remaining keys belong to the overlay's own handler
 
     // Prompt editing.
     if (key.return && key.shift) {
-      setPrompt((p) => p + "\n");
+      setPrompt((p) => {
+        const next = p.slice(0, cursor) + "\n" + p.slice(cursor);
+        setCursor(cursor + 1);
+        return next;
+      });
       return;
     }
     if (key.return && gapSincePrev < FAST_INPUT_MS) {
@@ -662,7 +653,11 @@ export function App({
       }
       if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
       burstTimerRef.current = setTimeout(finalizeBurst, BURST_IDLE_MS);
-      setPrompt((p) => p + "\n");
+      const next = promptRef.current + "\n";
+      promptRef.current = next;
+      cursorRef.current = next.length;
+      setPrompt(next);
+      setCursor(next.length);
       return;
     }
     if (key.return && burstActiveRef.current) {
@@ -672,49 +667,95 @@ export function App({
       burstActiveRef.current = false;
     }
     if (key.return) {
-      const item = activeCompletion
-        ? completionItems[Math.min(completionIndex, completionItems.length - 1)]
-        : undefined;
+      const isExplicitTrigger = prompt.startsWith("/") || prompt.startsWith("@");
+      const hasUserNavigated = completionIndex > 0;
+      const item =
+        (isExplicitTrigger || hasUserNavigated) && activeCompletion
+          ? completionItems[Math.min(completionIndex, completionItems.length - 1)]
+          : undefined;
       // Guard the selected entry too, not just the list: a prefix can be both
       // an exact command and a prefix of others (e.g. "/test" alongside
       // "/tests"), which would otherwise leave Enter permanently stuck on the
       // no-op entry.
       if (item && !isNoOpCompletion(prompt, item)) {
         setPrompt(item.insert);
+        setCursor(item.insert.length);
         setCompletionIndex(0);
         return;
       }
       submitPrompt(prompt);
+      setCursor(0);
       return;
     }
-    if (key.backspace || key.delete) {
-      setPrompt((p) => p.slice(0, -1));
+    if (key.backspace) {
+      if (cursor > 0) {
+        setPrompt((p) => p.slice(0, cursor - 1) + p.slice(cursor));
+        setCursor((c) => Math.max(0, c - 1));
+      }
       setCompletionIndex(0);
       history.stopBrowsing();
+      return;
+    }
+    if (key.delete) {
+      if (cursor < prompt.length) {
+        setPrompt((p) => p.slice(0, cursor) + p.slice(cursor + 1));
+      }
+      setCompletionIndex(0);
+      history.stopBrowsing();
+      return;
+    }
+    // Home / Ctrl+A: jump to start of line
+    if ((key.ctrl && input === "a") || input === "\x1b[H" || input === "\x1b[1~") {
+      setCursor(0);
+      return;
+    }
+    // End / Ctrl+E: jump to end of line
+    if ((key.ctrl && input === "e") || input === "\x1b[F" || input === "\x1b[4~") {
+      setCursor(prompt.length);
+      return;
+    }
+    if (key.leftArrow) {
+      setCursor((c) => Math.max(0, c - 1));
+      return;
+    }
+    if (key.rightArrow) {
+      if (cursor === prompt.length && ghost) {
+        const accepted = acceptWord(ghost).accepted;
+        setPrompt((p) => p + accepted);
+        setCursor((c) => c + accepted.length);
+      } else {
+        setCursor((c) => Math.min(prompt.length, c + 1));
+      }
       return;
     }
     if (key.tab) {
       if (activeCompletion) {
         const item = completionItems[Math.min(completionIndex, completionItems.length - 1)];
         setPrompt(item.insert);
+        setCursor(item.insert.length);
         setCompletionIndex(0);
       } else if (ghost) {
         setPrompt(prompt + ghost);
+        setCursor(prompt.length + ghost.length);
       }
-      return;
-    }
-    if (key.rightArrow && ghost) {
-      setPrompt(prompt + acceptWord(ghost).accepted);
       return;
     }
     if (key.upArrow) {
       if (activeCompletion) setCompletionIndex((i) => Math.max(0, i - 1));
-      else setPrompt(history.up(prompt));
+      else {
+        const next = history.up(prompt);
+        setPrompt(next);
+        setCursor(next.length);
+      }
       return;
     }
     if (key.downArrow) {
       if (activeCompletion) setCompletionIndex((i) => Math.min(completionItems.length - 1, i + 1));
-      else setPrompt(history.down(prompt));
+      else {
+        const next = history.down(prompt);
+        setPrompt(next);
+        setCursor(next.length);
+      }
       return;
     }
     if (input && !key.ctrl && !key.meta) {
@@ -724,7 +765,22 @@ export function App({
       // some encode that break as bare \r rather than \n — normalize (not
       // strip) so it's still detected and collapses the same way.
       const cleaned = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      setPrompt((p) => (cleaned.includes("\n") ? appendPasted(p, cleaned) : p + cleaned));
+      if (cleaned.includes("\n")) {
+        const next = appendPasted(promptRef.current, cleaned);
+        promptRef.current = next;
+        cursorRef.current = next.length;
+        setPrompt(next);
+        setCursor(next.length);
+      } else {
+        const curPrompt = promptRef.current;
+        const curCursor = cursorRef.current;
+        const next = curPrompt.slice(0, curCursor) + cleaned + curPrompt.slice(curCursor);
+        const nextCursor = curCursor + cleaned.length;
+        promptRef.current = next;
+        cursorRef.current = nextCursor;
+        setPrompt(next);
+        setCursor(nextCursor);
+      }
       setCompletionIndex(0);
     }
   });
@@ -738,6 +794,8 @@ export function App({
   const showApproval = approval != null && (ui.overlay === null || ui.overlay === "diff");
   const clarification = state.clarification;
   const showClarification = clarification != null && !showApproval;
+  const mcpElicitation = state.mcpElicitation;
+  const showMcpElicitation = mcpElicitation != null && !showApproval && !showClarification;
   const viewIndex = VIEW_ORDER.indexOf(ui.activeView) + 1;
   const title = ` ${viewIndex} ${VIEW_LABELS[ui.activeView]} `;
   const rule = "─".repeat(Math.max(0, width - title.length - 2));
@@ -752,6 +810,7 @@ export function App({
     ui.sidebarVisible &&
     !showApproval &&
     !showClarification &&
+    !showMcpElicitation &&
     ui.overlay === null &&
     width >= MIN_WIDTH_FOR_SIDEBAR &&
     ui.activeView !== "dashboard";
@@ -777,7 +836,14 @@ export function App({
               {"─".repeat(Math.max(0, width - 1))}
             </Text>
           </Box>
-          <ActivityStrip state={state} width={width} now={now} activeView={ui.activeView} />
+          <ActivityStrip
+            state={state}
+            width={width}
+            now={now}
+            activeView={ui.activeView}
+            onSelectView={(v) => uiDispatch({ type: "focus-view", view: v })}
+            onOpenPalette={() => uiDispatch({ type: "open-overlay", overlay: "palette" })}
+          />
           <Box flexDirection="column" height={viewRows}>
             {showViewTitle ? (
               <Box height={1}>
@@ -798,6 +864,21 @@ export function App({
             )}
             {showApproval ? (
               <ApprovalOverlay request={approval} width={width} rows={contentRows} showDiff={ui.overlay === "diff"} />
+            ) : showMcpElicitation ? (
+              <McpElicitationOverlay
+                request={mcpElicitation}
+                width={width}
+                rows={contentRows}
+                onSubmit={(response) => {
+                  agent?.resolveMcpElicitation?.(response);
+                  bus.publish({ type: "mcp.elicitation.resolved", response });
+                }}
+                onCancel={() => {
+                  const response = { id: mcpElicitation.id, action: "cancel" } as const;
+                  agent?.resolveMcpElicitation?.(response);
+                  bus.publish({ type: "mcp.elicitation.resolved", response });
+                }}
+              />
             ) : showClarification ? (
               <ClarificationOverlay
                 request={clarification}
@@ -921,6 +1002,14 @@ export function App({
                   applyEffect({ kind: "resume-session-by-id", id });
                 }}
               />
+            ) : ui.overlay === "dag" ? (
+              <ExecutionDagOverlay
+                nodes={executionNodesFromState(state)}
+                width={width}
+                rows={contentRows}
+                active={true}
+                onClose={() => uiDispatch({ type: "close-overlay" })}
+              />
             ) : ui.overlay === "tools" ? (
               <ToolPaletteOverlay
                 tools={agent?.getTools?.() ?? []}
@@ -964,7 +1053,7 @@ export function App({
           {activeCompletion && (
             <CompletionSurface items={completionItems} selectedIndex={completionIndex} width={width} />
           )}
-          <PromptBar text={prompt} ghost={ghost} width={width} busy={busy} focused={focused} />
+          <PromptBar text={prompt} cursor={cursor} ghost={ghost} width={width} busy={busy} focused={focused} />
           <Box height={1}>
             <Text color={activeTheme.colors.mutedForeground} dimColor>
               {"─".repeat(Math.max(0, width - 1))}

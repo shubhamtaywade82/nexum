@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { KeyboardShortcuts, type Shortcut } from "../ui/keyboard-shortcuts.js";
 import { useTheme } from "../ui/hooks/use-theme.js";
 import { OverlayFrame } from "./OverlayFrame.js";
@@ -9,6 +9,7 @@ const KEYS: Shortcut[] = [
   { key: "Tab / Shift+Tab", description: "Next / previous view" },
   { key: "Ctrl+P", description: "Command palette" },
   { key: "Ctrl+B", description: "Actors overlay" },
+  { key: "Ctrl+Y", description: "Execution DAG trace" },
   { key: "Ctrl+M", description: "Switch model" },
   { key: "Ctrl+F", description: "Search everywhere" },
   { key: "z", description: "Zoom active view" },

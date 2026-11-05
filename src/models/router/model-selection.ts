@@ -106,4 +106,7 @@ export const CAPABILITY_WEIGHTS: Record<string, Partial<Record<RoutingDimension,
   vision: { vision: 0.6, reasoning: 0.15, latency: 0.1, availability: 0.15 },
   quick: { latency: 0.5, cost: 0.25, availability: 0.25 },
   structured: { structuredOutput: 0.5, reasoning: 0.2, availability: 0.15, latency: 0.15 },
+  // Judging needs reliable structured output (strict JSON verdicts) and
+  // reasoning (rubric application) more than raw speed.
+  judge: { structuredOutput: 0.4, reasoning: 0.35, availability: 0.15, cost: 0.1 },
 };

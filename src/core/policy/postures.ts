@@ -24,7 +24,7 @@
 
 import { PolicyRule, RulePolicyEngine } from "./policy-engine.js";
 import { ExecutionProfile, executionProfileByName } from "./execution-profiles.js";
-import { DeleteFileRule, DestructiveShellRule, GitPublishRule } from "./rules.js";
+import { DeleteFileRule, DestructiveShellRule, FileEditRule, GitPublishRule } from "./rules.js";
 import { ToolRisk } from "../tools/tool-contract.js";
 
 export type PolicyPostureName = "parity" | "standard" | "restricted";
@@ -47,7 +47,12 @@ export interface RestrictedPostureOptions {
  * "restricted" genuinely ask for every high/medium-risk call.
  */
 function argRules(allowBenignFaces: boolean): PolicyRule[] {
-  return [new DestructiveShellRule(allowBenignFaces), new GitPublishRule(allowBenignFaces), new DeleteFileRule()];
+  return [
+    new DestructiveShellRule(allowBenignFaces),
+    new GitPublishRule(allowBenignFaces),
+    new DeleteFileRule(),
+    new FileEditRule(),
+  ];
 }
 
 /** Historical CLI DevAgent UX: minimal prompts, financial never bypasses. */

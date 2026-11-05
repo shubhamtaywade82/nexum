@@ -1,0 +1,100 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Nexum workspace configuration — copy to <workspace>/.nexum/config.json
+// (project defaults) or ~/.nexum/config.json (global defaults).
+//
+//   [required]   only required for the feature it belongs to
+//   [optional]   every key is optional — omit what you don't need
+//   [until trust] applied from a *workspace* config only after `nexum trust`;
+//                 the global ~/.nexum/config.json always applies
+//
+// Resolution order (last wins): built-in default → global file → workspace
+// file → environment variable (NEXUM_* beats the file in both directions).
+// Comments are fine: see docs/guide/configuration.md.
+//
+// Companion file: .env.example — the same options as environment variables.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  // ── Model & routing ──────────────────────────────────────────────────────
+  "model": "qwen3.5:4b", // optional, default: qwen3.5:4b (NEXUM_MODEL)
+  "tier": "local", // optional, default: local | cloud  [until trust]
+  // optional, default: OLLAMA_HOST or localhost:11434 (local tier only).
+  // Uncommenting it pins the host and beats the OLLAMA_HOST variable.  [until trust]
+  // "host": "http://localhost:11434",
+  // optional — small local model tried first every turn; no default
+  // "quickModel": "minicpm5",
+  // optional — per-request timeout; unset = 60s on cloud, none on local
+  // "timeoutMs": 60000,
+
+  // ── Credentials  [until trust] ───────────────────────────────────────────
+  // [required for cloud tier] — prefer "accounts" when you run several keys
+  // "apiKey": "sk_or_ollama_key_here",
+  // "apiKeys": ["second_key", "third_key"],
+  // "accounts": [
+  //   { "apiKey": "first_key", "label": "me@example.com" },
+  //   { "apiKey": "second_key", "label": "work" }
+  // ],
+
+  // ── Workspace ────────────────────────────────────────────────────────────
+  // optional — confine file-mutating tools to a subtree (relative to the
+  // workspace root, or absolute). Unset = the whole workspace.
+  // "writeScope": "src",
+
+  // ── System prompt  [until trust] ─────────────────────────────────────────
+  // optional — replaces the built-in Clean Code prompt
+  // "systemPrompt": "You are ...",
+
+  // ── Shell sandbox ────────────────────────────────────────────────────────
+  "shellImage": "nexum-sandbox:latest", // optional, default: nexum-sandbox:latest  [until trust]
+  "shellTimeoutSec": 30, // optional, default: 30 seconds
+  "sandbox": true, // optional, default: true — false runs shell on the host  [until trust]
+  "dockerTool": false, // optional, default: false — host docker tool (root-equivalent)  [until trust]
+  "dockerEgress": false, // optional, default: false — allow network from containers  [until trust]
+
+  // ── Tool selection ───────────────────────────────────────────────────────
+  "toolSelectionMode": "hybrid", // optional, default: hybrid | heuristic | llm
+  "maxActiveTools": 8, // optional, default: 8 tools exposed per turn
+
+  // ── Approval & planning ──────────────────────────────────────────────────
+  "autoApprove": false, // optional, default: false — true removes the last guard on delete_file  [until trust]
+  "autoPlan": "ask", // optional, default: ask | always | off  [until trust]
+
+  // ── Hybrid local/cloud & quality gates ───────────────────────────────────
+  "enableLocalWorker": true, // optional, default: true — quick model first
+  "enableVerifier": false, // optional, default: false — critic pass (experimental)
+  "enableSelfConsistency": false, // optional, default: false — voting across N samples
+  "selfConsistencyN": 3, // optional, default: 3 votes
+  "selfConsistencyThreshold": 0.5, // optional, default: 0.5 agreement needed
+  "enableAvailabilityCheck": true, // optional, default: true — cache cloud key probes
+  "availabilityCheckTtlMs": 86400000, // optional, default: 86400000 (24h)
+  "enableHeuristicGate": true, // optional, default: true — block the heuristic's own allows
+
+  // ── Cost estimate ────────────────────────────────────────────────────────
+  // optional — Ollama publishes no per-token price, so cost tracking stays
+  // off until you supply your own rate (USD per million tokens)
+  // "pricing": { "inputPerMillion": 0.5, "outputPerMillion": 2.0 },
+
+  // ── Appearance ───────────────────────────────────────────────────────────
+  // optional — default | midnight | solarized | dracula | nord | github |
+  // gruvbox | tokyo-night | monokai | catppuccin | one-dark | vercel |
+  // high-contrast | high-contrast-light
+  // "theme": "default",
+
+  // ── Decision Plane (System One)  [until trust] ───────────────────────────
+  "enableDecision": false, // optional, default: false — auto-off on cloud tier
+  "decisionModel": "tev1", // optional, default: tev1 — dedicated, not the main model
+  "profile": "nexum-cli" // optional, default: nexum-cli | nexum-server | nexum-crypto-bot
+  // last active key — keep a comma here if you uncomment anything below it
+
+  // ── MCP servers  [until trust] ───────────────────────────────────────────
+  // env values may use "credential:NAME" to resolve through the credential
+  // store instead of plaintext — see docs/guide/configuration.md
+  // "mcpServers": [
+  //   {
+  //     "name": "sqlite",
+  //     "command": "npx",
+  //     "args": ["-y", "@modelcontextprotocol/server-sqlite", "app.db"],
+  //     "trust": "ask",
+  //     "env": { "TOKEN": "credential:MY_TOKEN" }
+  //   }
+  // ]
+}

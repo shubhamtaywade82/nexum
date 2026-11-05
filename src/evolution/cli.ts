@@ -32,6 +32,8 @@ import { EvolutionMetricsTracker } from "./metrics.js";
 import { AgentMutationStrategy } from "./mutation/agent-mutation.js";
 import { GitWorktreeMutationExecutor, MutationStrategy } from "./mutation/mutation-executor.js";
 import { NexumEngineeringAgentRuntime, chatClientFromProvider } from "./mutation/nexum-agent-runtime.js";
+import { KernelEvolutionAgentRuntime, modelGatewayFromChatClient } from "./mutation/kernel-agent-runtime.js";
+import { DefaultAgentRuntime } from "../runtime/agent/agent-runtime.js";
 import { EvolutionVerificationProfile, verificationProfileByName } from "./mutation/verification-profile.js";
 import { GitHubDeliveryAdapter } from "./delivery/github-adapter.js";
 import { ActivationMonitor, OperationalTelemetry } from "./monitoring/activation-monitor.js";
@@ -59,10 +61,12 @@ Options:
                          worktree → planned edits → verification → candidate commit
       --agent            Alias for --strategy agent.
       --strategy <name>  Mutation strategy for --mutate: "heuristic" (default,
-                         policy-manifest edit) or "agent" (the PRODUCTION
-                         engineering agent, NexumEngineeringAgentRuntime over
-                         the configured provider, proposing edits to the
-                         actual implementation).
+                         policy-manifest edit), "agent" (the PRODUCTION
+                         engineering agent run through the kernel —
+                         KernelEvolutionAgentRuntime: policy, budgets,
+                         concurrency gates, cancellation — proposing edits to
+                         the actual implementation), or "agent-legacy" (the
+                         previous private tool loop, for parity checks).
       --verify-profile <name>  Verification gates for the mutation worktree:
                          "smoke" (node liveness), "fast" (format + lint +
                          typecheck; default), "full" (fast + npm test,
@@ -213,7 +217,7 @@ export function formatExperimentsText(records: ReturnType<ExperimentStore["listA
 
 /** Formats the loop health report (first-class evolution metrics). */
 export function formatHealthReport(report: ReturnType<EvolutionMetricsTracker["report"]>): string {
-  const pct = (v: number | null) => (v === null ? "n/a" : `${(v * 100).toFixed(1)}%`);
+  const pct = (v: number | null) => (v === null ? "n/a (not measured)" : `${(v * 100).toFixed(1)}%`);
   const lines: string[] = [
     "=== Evolution Health Report ===",
     `Versions tracked:        ${report.totalVersions}`,
@@ -223,11 +227,11 @@ export function formatHealthReport(report: ReturnType<EvolutionMetricsTracker["r
     `Retention rate:          ${pct(report.retentionRate)}`,
     `Regression rate:         ${pct(report.regressionRate)}`,
     `Rollback rate:           ${pct(report.rollbackRate)}`,
-    `Mean visible gain:       ${(report.meanVisibleGain * 100).toFixed(1)}%`,
-    `Mean held-out gain:      ${(report.meanHeldOutGain * 100).toFixed(1)}%`,
-    `Mean transfer gain:      ${(report.meanTransferGain * 100).toFixed(1)}%`,
-    `Executor sensitivity:    ${(report.meanExecutorSensitivity * 100).toFixed(1)}%`,
-    `Experience→improvement r: ${report.experienceImprovementCorrelation?.toFixed(2) ?? "n/a"}`,
+    `Mean visible gain:       ${pct(report.meanVisibleGain)}`,
+    `Mean held-out gain:      ${pct(report.meanHeldOutGain)}`,
+    `Mean transfer gain:      ${pct(report.meanTransferGain)}`,
+    `Executor sensitivity:    ${pct(report.meanExecutorSensitivity)}`,
+    `Experience→improvement r: ${report.experienceImprovementCorrelation?.toFixed(2) ?? "n/a (not measured)"}`,
     "",
     report.promotionPrecisionVerdict,
   ];
@@ -351,25 +355,35 @@ async function runBenchmarkSuites(engine: EvolutionEngine, root: string): Promis
  * Rebuilds the metrics tracker from persisted experiment records so that the
  * health report reflects the full history, not just the current process.
  */
+/**
+ * Rebuilds loop metrics from persisted experiments. Only quantities the record
+ * actually carries are reported; the rest stay null/"unknown":
+ *   - gains exist only when Stage B ran (its deltas are what the record stores)
+ *   - transfer gain and executor sensitivity are not persisted per experiment
+ *   - "genuinely better on held-out" needs a post-promotion re-evaluation the
+ *     store does not hold (Stage B "improved" is a promotion precondition, so
+ *     using it would make promotion precision 100% by construction)
+ */
 export function metricsFromExperimentStore(store: ExperimentStore): EvolutionMetricsTracker {
   const tracker = new EvolutionMetricsTracker();
   for (const r of store.listAll()) {
     const promoted = r.decision.result === "eligible";
     const accepted =
       r.lifecycle.state === "ACTIVE" || r.lifecycle.state === "REGRESSED" || r.lifecycle.state === "ROLLBACK";
+    const stageBRan = r.decision.stageB !== "not_run";
     tracker.record({
       versionId: r.candidate.harness,
       parentVersionId: r.parent.harness,
-      visibleGain: r.metrics.capability,
-      heldOutGain: r.metrics.generalization,
-      transferGain: r.metrics.generalization,
+      visibleGain: stageBRan ? r.metrics.capability : null,
+      heldOutGain: stageBRan ? r.metrics.generalization : null,
+      transferGain: null,
       promoted,
-      genuinelyBetterOnHeldOut: promoted ? r.decision.stageB === "improved" : "unknown",
+      genuinelyBetterOnHeldOut: "unknown",
       accepted,
       rolledBack: r.lifecycle.state === "ROLLBACK",
       retainedBySuccessor: "unknown",
       executorModels: [r.executor.primary, ...r.executor.transfer],
-      executorSensitivity: 0,
+      executorSensitivity: null,
     });
   }
   return tracker;
@@ -475,22 +489,37 @@ export function providerFromConfig(cfg: CliConfig): Provider {
   });
 }
 
+/** Mutation strategy names accepted by `nexum evolve --strategy`. */
+export const MUTATION_STRATEGIES = ["heuristic", "agent", "agent-legacy"] as const;
+
 /**
  * Resolves the mutation strategy for `nexum evolve --mutate`:
  *   absent/"heuristic" → null (executor's built-in HeuristicMutationStrategy);
- *   "agent"            → AgentMutationStrategy backed by NexumEngineeringAgentRuntime
- *                        (the production engineering agent on the configured Provider).
+ *   "agent"            → AgentMutationStrategy backed by KernelEvolutionAgentRuntime
+ *                        (same propose-only protocol, spawned through AgentRuntime.execute
+ *                        so policy, budgets, gates and cancellation apply);
+ *   "agent-legacy"     → AgentMutationStrategy backed by NexumEngineeringAgentRuntime
+ *                        (the pre-kernel private loop, kept for parity comparison).
  * Throws for unknown names so typos fail loudly instead of silently
  * downgrading to the heuristic planner.
  */
 export function buildMutationStrategy(name: string | undefined, cfg: CliConfig): MutationStrategy | null {
   if (!name || name === "heuristic") return null;
-  if (name !== "agent") {
-    throw new Error(`Unknown mutation strategy "${name}" (expected "heuristic" or "agent").`);
+  const chat = () => chatClientFromProvider(providerFromConfig(cfg));
+  if (name === "agent") {
+    return new AgentMutationStrategy({
+      runtime: new KernelEvolutionAgentRuntime({
+        runtime: new DefaultAgentRuntime(),
+        modelGateway: modelGatewayFromChatClient(chat()),
+      }),
+    });
   }
-  return new AgentMutationStrategy({
-    runtime: new NexumEngineeringAgentRuntime({ chat: chatClientFromProvider(providerFromConfig(cfg)) }),
-  });
+  if (name === "agent-legacy") {
+    return new AgentMutationStrategy({ runtime: new NexumEngineeringAgentRuntime({ chat: chat() }) });
+  }
+  throw new Error(
+    `Unknown mutation strategy "${name}" (expected ${MUTATION_STRATEGIES.map((n) => `"${n}"`).join(", ")}).`,
+  );
 }
 
 export interface GithubDeliveryEnvConfig {
@@ -520,12 +549,12 @@ export function resolveGithubDeliveryConfig(env: NodeJS.ProcessEnv = process.env
 
 /** Parses the benchmark CLI's `--json` output into TaskExecutionResults. */
 export function parseBenchmarkJson(stdout: string): TaskExecutionResult[] {
-  const start = stdout.indexOf("[");
-  const end = stdout.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) {
+  // Extract JSON array, ignoring bracketed log messages on stdout like "[Learning]...".
+  const match = stdout.match(/\[\s*\{[\s\S]*\}\s*\]/) ?? stdout.match(/(?:^|\n)\s*\[\s*\]/);
+  if (!match) {
     throw new Error(`benchmark --json produced no results array: ${stdout.slice(0, 400)}`);
   }
-  const results = JSON.parse(stdout.slice(start, end + 1)) as BenchmarkResult[];
+  const results = JSON.parse(match[0].trim()) as BenchmarkResult[];
   return results.map(toTaskExecutionResult);
 }
 
@@ -553,7 +582,9 @@ export async function runBenchmarkInDir(
     // fallback for workspaces prepared without it.)
     symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "junction");
   }
-  const args = [tsxEntry, "src/benchmark/cli.ts", "--json"];
+  // The agent driver runs each case through the worktree's own Agent, so a mutation to the
+  // runtime, prompts, routing or tool selection can move the score. The model driver could not.
+  const args = [tsxEntry, "src/benchmark/cli.ts", "--json", "--driver", "agent"];
   for (const category of categories) args.push("--category", category);
   const { stdout } = await execFileAsync("node", args, { cwd: dir, maxBuffer: 32 * 1024 * 1024 });
   return parseBenchmarkJson(stdout);
@@ -614,7 +645,9 @@ async function activateRuntimeIfNeeded(
   outcome: Awaited<ReturnType<ClosedLoopEngine["runEvolutionCycle"]>>,
 ): Promise<NonNullable<ExperimentArtifactInput["activation"]>> {
   const harnessId = outcome.ok ? outcome.outcome.experiment.candidate.harness : "";
-  const base = { controller: controller.name, harnessId };
+  // The launcher in bin/cli.js (src/platform/harness-launcher.ts) runs the pointer's commit for
+  // every agent command started from this checkout, so an activation changes what runs next.
+  const base = { controller: controller.name, harnessId, consumedByRuntime: true };
   if (!outcome.ok) {
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error: "cycle did not produce a candidate" };
   }
@@ -631,7 +664,7 @@ async function activateRuntimeIfNeeded(
     }
     const pointer = controller.readPointer();
     console.log(
-      `[Evolution] Runtime activated: harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)} (manifest pointer: nexum.harness.json).`,
+      `[Evolution] Activated harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)}. The next agent command started from this checkout runs it; processes already running keep their code.`,
     );
     return {
       ...base,
@@ -659,8 +692,10 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     console.error(`--agent and --strategy ${values.strategy} conflict; pass only one.`);
     return;
   }
-  if (strategyName && strategyName !== "heuristic" && strategyName !== "agent") {
-    console.error(`Unknown mutation strategy "${strategyName}" (expected "heuristic" or "agent").`);
+  if (strategyName && !(MUTATION_STRATEGIES as readonly string[]).includes(strategyName)) {
+    console.error(
+      `Unknown mutation strategy "${strategyName}" (expected ${MUTATION_STRATEGIES.map((n) => `"${n}"`).join(", ")}).`,
+    );
     return;
   }
   // Verification profile: the gates the candidate must survive INSIDE the

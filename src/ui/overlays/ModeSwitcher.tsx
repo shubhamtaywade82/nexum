@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { AGENT_MODES, AGENT_MODE_LABELS, AgentMode } from "../../runtime/types.js";
 import { useTheme } from "../ui/hooks/use-theme.js";
 import { OverlayFrame } from "./OverlayFrame.js";

@@ -33,15 +33,6 @@ export function detailForDensity(density: Density): DetailLevel {
 export const MAX_COMPLETION_ROWS = 6;
 
 /**
- * Total rows consumed by the prompt area: PromptBar height (1–2) plus
- * completion surface rows (0 to MAX_COMPLETION_ROWS). Callers use this
- * instead of bare `promptBarRows` when budgeting fixed chrome.
- */
-export function promptAreaRows(promptBarHeight: 1 | 2, completionCount: number): number {
-  return promptBarHeight + Math.min(completionCount, MAX_COMPLETION_ROWS);
-}
-
-/**
  * Rows available to the Active View given total terminal rows.
  * Fixed chrome: Header(1) + divider(1) + ActivityStrip(1) + divider(1) +
  * Prompt(1 baseline) + divider(1) + ContextStrip(1) = 7. Pass promptRows

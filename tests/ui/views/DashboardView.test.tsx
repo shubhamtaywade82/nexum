@@ -19,8 +19,8 @@ function makeWorld() {
   return { bus, store, agent };
 }
 
-// ink-testing-library hardcodes its mock stdout.columns to 100, which
-// silently corrupts any render wider than that (see tests/tui/wide-render.ts's
+// The default test render hardcodes stdout.columns to 100, which
+// silently corrupts any render wider than that (see tests/ui/wide-render.ts's
 // doc comment) — the Dashboard view only activates its rail layout at
 // >=130 cols, so it must be rendered through renderWide to get a frame
 // that faithfully represents what a real terminal shows.

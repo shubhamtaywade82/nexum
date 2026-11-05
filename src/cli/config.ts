@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, isAbsolute, resolve } from "node:path";
 import { envIs, readEnv, readEnvFlag } from "../platform/environment.js";
 import { THEME_ORDER, ThemeName } from "../runtime/types.js";
 import {
@@ -9,6 +9,7 @@ import {
   legacyWorkspaceStateDir,
   workspaceStateDir,
 } from "../platform/paths.js";
+import type { McpServerTrustConfig, McpToolRule } from "../mcp/trust.js";
 
 export interface LanguageOverride {
   enabled?: boolean;
@@ -33,6 +34,12 @@ export interface CliConfig {
   shellImage?: string;
   shellTimeoutSec?: number;
   sandbox?: boolean;
+  /** Absolute directory file-mutating tools are confined to (inside workspaceRoot). Unset = the whole workspace. */
+  writeScope?: string;
+  /** Mount the host `docker` tool (daemon access is root-equivalent; default off). */
+  dockerTool?: boolean;
+  /** Let containers started by the docker tool reach the network (default off: internal network only). */
+  dockerEgress?: boolean;
   languages?: Record<string, LanguageOverride>;
   lsp?: LspCliConfig;
   toolSelectionMode?: "heuristic" | "llm" | "hybrid";
@@ -40,6 +47,10 @@ export interface CliConfig {
   /** Pool of Ollama Cloud API keys (e.g. separate accounts) — Provider rotates to the
    * next key on a 429 before giving up. Ollama Cloud only, not a multi-vendor router. */
   apiKeys?: string[];
+  /** apiKey → display label, resolved from the config file's structured
+   * `accounts`. Names the rows /usage and /balance print; keys without a
+   * label fall back to a masked suffix of the key itself. */
+  accountLabels?: Record<string, string>;
   /** Preferred local model name (substring match) for the "quick" capability,
    * e.g. "minicpm5" — see ModelCatalog.modelsFor. */
   quickModel?: string;
@@ -76,13 +87,58 @@ export interface CliConfig {
    * commands) without prompting. Off by default; only for CI/benchmark runs
    * and throwaway containers. Enable with NEXUM_AUTO_APPROVE=true. */
   autoApprove?: boolean;
+  /** How a top-level multi-step request is handled: "ask" (default) offers to run it as a checkpointed
+   * plan and waits for approval, "always" plans without asking, "off" never routes. NEXUM_AUTO_PLAN. */
+  autoPlan?: "ask" | "always" | "off";
   /** Color theme for the TUI: one of the built-in THEME_ORDER names.
    * Set in .nexum/config.json ("theme") or NEXUM_THEME; defaults to "default". */
   theme?: ThemeName;
   /** External MCP (Model Context Protocol) servers to connect at startup —
    * each spawns `command args...` over stdio and registers its tools.
-   * Configure in .nexum/config.json; there is no in-session "/mcp add". */
-  mcpServers?: Array<{ name: string; command: string; args?: string[] }>;
+   * Configure in .nexum/config.json; there is no in-session "/mcp add".
+   * The P2 trust fields (trust/tools/maxRisk) are optional gates — see
+   * docs/guide/mcp.md § Trust policy. */
+  mcpServers?: McpCliServerConfig[];
+  /** Whether the workspace's own settings were applied (see workspace-trust.ts). */
+  workspaceTrust: {
+    status: WorkspaceTrustStatus;
+    trusted: boolean;
+    /** Workspace config keys ignored because the workspace is not trusted. */
+    withheldKeys: string[];
+    /** Workspace .env files not loaded because the workspace is not trusted. */
+    skippedEnvFiles: string[];
+  };
+
+  // ── Decision Plane (System One) ───────────────────────────────────────────
+  /** Enable the bounded Decision Plane (System One). Off by default — System
+   * One is an optimization/decision aid, never a mandatory runtime
+   * dependency. Enable with NEXUM_DECISION=true. When the runtime tier is
+   * `cloud`, the decision plane stays disabled automatically (System One is
+   * local-only — see contracts/overlays/systemone.yaml in the upstream SDK). */
+  enableDecision?: boolean;
+  /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
+  profile?: string;
+  /** Dedicated model used for bounded decisions (classification/scoring/
+   * gating/routing). Independent of the primary generation `model` — the
+   * primary model handles reasoning/coding/generation; the decision model
+   * handles small bounded decisions. Default: `tev1` (the 4B System One
+   * model from Together AI, published at https://ollama.com/library/tev1;
+   * NOT claimed to be universally best — `tev1:0.8b` is the smaller-memory
+   * alternative; tunable via NEXUM_DECISION_MODEL). */
+  decisionModel?: string;
+}
+
+/** One config-listed MCP server. Listing a server is consent to connect it:
+ * entries without trust fields keep the connect-freely behavior. */
+export interface McpCliServerConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  trust?: McpServerTrustConfig["trust"];
+  tools?: McpToolRule;
+  maxRisk?: McpServerTrustConfig["maxRisk"];
+  /** Extra environment for the server process; `credential:NAME` values resolve via CredentialService. */
+  env?: Record<string, string>;
 }
 
 interface ConfigFile {
@@ -96,9 +152,17 @@ interface ConfigFile {
   shellImage?: string;
   shellTimeoutSec?: number;
   sandbox?: boolean;
+  /** Write scope, relative to the workspace root (or absolute). */
+  writeScope?: string;
+  dockerTool?: boolean;
+  dockerEgress?: boolean;
   toolSelectionMode?: string;
   maxActiveTools?: number;
   apiKeys?: string[];
+  /** Structured form of `apiKeys`: each key paired with the name shown by
+   * /usage and /balance. Preferred over the flat list — the pairing cannot
+   * drift — but both may be present. */
+  accounts?: Array<{ apiKey: string; label?: string }>;
   quickModel?: string;
   enableLocalWorker?: boolean;
   enableVerifier?: boolean;
@@ -109,11 +173,16 @@ interface ConfigFile {
   enableAvailabilityCheck?: boolean;
   enableHeuristicGate?: boolean;
   autoApprove?: boolean;
+  autoPlan?: string;
   /** Ollama itself has no published per-token price (subscription/GPU-time
    * billing) — this only computes a cost estimate if you supply your own
    * real rate. Omit to leave cost tracking off (the honest default). */
   pricing?: { inputPerMillion: number; outputPerMillion: number };
-  mcpServers?: Array<{ name: string; command: string; args?: string[] }>;
+  mcpServers?: McpCliServerConfig[];
+  enableDecision?: boolean;
+  /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
+  profile?: string;
+  decisionModel?: string;
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are a focused coding assistant operating in a local workspace. \
@@ -127,15 +196,54 @@ const GLOBAL_CONFIG_DIR = globalStateDir();
 // Legacy DevAgent-era global state — read as a deprecated fallback, never written.
 const LEGACY_GLOBAL_CONFIG_DIR = legacyGlobalStateDir();
 
-/** Parse a config JSON file, tolerating absence and malformed content. */
+/** Remove `//` and `/* *`/ comments, leaving string literals (URLs, prompts)
+ * untouched. Only ever applied after a strict JSON.parse has already failed,
+ * so a valid config is never handed to it. */
+function stripJsonComments(raw: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (inString) {
+      out += c;
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+    } else if (c === "/" && raw[i + 1] === "/") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      out += "\n"; // keep the line count stable
+    } else if (c === "/" && raw[i + 1] === "*") {
+      i += 2;
+      while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
+      i++;
+      out += " ";
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+/** Parse a config JSON file, tolerating absence and malformed content.
+ * `//` comments are accepted (config.example.jsonc ships with them), but only
+ * once plain JSON.parse has rejected the file — a comment typo then costs you
+ * the whole file, exactly as any other syntax error would. */
 function readConfigFile(p: string): ConfigFile {
   if (!existsSync(p)) return {};
-  try {
-    const raw = readFileSync(p, "utf8");
-    const parsed = JSON.parse(raw) as ConfigFile;
-    if (parsed && typeof parsed === "object") return parsed;
-  } catch {
-    // skip malformed config file
+  const raw = readFileSync(p, "utf8");
+  for (const candidate of [raw, stripJsonComments(raw)]) {
+    try {
+      const parsed = JSON.parse(candidate) as ConfigFile;
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      // try the next candidate
+    }
   }
   return {};
 }
@@ -162,16 +270,24 @@ function loadWorkspaceConfig(root: string): ConfigFile {
   return { ...legacy, ...current };
 }
 
-export function saveWorkspaceConfig(root: string, partial: Partial<ConfigFile>): void {
+export function saveWorkspaceConfig(
+  root: string,
+  partial: Partial<ConfigFile>,
+  trustStore: WorkspaceTrustStore = WorkspaceTrustStore.global(),
+): void {
   const dir = workspaceStateDir(root);
   const p = join(dir, "config.json");
   try {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    const current = loadWorkspaceConfig(root);
-    const merged = { ...current, ...partial };
-    writeFileSync(p, JSON.stringify(merged, null, 2), "utf8");
+    // a save the user makes keeps a trusted workspace trusted, and never
+    // makes an untrusted one trusted
+    preservingTrust(root, trustStore, () => {
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+      const current = loadWorkspaceConfig(root);
+      const merged = { ...current, ...partial };
+      writeFileSync(p, JSON.stringify(merged, null, 2), "utf8");
+    });
   } catch {
     // Non-fatal if directory is not writable
   }
@@ -206,9 +322,25 @@ function loadAgentsFile(root: string): string {
 }
 
 import { config as dotenvConfig } from "dotenv";
+import {
+  partitionWorkspaceConfig,
+  preservingTrust,
+  workspaceTrustState,
+  WorkspaceTrustStore,
+  type WorkspaceTrustStatus,
+} from "./workspace-trust.js";
 
-function loadEnvFiles(workspaceRoot: string): void {
-  if (envIs("TEST_NO_GLOBAL", "true")) return;
+/**
+ * Load `.env` files into Nexum's own process. The global one is the user's;
+ * the workspace/cwd ones are repository content and load only when the
+ * workspace is trusted (they can set PATH, NODE_OPTIONS, NEXUM_SANDBOX…).
+ * Returns the workspace files that were skipped.
+ */
+function loadEnvFiles(workspaceRoot: string, workspaceTrusted: boolean): string[] {
+  const cwdEnv = join(process.cwd(), ".env");
+  const workspaceEnv = join(workspaceRoot, ".env");
+  const skipped = workspaceTrusted ? [] : [...new Set([cwdEnv, workspaceEnv])].filter((f) => existsSync(f));
+  if (envIs("TEST_NO_GLOBAL", "true")) return skipped;
   // Canonical ~/.nexum/.env; legacy ~/.devagent/.env still loads (deprecated)
   // when the canonical file does not exist.
   const globalEnv = join(GLOBAL_CONFIG_DIR, ".env");
@@ -220,21 +352,48 @@ function loadEnvFiles(workspaceRoot: string): void {
       dotenvConfig({ path: legacyGlobalEnv, override: false, quiet: true } as any);
     }
   }
-  const cwdEnv = join(process.cwd(), ".env");
+  if (!workspaceTrusted) return skipped;
   if (existsSync(cwdEnv)) {
     dotenvConfig({ path: cwdEnv, override: true, quiet: true } as any);
   }
-  const workspaceEnv = join(workspaceRoot, ".env");
   if (existsSync(workspaceEnv) && workspaceEnv !== cwdEnv) {
     dotenvConfig({ path: workspaceEnv, override: true, quiet: true } as any);
   }
+  return skipped;
 }
 
-export function loadConfig(): CliConfig {
+/**
+ * Load the global .env and — only for a trusted workspace — the workspace
+ * .env files. The CLI entry calls this for every command (it replaces the
+ * unconditional `dotenv/config`); loadConfig() does the same on its own.
+ */
+export function applyEnvFiles(opts: LoadConfigOptions = {}): void {
   const workspaceRoot = findWorkspaceRoot(process.cwd());
-  loadEnvFiles(workspaceRoot);
+  const trust = workspaceTrustState(workspaceRoot, opts.trustStore ?? WorkspaceTrustStore.global());
+  loadEnvFiles(workspaceRoot, trust.trusted);
+}
+
+export interface LoadConfigOptions {
+  /** Where workspace trust is recorded (default: ~/.nexum/trusted-workspaces.json). */
+  trustStore?: WorkspaceTrustStore;
+}
+
+/** "ask" | "always" | "off"; the older NEXUM_PLAN_HINT=0 still means "off". Unknown values fall back to "ask". */
+export function parseAutoPlan(value: string | undefined, legacyHint?: string): "ask" | "always" | "off" {
+  const v = value?.trim().toLowerCase();
+  if (v === "ask" || v === "always" || v === "off") return v;
+  if (legacyHint === "0") return "off";
+  return "ask";
+}
+
+export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
+  const workspaceRoot = findWorkspaceRoot(process.cwd());
+  const trust = workspaceTrustState(workspaceRoot, opts.trustStore ?? WorkspaceTrustStore.global());
+  const skippedEnvFiles = loadEnvFiles(workspaceRoot, trust.trusted);
   const globalFile = loadGlobalConfig();
-  const workspaceFile = loadWorkspaceConfig(workspaceRoot);
+  const rawWorkspaceFile = loadWorkspaceConfig(workspaceRoot);
+  const { safe, withheld } = partitionWorkspaceConfig(rawWorkspaceFile);
+  const workspaceFile: ConfigFile = trust.trusted ? rawWorkspaceFile : safe;
   // Workspace config overrides global, env vars override both.
   // Product env vars resolve NEXUM_* first, then deprecated DEVAGENT_*
   // (see platform/environment.ts — legacy reads warn on stderr).
@@ -275,6 +434,16 @@ export function loadConfig(): CliConfig {
     .map((k) => k.trim())
     .filter(Boolean);
   const apiKeys = [...new Set([...(primaryApiKey ? [primaryApiKey] : []), ...envKeys, ...(file.apiKeys ?? [])])];
+
+  // Structured `accounts` pair each key with the name /usage and /balance
+  // print. Labels are keyed by apiKey — not by position — so a key listed
+  // twice, or through both forms, resolves to exactly one label.
+  const accountLabels: Record<string, string> = {};
+  for (const account of file.accounts ?? []) {
+    const label = typeof account?.label === "string" ? account.label.trim() : "";
+    if (account?.apiKey && label) accountLabels[account.apiKey] = label;
+    if (account?.apiKey && !apiKeys.includes(account.apiKey)) apiKeys.push(account.apiKey);
+  }
 
   // Number() on a malformed value yields NaN, which is not nullish and so
   // sails straight past every `?? default` downstream. Validate here instead.
@@ -327,9 +496,13 @@ export function loadConfig(): CliConfig {
     shellImage: readEnv("SHELL_IMAGE") || file.shellImage,
     shellTimeoutSec,
     sandbox: readEnvFlag("SANDBOX", file.sandbox ?? true),
+    dockerTool: readEnvFlag("DOCKER_TOOL", file.dockerTool ?? false),
+    dockerEgress: readEnvFlag("DOCKER_EGRESS", file.dockerEgress ?? false),
+    writeScope: resolveWriteScope(readEnv("WRITE_SCOPE") || file.writeScope, workspaceRoot),
     toolSelectionMode,
     maxActiveTools,
     apiKeys: apiKeys.length ? apiKeys : undefined,
+    accountLabels: Object.keys(accountLabels).length ? accountLabels : undefined,
     quickModel: readEnv("QUICK_MODEL") || file.quickModel,
     // Hybrid architecture flags
     enableLocalWorker: readEnvFlag("LOCAL_WORKER", file.enableLocalWorker ?? true),
@@ -345,7 +518,25 @@ export function loadConfig(): CliConfig {
     enableAvailabilityCheck: readEnvFlag("AVAIL_CHECK", file.enableAvailabilityCheck ?? true),
     enableHeuristicGate: readEnvFlag("HEURISTIC_GATE", file.enableHeuristicGate ?? true),
     autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? false),
+    autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
     mcpServers: file.mcpServers,
+    // Decision Plane (System One): off by default; auto-disabled in a cloud
+    // tier (System One is local-only — the gateway itself enforces this
+    // too, but disabling at config time means no adapter is even built).
+    enableDecision: readEnvFlag("DECISION", file.enableDecision ?? false),
+    profile: readEnv("PROFILE") || file.profile || "nexum-cli",
+    decisionModel: readEnv("DECISION_MODEL") || file.decisionModel || "tev1",
+    workspaceTrust: {
+      status: trust.status,
+      trusted: trust.trusted,
+      withheldKeys: trust.trusted ? [] : withheld,
+      skippedEnvFiles,
+    },
   };
+}
+
+function resolveWriteScope(raw: string | undefined, workspaceRoot: string): string | undefined {
+  if (!raw) return undefined;
+  return isAbsolute(raw) ? raw : resolve(workspaceRoot, raw);
 }

@@ -69,7 +69,11 @@ export class DestructiveShellRule implements PolicyRule {
     if (DESTRUCTIVE_SHELL_PATTERNS.some((p) => p.test(command))) {
       return confirm(request.tool.id, `destructive shell command: ${command}`, this.id);
     }
-    if (this.allowBenignFaces) return allow(request.tool.id, "shell command is non-destructive", this.id);
+    // "benign" is judged from the command text, which cannot bound what a command does on the
+    // host (`cat ~/.aws/credentials` is not destructive) — host shells fall through to confirmation.
+    if (this.allowBenignFaces && request.tool.execution.isolation !== "host") {
+      return allow(request.tool.id, "shell command is non-destructive", this.id);
+    }
     return null;
   }
 }
@@ -98,6 +102,30 @@ export class GitPublishRule implements PolicyRule {
     }
     if (this.allowBenignFaces) return allow(request.tool.id, "local version-control operation", this.id);
     return null;
+  }
+}
+
+/** Tools that change files in the workspace; also what "auto-edit" approval mode pre-approves. */
+export const FILE_EDIT_TOOLS: ReadonlySet<string> = new Set([
+  "write_file",
+  "append_file",
+  "apply_patch",
+  "patch_file",
+  "edit_file_lines",
+  "copy_file",
+  "move_file",
+  "rename_symbol",
+]);
+
+/** File edits: asked before they happen, so an agent never rewrites the user's repo unseen. */
+export class FileEditRule implements PolicyRule {
+  readonly id = "file-edit";
+  readonly description = "Requires confirmation for every workspace file change.";
+
+  evaluate(request: PolicyRequest): PolicyDecision | null {
+    if (!FILE_EDIT_TOOLS.has(request.tool.id)) return null;
+    const path = typeof request.args.path === "string" ? request.args.path : "workspace files";
+    return confirm(request.tool.id, `${request.tool.id} on "${path}"`, this.id);
   }
 }
 

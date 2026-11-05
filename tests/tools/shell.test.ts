@@ -158,13 +158,41 @@ describe("ShellTool", () => {
     const tool = new ShellTool({ workspaceRoot: "/tmp/ws", sandbox: false });
     const promise = tool.call({ command: "echo host" });
 
-    expect(mockSpawn).toHaveBeenCalledWith("sh", ["-c", "echo host"], { cwd: "/tmp/ws" });
+    expect(mockSpawn).toHaveBeenCalledWith("sh", ["-c", "echo host"], expect.objectContaining({ cwd: "/tmp/ws" }));
 
     proc.stdout.emit("data", Buffer.from("host\n"));
     proc.emit("close", 0);
 
     const result = await promise;
     expect(result).toMatchObject({ exitCode: 0, stdout: "host\n" });
+  });
+});
+
+describe("ShellTool host mode", () => {
+  it("removes credential variables from the host command's environment", async () => {
+    process.env.NEXUM_TEST_API_KEY = "sk-live";
+    process.env.NEXUM_TEST_GITHUB_TOKEN = "ghp_x";
+    process.env.NEXUM_TEST_PLAIN = "kept";
+    try {
+      const proc = fakeProc();
+      mockSpawn.mockReturnValue(proc);
+      const promise = new ShellTool({ workspaceRoot: "/tmp/ws", sandbox: false }).call({ command: "env" });
+      const env = (mockSpawn.mock.calls[0][2] as { env: Record<string, string> }).env;
+      expect(env.NEXUM_TEST_API_KEY).toBeUndefined();
+      expect(env.NEXUM_TEST_GITHUB_TOKEN).toBeUndefined();
+      expect(env.NEXUM_TEST_PLAIN).toBe("kept");
+      expect(env.PATH).toBe(process.env.PATH);
+      proc.emit("close", 0);
+      await promise;
+    } finally {
+      delete process.env.NEXUM_TEST_API_KEY;
+      delete process.env.NEXUM_TEST_GITHUB_TOKEN;
+      delete process.env.NEXUM_TEST_PLAIN;
+    }
+  });
+
+  it("describes itself as host execution needing confirmation", () => {
+    expect(new ShellTool({ workspaceRoot: "/tmp/ws", sandbox: false }).description).toMatch(/HOST.*confirmation/);
   });
 });
 

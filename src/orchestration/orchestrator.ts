@@ -86,6 +86,8 @@ export interface OrchestratorOptions {
   /** Replans already spent before the checkpoint. Without it a crash-loop
    * resets the budget to zero on every resume and the guard never fires. */
   replanCount?: number;
+  /** Mission goal, persisted with the checkpoint for resume. */
+  goal?: string;
 }
 
 export class Orchestrator {
@@ -104,6 +106,7 @@ export class Orchestrator {
   private replanCount: number;
   private readonly onStepChange?: (step: PlanStep) => void;
   private readonly checkpoint?: CheckpointStore;
+  private readonly goal?: string;
 
   constructor(opts: OrchestratorOptions) {
     this.steps = new Map(opts.steps.map((s) => [s.id, s]));
@@ -123,6 +126,7 @@ export class Orchestrator {
     this.checkpoint = opts.checkpoint;
     this.history = opts.history ? [...opts.history] : [];
     this.replanCount = opts.replanCount ?? 0;
+    this.goal = opts.goal;
   }
 
   private saveCheckpoint(): void {
@@ -130,6 +134,7 @@ export class Orchestrator {
       steps: [...this.steps.values()],
       history: this.history,
       replanCount: this.replanCount,
+      ...(this.goal ? { goal: this.goal } : {}),
     });
   }
 

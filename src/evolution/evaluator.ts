@@ -22,6 +22,8 @@ export interface TaskExecutionResult {
   toolCalls: number;
   toolErrors: number;
   tokens: number;
+  /** True when `tokens` is an estimate because the provider reported no usage counts. */
+  tokensEstimated?: boolean;
   latencyMs: number;
   loopAborted: boolean;
   isHeldOut?: boolean;

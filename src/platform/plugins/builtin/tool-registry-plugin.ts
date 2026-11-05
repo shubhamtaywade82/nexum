@@ -16,7 +16,7 @@ import { definePlugin } from "../types.js";
 /** Token for the shared ToolCatalog. */
 export const TOOL_CATALOG = defineCapabilityToken<ToolCatalog>("nexum:tools:catalog");
 
-export function toolRegistryPlugin() {
+export function toolRegistryPlugin(opts: { catalog?: ToolCatalog } = {}) {
   return definePlugin({
     manifest: {
       id: "tool-registry",
@@ -26,7 +26,7 @@ export function toolRegistryPlugin() {
       provides: ["tools"],
     },
     setup(ctx) {
-      const catalog = new ToolCatalog();
+      const catalog = opts.catalog ?? new ToolCatalog();
       ctx.provide(TOOL_CATALOG.id, catalog);
       ctx.declareCapability("tools");
       ctx.log.debug("tool catalog registered");

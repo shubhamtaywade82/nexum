@@ -3,9 +3,12 @@ import { parseArgs } from "node:util";
 import { Provider } from "../models/adapters/provider.js";
 import { ModelCatalog, isEmbeddingModel } from "../models/catalog.js";
 import { loadConfig } from "../cli/config.js";
+import { Agent } from "../cli/agent.js";
+import { createAgentDriver } from "./agent-driver.js";
 import { runBenchmark, BenchmarkTarget } from "./runner.js";
 import { BUILTIN_CASES } from "./cases.js";
 import { buildAgenticCases } from "./cases-agentic.js";
+import { buildHarnessCases } from "./cases-harness.js";
 import { buildExecutionCases } from "./cases-execution.js";
 import { BenchmarkCase } from "./types.js";
 import { scoreByModel, scoreByCategory } from "./score.js";
@@ -19,8 +22,16 @@ async function main() {
       timeout: { type: "string", short: "t" },
       verbose: { type: "boolean", short: "v" },
       json: { type: "boolean" },
+      // "agent" runs agentic cases through the harness's own Agent; "model" (default) calls the model directly.
+      driver: { type: "string" },
     },
   });
+  const driverName = values.driver ?? "model";
+  if (driverName !== "model" && driverName !== "agent") {
+    console.error(`Unknown --driver "${driverName}" (expected "model" or "agent").`);
+    process.exitCode = 1;
+    return;
+  }
   const timeoutMs = values.timeout ? Number(values.timeout) : undefined;
   const verbose = values.verbose ?? false;
 
@@ -68,11 +79,25 @@ async function main() {
   const executionCases = await buildExecutionCases();
   const categoryFilter = values.category;
   const buildCases = (): BenchmarkCase[] => {
-    const all = [...BUILTIN_CASES, ...buildAgenticCases(), ...executionCases];
+    const all = [...BUILTIN_CASES, ...buildAgenticCases(), ...buildHarnessCases(), ...executionCases];
     return categoryFilter ? all.filter((c) => c.category === categoryFilter) : all;
   };
 
-  const caseCount = buildCases().length;
+  // One fresh Agent per case, built from this workspace's own config: the harness under test.
+  // The quick model is pinned to the target so routing does not swap the executor mid-case;
+  // any other model the router still picks is reported in the result's modelsUsed.
+  const agentDriver =
+    driverName === "agent"
+      ? createAgentDriver(
+          ({ workspaceRoot, target, events }) =>
+            new Agent({
+              config: { ...cfg, workspaceRoot, model: target.model, tier: target.tier, quickModel: target.model },
+              events,
+            }),
+        )
+      : undefined;
+
+  const caseCount = buildCases().filter((c) => !agentDriver || c.kind === "agentic").length;
   if (caseCount === 0) {
     console.error(`No case matches --category "${values.category}".`);
     process.exitCode = 1;
@@ -83,6 +108,7 @@ async function main() {
 
   const results = await runBenchmark(targets, buildCases, {
     timeoutMs,
+    agentDriver,
     onProgress: values.json
       ? undefined
       : (e) => {

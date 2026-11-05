@@ -2,7 +2,7 @@ import { Tool } from "./tool.js";
 import { DocsStore } from "../docs/store.js";
 import { DOC_CATALOG, findCatalogEntry } from "../docs/catalog.js";
 import { detectWorkspaceDocSources } from "../docs/workspace-detect.js";
-import { ingestDocSource } from "../docs/ingest.js";
+import { LazyDocs } from "../docs/lazy.js";
 
 const MAX_BODY_CHARS = 6000;
 
@@ -16,28 +16,16 @@ function resolveSlugs(ids: string[], store: DocsStore): string[] {
   return slugs;
 }
 
-/** Lazy-auto-fetch: ingest whichever of `ids` aren't in the store yet, so a
- * doc lookup works on first use instead of requiring `npm run docs:ingest`
- * ahead of time. Best-effort — a bad id or network failure is swallowed
- * here and just leaves that source unavailable; the caller falls back to
- * whatever it does have. */
-async function ensureIngested(ids: string[], store: DocsStore): Promise<void> {
-  const missing = ids.filter((id) => resolveSlugs([id], store).length === 0);
-  for (const id of missing) {
-    try {
-      await ingestDocSource(store, id);
-    } catch {
-      // unknown doc id or offline — leave it out of the resolved set
-    }
-  }
-}
-
 export class SearchDocsTool extends Tool {
+  private readonly lazy: LazyDocs;
+
   constructor(
     private readonly store: DocsStore,
     private readonly workspaceRoot: string,
+    lazy?: LazyDocs,
   ) {
     super();
+    this.lazy = lazy ?? new LazyDocs(store);
   }
 
   get name(): string {
@@ -46,9 +34,10 @@ export class SearchDocsTool extends Tool {
 
   get description(): string {
     return (
-      "Full-text search over library/framework documentation (DevDocs), fetched on first use if not already " +
-      "cached locally. By default scopes to sources relevant to this workspace (auto-detected from package.json/" +
-      "Gemfile/etc); pass `source` to search a specific doc set instead. Use `list_doc_sources` to see what's ingested."
+      "Full-text search over library/framework documentation (DevDocs). Searches the locally cached sources " +
+      "relevant to this workspace (auto-detected from package.json/Gemfile/etc) and downloads a missing source " +
+      "only when the query needs it (at most two per call). Pass `source` to search one specific doc set instead. " +
+      "Use `list_doc_sources` to see what's cached."
     );
   }
 
@@ -79,32 +68,41 @@ export class SearchDocsTool extends Tool {
 
     const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 50) : 8;
 
-    let slugs: string[] | undefined;
-    let scope: "explicit" | "workspace" | "all" = "all";
-
     if (typeof args.source === "string" && args.source.trim()) {
       const source = args.source.trim();
-      await ensureIngested([source], this.store);
-      slugs = resolveSlugs([source], this.store);
-      scope = "explicit";
+      await this.lazy.ensure(source);
+      const slugs = resolveSlugs([source], this.store);
       if (slugs.length === 0) {
         return {
           error: "UnknownSourceError",
           message: `"${source}" isn't a recognized DevDocs source and couldn't be fetched. Check list_doc_sources for available ids.`,
         };
       }
-    } else {
-      const workspaceIds = detectWorkspaceDocSources(this.workspaceRoot);
-      if (workspaceIds.length > 0) await ensureIngested(workspaceIds, this.store);
-      const workspaceSlugs = resolveSlugs(workspaceIds, this.store);
-      if (workspaceSlugs.length > 0) {
-        slugs = workspaceSlugs;
-        scope = "workspace";
-      }
+      return { scope: "explicit", sources: slugs, results: this.store.search(query, { slugs, limit }) };
     }
 
-    const results = this.store.search(query, { slugs, limit });
-    return { scope, sources: slugs ?? "all", results };
+    const workspaceIds = detectWorkspaceDocSources(this.workspaceRoot);
+    if (workspaceIds.length === 0) {
+      return { scope: "all", sources: "all", results: this.store.search(query, { limit }) };
+    }
+
+    const outcome = await this.lazy.searchWorkspace(query, workspaceIds, limit);
+    if (outcome.slugs.length === 0) {
+      // Nothing cached and nothing fetchable (offline / cooling down): fall back to whatever is cached.
+      return {
+        scope: "all",
+        sources: "all",
+        results: this.store.search(query, { limit }),
+        ...(outcome.skipped.length > 0 ? { skipped: outcome.skipped } : {}),
+      };
+    }
+    return {
+      scope: "workspace",
+      sources: outcome.slugs,
+      results: outcome.results,
+      ...(outcome.fetched.length > 0 ? { fetched: outcome.fetched } : {}),
+      ...(outcome.skipped.length > 0 ? { skipped: outcome.skipped } : {}),
+    };
   }
 }
 

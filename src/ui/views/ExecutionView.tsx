@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { tail, truncate } from "../layout/truncate.js";
 import { STEP_GLYPH } from "../layout/step-glyphs.js";
 import { ViewProps } from "./ConversationView.js";

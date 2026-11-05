@@ -9,7 +9,7 @@ import { definePlugin } from "../types.js";
 /** Token for the shared CompactionService. */
 export const COMPACTION_SERVICE = defineCapabilityToken<CompactionService>("nexum:compaction:service");
 
-export function compactionServicePlugin() {
+export function compactionServicePlugin(opts: { service?: CompactionService } = {}) {
   return definePlugin({
     manifest: {
       id: "compaction-service",
@@ -20,7 +20,7 @@ export function compactionServicePlugin() {
       requires: [],
     },
     setup(ctx) {
-      const service = new CompactionService();
+      const service = opts.service ?? new CompactionService();
       ctx.provide(COMPACTION_SERVICE.id, service);
       ctx.declareCapability("compaction");
       ctx.log.debug("compaction service registered");

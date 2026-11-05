@@ -32,6 +32,14 @@ export interface ModelConstraints {
   maxOutputTokens?: number;
   /** "fast" | "medium" | "slow" | "unknown" */
   latencyClass: string;
+  /**
+   * Prompt tokens this model should normally receive — below contextWindow
+   * for models that degrade on long prompts. Read by budgetForProfile();
+   * unset means the size-class default (see context-budget.ts).
+   */
+  preferredContextTokens?: number;
+  /** Maximum tool schemas to expose per call; unset means the size-class default. */
+  maxToolCount?: number;
 }
 
 export interface ModelCost {
@@ -59,6 +67,10 @@ export function defaultConstraints(overrides?: Partial<ModelConstraints>): Model
     contextWindow: overrides?.contextWindow ?? 128_000,
     maxOutputTokens: overrides?.maxOutputTokens,
     latencyClass: overrides?.latencyClass ?? "unknown",
+    ...(overrides?.preferredContextTokens !== undefined
+      ? { preferredContextTokens: overrides.preferredContextTokens }
+      : {}),
+    ...(overrides?.maxToolCount !== undefined ? { maxToolCount: overrides.maxToolCount } : {}),
   };
 }
 
@@ -83,7 +95,11 @@ export function profileFromLegacy(info: ModelInfo, provider = "ollama"): ModelPr
       structuredOutput: scoreFor(info.capabilities, "tools") > 0 ? 0.5 : 0,
       streaming: true,
     },
-    constraints: defaultConstraints({ latencyClass: info.capabilities.includes("quick") ? "fast" : "unknown" }),
+    constraints: defaultConstraints({
+      latencyClass: info.capabilities.includes("quick") ? "fast" : "unknown",
+      // Undefined keeps defaultConstraints' 128k window (cloud, or no server report).
+      contextWindow: info.contextLength,
+    }),
     legacyCapabilities: info.capabilities,
   };
 }

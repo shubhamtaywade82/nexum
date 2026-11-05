@@ -1,16 +1,35 @@
 import {
   OllamaClient,
   OllamaClientError,
+  OllamaNetworkError,
+  OllamaPaymentRequiredError,
   OllamaRateLimitError,
   OllamaTimeoutError,
+  extractNativeContextLength,
+  extractParameterNumCtx,
+  onProgress,
+  type PullProgressEvent,
+  type RequestCancellationOptions,
   type Message as SdkMessage,
   type ChatResponse as SdkChatResponse,
+  type VisionInput,
+  type ResponsesCreateRequest,
+  type ResponsesCreateResponse,
+  type ResponsesStreamEvent,
+  type ConversationSession,
+  type CreateRequestOptions,
+  type UsageRequestOptions,
+  type UsageResponse,
+  type BalanceRequestOptions,
+  type BalanceResponse,
+  type ProgressResponse,
 } from "@nemesis-oss/ollama-sdk";
 import {
   AgentRuntimeError,
   TransportFailure,
   RateLimitError,
   ProviderError,
+  PaymentRequiredError,
   TimeoutError,
   InferenceQualityError,
   ToolFailure,
@@ -23,6 +42,7 @@ export {
   TransportFailure,
   RateLimitError,
   ProviderError,
+  PaymentRequiredError,
   TimeoutError,
   InferenceQualityError,
   ToolFailure,
@@ -45,6 +65,10 @@ export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   tool_calls?: Array<{ function: { name: string; arguments: unknown } }>;
+  /** Vision payload for this message. The SDK resolves each entry (data URI,
+   * http(s) URL, image file path) to base64 before it reaches the wire, so
+   * callers can hand over the raw source instead of pre-encoding it. */
+  images?: VisionInput[];
 }
 
 export interface OllamaToolSchema {
@@ -81,6 +105,49 @@ export interface ChatOptions {
    * `routedModel` reported the wrong one. */
   model?: string;
   options?: Record<string, unknown>;
+  /** Effective context window for this request (`options.num_ctx`). Sized from
+   * the model's context budget by the agent, so the window on the wire matches
+   * the budget the transcript was pruned/compacted against — without it Ollama
+   * silently truncates to its server default (2048–4096) with no error. Takes
+   * precedence over `options.num_ctx`. */
+  contextLength?: number;
+  /** Aborts the in-flight request — a cancelled run must not keep generating until the model finishes. */
+  signal?: AbortSignal;
+}
+
+/** A Responses request whose `model` defaults to the provider's configured one. */
+export type ResponsesRequest = Omit<ResponsesCreateRequest, "model"> & { model?: string };
+
+/** One pooled Ollama Cloud key's usage. Exactly one of `usage`/`error` is set. */
+export interface AccountUsage {
+  label: string;
+  usage?: UsageResponse;
+  error?: string;
+}
+
+/** One pooled Ollama Cloud key's credits. Exactly one of `balance`/`error`. */
+export interface AccountBalance {
+  label: string;
+  balance?: BalanceResponse;
+  error?: string;
+}
+
+/** Upper bound on one account's /usage or /balance probe, retries included.
+ * The SDK sleeps exactly the server's `Retry-After` on a 429 (no jitter, no
+ * clamp), so an unbounded probe could hold the user's command for the whole
+ * window before answering. */
+const ACCOUNT_PROBE_TIMEOUT_MS = 30_000;
+
+function boundedProbe<T extends RequestCancellationOptions>(req: T | undefined): T {
+  const deadline = AbortSignal.timeout(ACCOUNT_PROBE_TIMEOUT_MS);
+  return { ...req, signal: req?.signal ? AbortSignal.any([req.signal, deadline]) : deadline } as T;
+}
+
+/** Fallback row name when the config gave an account no label: identifies the
+ * key by position and last 4 chars, enough to tell accounts apart by eye
+ * without printing the secret. */
+function maskedKeyLabel(apiKey: string, index: number): string {
+  return `Key ${index + 1} (${apiKey.length > 4 ? "…" + apiKey.slice(-4) : "••••"})`;
 }
 
 export interface ProviderOptions {
@@ -93,11 +160,42 @@ export interface ProviderOptions {
    * giving up — this is for availability across your own accounts, not
    * multi-vendor routing. */
   apiKeys?: string[];
+  /** apiKey → display name for /usage and /balance rows (from the config
+   * file's structured `accounts`). Unlabelled keys fall back to a masked
+   * suffix of the key. */
+  accountLabels?: Record<string, string>;
   timeoutMs?: number;
+  /** Chooses which cloud API key serves each request (e.g. KeyManager's
+   * model→key binding that keeps each key's model warm in Ollama Cloud
+   * VRAM). Structural interface — any `{ acquire, release }` works, no
+   * import from the router layer needed. When unset (or when acquire
+   * fails/times out), the plain priority-ordered endpoint pool is used.
+   * The SDK's 429 failover across the remaining keys stays active either
+   * way, as a last-resort safety net. */
+  keySelector?: CloudKeySelector;
+  /** Client-wide `num_ctx` applied to any request that omits one. Defaults to
+   * DEFAULT_CONTEXT_LENGTH on the local tier (the value chat() used to hardcode)
+   * and to nothing on cloud, where window sizing is left to the caller. */
+  contextLength?: number;
+  /** Pre-flight response to an estimated prompt that exceeds the window:
+   * "warn" logs and sends anyway (SDK default), "throw" rejects client-side
+   * with `code: 'context_overflow'` before anything hits the wire. */
+  onContextOverflow?: "warn" | "throw";
+}
+
+/** See ProviderOptions.keySelector. `acquire` must resolve with the API key
+ * to prefer for `model` (or throw); `release` is called exactly once per
+ * successful acquire, after the request finishes (success or failure). */
+export interface CloudKeySelector {
+  acquire(model: string): Promise<string>;
+  release(apiKey: string): void;
 }
 
 export const DEFAULT_CLOUD_HOST = "https://ollama.com";
 export const DEFAULT_LOCAL_HOST = "http://localhost:11434";
+/** Window used when neither the request nor ProviderOptions sizes one — the
+ * value chat() previously hardcoded as `num_ctx` for local requests. */
+export const DEFAULT_CONTEXT_LENGTH = 16_384;
 
 /** The endpoint a tier talks to when nothing is explicitly configured.
  * OLLAMA_HOST is a local-Ollama convention, so it must never be picked up as
@@ -113,23 +211,41 @@ export function defaultHostForTier(tier: Tier): string {
 // "does not support tools", "subscription") survives intact for those checks.
 function mapSdkError(err: unknown, tier: Tier, model: string, cloudKeyCount: number): Error {
   if (err instanceof OllamaRateLimitError) {
+    // The SDK parses `Retry-After` (delay-seconds or HTTP-date) into
+    // `retryAfterMs`; carry it through so the caller can pace its own retry.
+    const retryAfterMs = err.retryAfterMs ?? null;
     return tier === "cloud"
-      ? new RateLimitError(`${model} (${tier}) rate limited on all ${cloudKeyCount} key(s)`)
-      : new RateLimitError(`${model} (${tier}) rate limited: ${err.message}`);
+      ? new RateLimitError(`${model} (${tier}) rate limited on all ${cloudKeyCount} key(s)`, retryAfterMs, err)
+      : new RateLimitError(`${model} (${tier}) rate limited: ${err.message}`, retryAfterMs, err);
   }
   if (err instanceof OllamaTimeoutError) {
-    return new TimeoutError(err.message);
+    return new TimeoutError(err.message, err);
+  }
+  // Transport failed before any HTTP status (refused, reset, DNS). The SDK
+  // classes this under OllamaClientError, so it has to be matched before the
+  // generic branch below — as a ProviderError the router never fails over.
+  if (err instanceof OllamaNetworkError) {
+    return new TransportFailure(`Ollama ${tier} unreachable (${model}): ${err.message}`, null, err);
+  }
+  if (err instanceof OllamaPaymentRequiredError) {
+    return new PaymentRequiredError(
+      `Ollama ${tier} ${err.status ?? 402}: ${redactSecrets(upstreamBodyText(err))}`,
+      err,
+    );
   }
   if (err instanceof OllamaClientError) {
-    // The SDK's `.message` collapses a non-JSON (or non-`{error}`-shaped)
-    // upstream body down to a generic "HTTP <status> <statusText>" string —
-    // `.response.body` still has the raw text/JSON, which is what needs
-    // redacting and surfacing to callers like router.ts.
-    const body = err.response?.body;
-    const bodyText = typeof body === "string" ? body : body !== undefined ? JSON.stringify(body) : err.message;
-    return new ProviderError(`Ollama ${tier} ${err.status ?? ""}: ${redactSecrets(bodyText)}`);
+    return new ProviderError(`Ollama ${tier} ${err.status ?? ""}: ${redactSecrets(upstreamBodyText(err))}`, err);
   }
   return err instanceof Error ? err : new ProviderError(String(err));
+}
+
+/** The raw upstream body. The SDK's `.message` collapses a non-JSON (or
+ * non-`{error}`-shaped) body to a generic "HTTP <status> <statusText>", while
+ * `.response.body` keeps the text that router.ts matches on ("subscription", …)
+ * and that must be redacted before it reaches callers. */
+function upstreamBodyText(err: OllamaClientError): string {
+  const body = err.response?.body;
+  return typeof body === "string" ? body : body !== undefined ? JSON.stringify(body) : err.message;
 }
 
 // `finalResult.raw` is the last raw NDJSON chunk (carries eval_count/
@@ -155,20 +271,44 @@ export class Provider {
   /** Explicitly configured host, or undefined to track the tier default. */
   private hostOverride: string | undefined;
   private readonly apiKeys: string[];
+  private readonly accountLabels: Record<string, string>;
   private readonly timeoutMs: number;
+  private readonly keySelector: CloudKeySelector | undefined;
+  private readonly contextLength: number | undefined;
+  private readonly onContextOverflow: "warn" | "throw" | undefined;
   // Cached per (tier, host): reused across calls so the SDK's endpoint
   // circuit breaker remembers which cloud key last failed instead of
   // re-trying the same rate-limited key on every call.
   private client: OllamaClient | null = null;
   private clientCacheKey = "";
+  // Same caching rationale as `client`, but one client per preferred key
+  // (see buildKeyedClient): the preferred key is pinned as the highest-
+  // priority endpoint so its circuit-breaker state persists across calls.
+  private readonly keyedClients = new Map<string, OllamaClient>();
+  private keyedClientsCacheKey = "";
 
   constructor(opts: ProviderOptions) {
     this.tier = opts.tier;
     this.model = opts.model;
     this.hostOverride = opts.host;
     this.apiKeys = opts.apiKeys && opts.apiKeys.length > 0 ? opts.apiKeys : opts.apiKey ? [opts.apiKey] : [];
+    this.accountLabels = opts.accountLabels ?? {};
     // Cloud has a 60s connect timeout; local has no timeout — never kill a running generation.
     this.timeoutMs = opts.timeoutMs ?? (opts.tier === "cloud" ? 60_000 : 0);
+    this.keySelector = opts.keySelector;
+    this.contextLength = opts.contextLength;
+    this.onContextOverflow = opts.onContextOverflow;
+  }
+
+  /** Context-safety config merged into every client this provider builds.
+   * `defaultContextLength` is what makes the window explicit on the wire AND
+   * what the SDK's pre-flight estimate is checked against, so both go together. */
+  private get contextConfig(): { defaultContextLength?: number; onContextOverflow?: "warn" | "throw" } {
+    const length = this.contextLength ?? (this.tier === "local" ? DEFAULT_CONTEXT_LENGTH : undefined);
+    return {
+      ...(length !== undefined ? { defaultContextLength: length } : {}),
+      ...(this.onContextOverflow !== undefined ? { onContextOverflow: this.onContextOverflow } : {}),
+    };
   }
 
   private get host(): string {
@@ -228,12 +368,32 @@ export class Provider {
         // had no retry loop either).
         retries: 0,
         timeoutMs: this.timeoutMs,
+        ...this.contextConfig,
       });
     } else {
-      this.client = new OllamaClient({ baseUrl: this.host, timeoutMs: this.timeoutMs, retries: 0 });
+      this.client = new OllamaClient({
+        baseUrl: this.host,
+        timeoutMs: this.timeoutMs,
+        retries: 0,
+        ...this.contextConfig,
+      });
     }
     this.clientCacheKey = cacheKey;
     return this.client;
+  }
+
+  /**
+   * Public accessor for the cached {@link OllamaClient}. Used by the Decision
+   * Plane adapter ({@link OllamaSystemOneClient}) to reach the SDK's public
+   * `runtime.invoke` for the System One operation, and by
+   * {@link LocalSystemOneEnvironment} to probe the local Ollama server's
+   * version via the SDK's `version` operation. The returned client is the
+   * same instance used by {@link chat} — its endpoint circuit-breaker state
+   * persists across calls. Returns a fresh client (and re-caches it) if the
+   * tier/host has changed since the last call.
+   */
+  getOllamaClient(): OllamaClient {
+    return this.buildClient();
   }
 
   async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResponse> {
@@ -241,28 +401,88 @@ export class Provider {
       throw new ProviderError("missing apiKey for cloud chat");
     }
 
-    const client = this.buildClient();
     const model = opts.model ?? this.model;
-    const request = {
-      model,
-      messages: messages as unknown as SdkMessage[],
-      tools: opts.tools as any,
-      ...(this.tier === "local" || opts.options
-        ? { options: { ...(this.tier === "local" ? { num_ctx: 16384 } : {}), ...(opts.options ?? {}) } }
-        : {}),
-    };
-
+    // Best-effort key selection: acquire may wait for a busy bound key or
+    // probe availability, and may legitimately fail (all keys busy, probe
+    // timeouts). Any failure falls back to the plain endpoint pool — key
+    // preference is an optimization (VRAM warmth), never a correctness
+    // requirement, and the SDK's cross-key failover applies either way.
+    const preferredKey = this.tier === "cloud" ? await this.acquirePreferredKey(model) : undefined;
     try {
-      if (opts.stream) {
-        const stream = await client.chat({ ...request, stream: true });
-        stream.on("message", (e) => opts.onChunk?.(e.data.chunk as unknown as ChatResponse));
-        return toChatResponse(await stream.finalResult);
+      const client = preferredKey ? this.buildKeyedClient(preferredKey) : this.buildClient();
+      // Window precedence: this call's `contextLength` > `options.num_ctx` >
+      // the client-wide default. A request with no `options` at all still gets
+      // a window — the SDK injects `defaultContextLength` itself.
+      const options = {
+        ...(opts.options ?? {}),
+        ...(opts.contextLength !== undefined ? { num_ctx: opts.contextLength } : {}),
+      };
+      const request = {
+        model,
+        messages: messages as unknown as SdkMessage[],
+        tools: opts.tools as any,
+        ...(Object.keys(options).length > 0 ? { options } : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      };
+
+      try {
+        if (opts.stream) {
+          const stream = await client.chat({ ...request, stream: true });
+          stream.on("message", (e) => opts.onChunk?.(e.data.chunk as unknown as ChatResponse));
+          return toChatResponse(await stream.finalResult);
+        }
+        const resp = await client.chat({ ...request, stream: false });
+        return resp as unknown as ChatResponse;
+      } catch (err) {
+        throw mapSdkError(err, this.tier, model, this.apiKeys.length);
       }
-      const resp = await client.chat({ ...request, stream: false });
-      return resp as unknown as ChatResponse;
-    } catch (err) {
-      throw mapSdkError(err, this.tier, model, this.apiKeys.length);
+    } finally {
+      if (preferredKey) this.keySelector?.release(preferredKey);
     }
+  }
+
+  /** Resolves the preferred key for `model`, or undefined when no selector is
+   * configured or it fails. Never lets a selection failure break a request. */
+  private async acquirePreferredKey(model: string): Promise<string | undefined> {
+    if (!this.keySelector) return undefined;
+    try {
+      return await this.keySelector.acquire(model);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Like buildClient, but with `preferredKey` pinned as the highest-priority
+   * endpoint — the other pool keys remain as failover endpoints below it, so
+   * the KeyManager's model→key warmth binding and the SDK's 429 rotation
+   * compose instead of replacing each other. */
+  private buildKeyedClient(preferredKey: string): OllamaClient {
+    const cacheKey = `${this.tier}|${this.host}`;
+    if (this.keyedClientsCacheKey !== cacheKey) {
+      this.keyedClients.clear();
+      this.keyedClientsCacheKey = cacheKey;
+    }
+    const cached = this.keyedClients.get(preferredKey);
+    if (cached) return cached;
+
+    const rest = this.apiKeys.filter((k) => k !== preferredKey);
+    const client = new OllamaClient({
+      endpoints: [
+        { name: "cloud-preferred", baseUrl: this.host, apiKey: preferredKey, priority: this.apiKeys.length + 1 },
+        ...rest.map((apiKey, i) => ({
+          name: `cloud-${i}`,
+          baseUrl: this.host,
+          apiKey,
+          priority: rest.length - i,
+        })),
+      ],
+      endpointHealth: { failureThreshold: 1 },
+      retries: 0,
+      timeoutMs: this.timeoutMs,
+      ...this.contextConfig,
+    });
+    this.keyedClients.set(preferredKey, client);
+    return client;
   }
 
   async availableModels(): Promise<unknown> {
@@ -281,15 +501,143 @@ export class Provider {
     }
   }
 
-  /** Queries local /api/show for accurate capabilities missed by /api/tags. */
-  async showModel(model: string): Promise<{ capabilities?: string[] } | null> {
+  /** Queries local /api/show for accurate capabilities missed by /api/tags,
+   * and for the model's native context window (`model_info.*.context_length`,
+   * falling back to the Modelfile's `num_ctx`). */
+  async showModel(model: string): Promise<{ capabilities?: string[]; contextLength?: number } | null> {
     if (this.tier !== "local") return null;
     const client = this.buildClient();
     try {
       const info = await client.modelsClient.show({ model });
-      return { capabilities: info.capabilities as string[] | undefined };
+      return {
+        capabilities: info.capabilities as string[] | undefined,
+        contextLength: extractNativeContextLength(info.model_info) ?? extractParameterNumCtx(info.parameters),
+      };
     } catch {
       return null;
+    }
+  }
+
+  // ── non-chat Ollama surfaces (ollama-sdk 1.9) ────────────────────────────
+  //
+  // Each one runs through mapSdkError so callers keep seeing nexum's
+  // RateLimitError/TimeoutError/ProviderError instead of raw SDK classes.
+
+  /** OpenAI Responses bridge: prefers `POST /v1/responses` and transparently
+   * re-issues through `/api/chat` when the server answers 404 (pre-0.13.3). */
+  async responses(req: ResponsesRequest): Promise<ResponsesCreateResponse> {
+    const model = req.model ?? this.model;
+    return this.mapErrors(() => this.buildClient().responses.create({ ...req, model }), model);
+  }
+
+  /** {@link responses} reduced to its `output_text`. */
+  async responsesText(req: ResponsesRequest): Promise<string> {
+    const model = req.model ?? this.model;
+    return this.mapErrors(() => this.buildClient().responses.createText({ ...req, model }), model);
+  }
+
+  /** Lazy async generator of `{ text_delta | thinking_delta | done }` events.
+   * Falls back to the `/api/chat` token stream only on establishment failure —
+   * never mid-stream, which would duplicate already-consumed deltas. */
+  async *responsesStream(req: ResponsesRequest): AsyncGenerator<ResponsesStreamEvent, void, void> {
+    const model = req.model ?? this.model;
+    const stream = this.buildClient().responses.stream({ ...req, model });
+    try {
+      yield* stream;
+    } catch (err) {
+      throw mapSdkError(err, this.tier, model, this.apiKeys.length);
+    }
+  }
+
+  /** KV-cache-preserving multi-turn session: append-only history with the
+   * system prompt pinned at construction (mutating the prefix is what throws
+   * away Ollama's prompt-prefix cache). Defaults to the configured model. */
+  session(model?: string, systemPrompt?: string): ConversationSession {
+    return this.buildClient().session(model ?? this.model, systemPrompt);
+  }
+
+  /** Publishes local GGUF shards as an Ollama model: blobs are uploaded first
+   * (skipped when already present), then `POST /api/create` references them. */
+  async importGguf(
+    model: string,
+    gguf: string | readonly string[],
+    opts?: Omit<CreateRequestOptions, "model" | "files" | "from" | "stream">,
+  ): Promise<ProgressResponse> {
+    if (this.tier !== "local") throw new ProviderError("importGguf requires the local tier");
+    return this.mapErrors(() => this.buildClient().modelsClient.createModelFromGguf(model, gguf, opts), model);
+  }
+
+  /** Downloads `model` from the Ollama registry (`POST /api/pull`, streamed).
+   * `onEvent` receives every progress frame; the SDK's `onProgress` fills
+   * `bytesPerSecond` and `etaSeconds` once two byte-bearing frames of a layer
+   * have arrived. Local tier only: the cloud host does not pull into a local store. */
+  async pullModel(model: string, onEvent: (event: PullProgressEvent) => void): Promise<void> {
+    if (this.tier !== "local") throw new ProviderError("pullModel requires the local tier");
+    return this.mapErrors(async () => {
+      const stream = await this.buildClient().modelsClient.pull({ model, stream: true });
+      await onProgress(stream, onEvent);
+    }, model);
+  }
+
+  /** Ollama Cloud request counts/spend (`GET ollama.com/api/usage`) for **every**
+   * key in the pool — one row per account, so several accounts for availability
+   * each get their own numbers. Always a cloud-host call regardless of this
+   * provider's host, so each key needs its own client: an endpoint-pool client
+   * carries its key under `endpoints[]`, which the SDK's fixed-cloud-host
+   * pipeline does not read. Never rejects — a dead account reports its error
+   * inline rather than hiding the healthy ones. */
+  usageAll(req?: UsageRequestOptions): Promise<AccountUsage[]> {
+    return Promise.all(
+      this.accountKeys().map(async (apiKey, index) => {
+        const label = this.accountLabels[apiKey] ?? maskedKeyLabel(apiKey, index);
+        try {
+          return { label, usage: await this.accountClient(apiKey).usage(boundedProbe(req)) };
+        } catch (err) {
+          return { label, error: this.accountError(err) };
+        }
+      }),
+    );
+  }
+
+  /** Ollama Cloud remaining credits (`GET ollama.com/api/balance`) per key. */
+  balanceAll(req?: BalanceRequestOptions): Promise<AccountBalance[]> {
+    return Promise.all(
+      this.accountKeys().map(async (apiKey, index) => {
+        const label = this.accountLabels[apiKey] ?? maskedKeyLabel(apiKey, index);
+        try {
+          return { label, balance: await this.accountClient(apiKey).balance(boundedProbe(req)) };
+        } catch (err) {
+          return { label, error: this.accountError(err) };
+        }
+      }),
+    );
+  }
+
+  /** Deduped key pool: the same key twice is one account, not two. */
+  private accountKeys(): string[] {
+    return [...new Set(this.apiKeys)];
+  }
+
+  private accountClient(apiKey: string): OllamaClient {
+    return new OllamaClient({
+      baseUrl: DEFAULT_CLOUD_HOST,
+      apiKey,
+      timeoutMs: this.timeoutMs || 30_000,
+      retries: 1,
+    });
+  }
+
+  /** Routes an account failure through the shared mapper so its message is
+   * redacted (these bodies carry the Authorization header we just sent). */
+  private accountError(err: unknown): string {
+    return mapSdkError(err, this.tier, this.model, this.apiKeys.length).message;
+  }
+
+  private async mapErrors<T>(fn: () => Promise<T>, model: string): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      throw mapSdkError(err, this.tier, model, this.apiKeys.length);
     }
   }
 }

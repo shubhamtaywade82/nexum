@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { ChatMessage } from "../models/adapters/provider.js";
+import { redactObject, redactText } from "../safety/redact.js";
 
 export interface SessionMeta {
   id: string;
@@ -64,7 +65,11 @@ export class SessionStore {
     return randomUUID();
   }
 
-  save(id: string, messages: ChatMessage[]): void {
+  save(id: string, rawMessages: ChatMessage[]): void {
+    // Transcripts are persisted to .nexum/sessions in plain JSON: strip
+    // credentials (API keys, bearer tokens, JWTs, key=value secrets) before
+    // they reach disk. The live in-memory conversation is untouched.
+    const messages = rawMessages.map(redactMessage);
     this.writeAtomic(this.sessionPath(id), JSON.stringify(messages, null, 2));
 
     const now = Date.now();
@@ -113,4 +118,12 @@ export class SessionStore {
     const nextIndex = this.readIndex().filter((s) => s.id !== id);
     this.writeAtomic(this.indexPath, JSON.stringify(nextIndex, null, 2));
   }
+}
+
+function redactMessage(m: ChatMessage): ChatMessage {
+  return {
+    ...m,
+    content: redactText(m.content ?? ""),
+    ...(m.tool_calls ? { tool_calls: redactObject(m.tool_calls) } : {}),
+  };
 }

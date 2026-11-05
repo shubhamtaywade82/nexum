@@ -2,6 +2,158 @@
 
 ## Unreleased
 
+### CI healer and nexum rpc
+
+- New command `nexum ci-healer <tick|plan|status> --config <path>`. It heals failing GitHub Actions runs: each repair runs in an isolated worktree, the change is verified in a sandbox, and a draft PR is opened. Start with `plan`, which only reads. See `src/domains/ci-healer/README.md`.
+- `nexum rpc` no longer exits right after it starts. Before this fix, every JSON-RPC request went unanswered.
+
+### Security — the host refuses browser-driven requests
+
+A loopback `nexum serve` with no `NEXUM_SERVER_TOKEN` accepted any request that reached its socket, including a page open in the user's browser. Two requests from a foreign origin created a session with a 201: a cross-site `text/plain` POST, and a request whose `Host` named an attacker's domain (DNS rebinding). Every host route now runs `checkRequestGuard` before authentication:
+
+- **Host.** On a loopback bind, the `Host` header must name `localhost`, `127.0.0.1` or `[::1]`. Refused with `403 forbidden_host`.
+- **Origin.** An `Origin` header must be listed in `NEXUM_ALLOWED_ORIGINS`, an exact `scheme://host[:port]` list. Refused with `403 forbidden_origin`.
+- **Body type.** A request with a body must be `application/json`. Refused with `415 unsupported_media_type`.
+
+The token comparison is now constant-time. Non-browser clients send none of these headers, so the SDK, the `nexum chat` client and the existing tests are unaffected. The loopback token default in the next section closes the remaining gap for local processes.
+
+### Security — loopback token by default, browser origins, scoped idempotency
+
+- **Loopback token by default.** `nexum serve` on a loopback bind creates a per-user bearer token at `~/.nexum/server-token` (mode 0600) and local clients read it automatically. The client sends that token only to a loopback base URL. `nexum serve --no-token` restores the token-less mode, in which any local process can call the host. `NEXUM_SERVER_TOKEN` overrides the file. Library callers of `createNexumHost` keep explicit control, and no token is generated for them.
+- **Browser origins can call the host.** The preflight from an origin listed in `NEXUM_ALLOWED_ORIGINS` is answered with `204` and no credentials, and its responses name the origin. The guard's refusal already told users to add an origin to call the host from a browser, but the host never answered the preflight, so a browser could not call it.
+- **Idempotency-Key is bound to its body and route.** Reusing a key with a different body returns `422 idempotency_key_reused`. Before, it silently replayed the first response. A duplicate that arrives while the first request is still running returns `409 idempotency_in_progress`. Only 2xx responses are stored, and a refused attempt releases its key. Entries expire after 24 h and at most 10 000 are kept.
+- **Auto-merge is pinned to the reviewed commit.** An evolution PR's approval counts only when it was given on the PR's head commit, and the merge names that commit's SHA, so a commit pushed after approval is not merged unreviewed. `syncReviewFeedback`, `getLatestReview` and `mergePullRequest` now take the head SHA.
+- **Calculator.** Names inherited from `Object.prototype`, such as `constructor`, are rejected. Before, `constructor(1)*2` evaluated to `2`.
+- **Identifiers.** Approval, run, grant, webhook, clarification, hypothesis and decision ids use `randomUUID()`, not `Math.random()`.
+- **Keyword index.** The FTS5 table name must be a plain SQL identifier.
+- **Dependencies.** `@modelcontextprotocol/client` `^2.0.0` → `^2.4.0` and `zod` `^4.4.3` → `^4.6.7`, both fixing security advisories. Transitive updates: `undici` 7.30.1, `js-yaml` 3.15.2, `follow-redirects` 1.16.1, `body-parser` 2.4.0, `fast-uri` 3.1.9, `ip-address` 10.7.5 and `@modelcontextprotocol/sdk` 1.32.2. `npm audit --omit=dev` reports no vulnerabilities.
+
+### Changed — evolution decides on development tasks; held-out is reported
+
+The strict-test protocol of _Can LLMs Improve Their Own Harness?_ (arXiv:2610.30499) is now enforced in code. Held-out tasks no longer influence acceptance, the selector, or the generalization gate.
+
+- **Frozen split.** Held-out membership is a hash of the case id (`heldout-split-v1`, one case in five), replacing the `reasoning`/`thinking` category label.
+- **Decision inputs are development-only.** Stage A/B, the validity check and the transfer gate read development results. A held-out regression no longer blocks a promotion. The held-out gain is recorded in `ExperimentOutcome.heldOut` and the experiment record.
+- **Real token counts.** Benchmark cases sum the provider's reported prompt and completion tokens over every turn. The fixed `tokens: 1500` is gone. Estimates are marked `tokensEstimated`.
+- **The evaluator is fixed across a lineage.** Mutations may not read or edit `src/evolution/` or `src/benchmark/`. This is enforced in the agent's worktree view (symlinks included), the proposal check, and the executor's planned and actual-diff checks. The default `execution` and `lifecycle` scopes no longer include `src/evolution/`. The `routing` and `verification` scopes pointed at a non-existent `src/provider/` and now point at `src/models/`; `execution` names `src/orchestration/`, not the non-existent `src/orchestrator/`.
+- **The benchmark runs the candidate's own agent.** `nexum benchmark --driver agent` runs each agentic case through a fresh `Agent`. Its tools are replaced by the case's tools, and the case's turn budget is enforced. Evolution uses it, so mutations to prompts, tool selection, routing, loop control and context can move the score; the standalone model loop could not. Results record `driver` and `modelsUsed`. The background summary reports its tokens via `onBackgroundModelUsage`, and `Agent.whenIdle()` waits for it.
+- **27 more agentic benchmark cases (33 in total).** `src/benchmark/cases-harness.ts` adds 23 scripted cases, each measuring one harness behaviour: multi-step chaining, pagination, aggregation, branching, choosing tools among distractors, not calling tools when none is needed, recovering from bad arguments, rate limits and truncated results, reporting a missing document instead of inventing it, preferring tool data over priors, resolving conflicting sources by timestamp, ignoring instructions injected into tool output, strict output formats, stopping when done, and not escalating a lookup. Four more execution cases run the real `read_file` and `search_code` tools: reading two files, searching then reading, picking the defining file among similar ones, and reporting a missing file. The held-out split now takes 6 cases across 6 categories, where it previously took 1.
+- **The running agent loads the activated harness.** `bin/cli.js` now consumes the `nexum.harness.json` pointer (`src/platform/harness-launcher.ts`). An agent command started from the harness checkout runs the activated commit: it is materialized once into `~/.nexum/harnesses/<sha>` as a worktree, with dependencies installed with scripts off and a build, and run with the same arguments and terminal. Control commands such as `evolve` and `doctor` always run the installed code. A `frozen` rollback marker refuses agent starts with exit 75. Preparation failures fail closed; `NEXUM_HARNESS=current` opts out. The artifact records `consumedByRuntime: true`.
+
+### Changed — `@nemesis-oss/ollama-sdk` 1.9 → 1.22 wired through
+
+`@nemesis-oss/ollama-sdk` moves from `^1.9.0` to `^1.22.0`, the latest published
+release. The SDK releases between those versions are wired into the places that
+already did this work by hand, or that had no equivalent before:
+
+- **Typed errors reach the router.** A connection-level failure (refused,
+  reset, DNS) is now `TransportFailure` instead of a generic `ProviderError`,
+  so the router fails over to the next candidate; before, it was fatal for the
+  whole turn. HTTP 402 is `PaymentRequiredError` (billing, not credentials) and
+  is routable. `RateLimitError.retryAfterMs` carries the server's `Retry-After`.
+- **Account probes are bounded.** `/usage` and `/balance` run under a 30 s
+  deadline. The SDK sleeps the server's `Retry-After` verbatim on a 429, which
+  could otherwise hold the command for the whole window.
+- **`/usage [24h|7d|30d] [model]`** shows the per-model breakdown
+  (`groupBy=model`), with the server's remainder roll-up.
+- **`/pull <model>`** downloads from the registry with live progress: percent,
+  transfer speed and ETA, one notification per second (`Provider.pullModel`
+  over `models.pull({ stream: true })` + `onProgress`).
+- **Native context windows.** The catalog reads `model_info.*.context_length`
+  (falling back to the Modelfile's `num_ctx`) from the same `/api/show` call it
+  already made for capabilities. Local models are sized to their real window,
+  not the 128k default that every profile used to get.
+- **Decision plane cloud floor and deadlines.** A `:cloud` decision model served
+  by a local server needs Ollama 0.40.5+. The SDK's `systemOne` enforces that
+  floor and reports a refusal as `OllamaCloudModelVersionError`, which the
+  gateway maps to `DecisionUnavailableError`. The adapter calls
+  `OllamaClient.systemOne(request, { signal })` (`@nemesis-oss/ollama-sdk@1.21.0`),
+  so a decision's deadline covers the gate and the wire request. Before 1.21.0
+  the SDK dropped per-call signals in its failover layer, so the decision plane
+  never enforced its deadline; 1.21.0 fixes that (SDK ADR 0037).
+- **Embeddings batch.** `OllamaEmbedder` sends 32 inputs per `/api/embed`
+  request with 3 in flight (`batchEmbed`), instead of one unbounded request.
+- **Wire contract tested over a real socket.** `tests/models/ollama-wire.test.ts`
+  runs the SDK's transport against a local server that speaks the Ollama
+  endpoints: 402, `Retry-After`, a refused connection with router failover,
+  `/api/show` context discovery, streamed pulls, and embedding batches.
+
+Declined, with reasons: the SDK's web tools (nexum's SSRF-guarded fetch and
+policy gates stay authoritative), SDK conversation compaction and history
+sanitizing (nexum's compaction pipeline is plugin-integrated), the SDK
+model-affinity scheduler (`KeyManager` already binds cloud keys to models; the
+SDK's routing is host-level), `minConfidence` / `minProbability` gates
+(`decision-policy.ts` already applies a per-choice threshold), and the SDK's
+agent tool-loop and draft-benchmark helpers.
+
+### Changed — TUI renderer is `@nemesis-oss/termina-core`
+
+The TUI now renders through `@nemesis-oss/termina-core` 0.1.0 (the published
+termina fork of Ink 8) instead of `ink` 7. `react` moves to ^19.3.0 and
+`@types/react` to ^19.3.0, which termina's peer ranges require. `ink` and
+`ink-testing-library` are removed. The test renderer is `tests/ui/wide-render.ts`.
+
+- A lone Escape key press is delivered after termina's 40 ms flush window (`escapeFlushDelayMilliseconds`), so a split escape sequence is not mistaken for Esc.
+
+### Wired — previously unreachable implementation
+
+A reachability audit (entry points: `bin/cli.js`, npm scripts, TUI, host;
+package `exports` as SDK roots) found ~15.6K lines of implementation no
+entry point reached, plus services constructed on every `Agent` and never
+called. Everything is now either wired into a live path or removed; the
+audit reports **0 dead modules**. 13 modules remain SDK-only package exports
+(product agents, multiagent, kernel planner/executor/step runners, judge
+calibration, event families).
+
+- **Turn path**: per-turn model budget (tool cap + token-aware compaction),
+  plan steps via `VerifiedStepRunner` (compiled briefs, `verify` commands
+  through the verification gate, escalation policy on retry), decision-plane
+  consumers (`enableDecision`), opt-in critic (`NEXUM_VERIFIER`), HookEngine
+  (prompt/pre-tool/post-tool, exposed to plugins), provider context notes.
+- **Persistence & audit**: durable run logs per message (`.nexum/runs`),
+  session/run history tools (`session_search`, `session_events`,
+  `session_trace`), oversized tool outputs as artifacts (`artifact_read`),
+  screenshots as attachments, credential redaction for persisted
+  transcripts and memory.
+- **Tools**: `web_fetch` + `internet_search` (SSRF-guarded WebService),
+  edit syntax checks on every file mutation.
+- **Ops**: process-wide telemetry + `GET /metrics`, `NEXUM_TOKEN_BUDGET`
+  enforced, webhook `agent.run` actions on a durable job queue,
+  `mcpServers[].env` `credential:NAME` references, `NEXUM_PROFILE`, built-in
+  plugins backed by the agent's live services.
+- **CLI/TUI**: `nexum eval`, kernel-supervised `nexum evolve --strategy agent`,
+  diff previews + test results in the conversation, Ctrl+Y execution DAG.
+- **Fixes found while wiring**: `apply_patch`/`edit_file_lines` wrote files on
+  `dry_run`; `CompactionPolicy` ignored `minMessagesToCompact`; the DAG
+  overlay showed hard-coded demo nodes; the workspace credentials file
+  overrode env credentials in untrusted workspaces; `FileReferenceProvider`
+  read absolute/sensitive paths; handler-less webhook rules were accepted and
+  never delivered.
+- **Removed (superseded)**: `intelligence/{router,provider,context-builder}`
+  (WorkspaceKnowledgeEngine), `validation/patch-safety` & co (WorkspaceGuard +
+  edit-check), `session-replay` + `ExecutionNodeGraph` (run logs), unused
+  conversation cards (ConversationView), `tools/mutations/transactional`
+  (CAS editor + git), `evolution/plane`, compat shims and dead barrels, and 32
+  unused vendored termcn components (re-vendor on demand with
+  `node scripts/vendor-termcn.mjs <name>`; the registry cache is checked in).
+
+### Added — model-aware Context Compiler & verification gate
+
+- **`budgetForProfile`** (`src/models/profiles/context-budget.ts`): derives a
+  per-call context/tool budget from a `ModelProfile` (small / standard /
+  frontier size classes), clamped to the real context window minus an output
+  reserve. `ModelConstraints` gains optional `preferredContextTokens` and
+  `maxToolCount`.
+- **`ContextCompiler`** (`src/context/compiler.ts`): compiles task node,
+  constraints, success criteria, evidence (via `ContextPacker`), failures,
+  decisions, facts, artifact references and a ranked tool pack into one
+  budgeted, deterministic prompt block with a full exclusion manifest.
+- **`gateTaskCompletion`** (`src/runtime/verification-gate.ts`) and
+  **`expectCommandSucceeds`**: a task moves `running → completed` only when
+  its deterministic verification contract passes.
+
+See `docs/guide/context-compiler.md`.
+
 ### Added — ink-ui (termcn) component layer & theme system (`src/tui/ui/`)
 
 Nexum's TUI presentation layer migrates from hand-rolled Ink primitives onto
@@ -11,10 +163,10 @@ component registry (shadcn-style copy-paste install via
 keybindings, picker/prompt engines — stays put.
 
 - **Theme system**: 15 built-in semantic themes (default/midnight/solarized
-  + dracula, nord, github, gruvbox, tokyo-night, monokai, catppuccin,
-  one-dark, vercel, high-contrast, high-contrast-light, matrix), a
-  compiler-enforced `ThemeName → Theme` registry, and a `ThemeProvider`
-  wired to the runtime's `theme.changed` event for instant live switching.
+  - dracula, nord, github, gruvbox, tokyo-night, monokai, catppuccin,
+    one-dark, vercel, high-contrast, high-contrast-light, matrix), a
+    compiler-enforced `ThemeName → Theme` registry, and a `ThemeProvider`
+    wired to the runtime's `theme.changed` event for instant live switching.
 - **`/theme`**: no-arg now opens an interactive picker with per-theme color
   swatches; direct names Tab-complete. Selections persist to
   `.nexum/config.json`; `NEXUM_THEME` and config `theme` bootstrap the

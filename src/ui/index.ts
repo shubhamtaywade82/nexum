@@ -1,16 +1,21 @@
 import "dotenv/config";
 import path from "node:path";
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import React from "react";
-import { render } from "ink";
+import { render } from "@nemesis-oss/termina-core";
 import { Agent } from "../cli/agent.js";
+import { formatCapability, startupWarnings } from "../cli/capabilities.js";
+import { checkSandboxImage } from "../cli/sandbox-image.js";
 import { loadConfig } from "../cli/config.js";
 import { EventBus } from "../runtime/events/bus.js";
 import { initialRuntimeState, Store } from "../runtime/store.js";
 import { detectProjectInfo } from "../runtime/project-info.js";
 import { ClarificationResponse } from "../runtime/types.js";
-import { wireAgentBridge, BridgeableAgent } from "./agent-bridge.js";
+import type { McpElicitationResponse } from "../core/user-input.js";
+import { wireAgentBridge, BridgeableAgent, createRemoteAgentBridge } from "./agent-bridge.js";
+import { NexumClient } from "../assistant/client/index.js";
+import type { ShellAgent } from "./App.js";
 import { App } from "./App.js";
 import { validateAsl, generateAslGraph } from "../asl/commands.js";
 import { envIs } from "../platform/environment.js";
@@ -20,18 +25,16 @@ import { BRAND } from "../platform/brand.js";
 /** Matches App.tsx double–Ctrl+C window; SIGINT must not restore the terminal on first press. */
 const EXIT_CONFIRM_MS = 1500;
 
-function enableTerminalFeatures(): () => void {
+function setupTerminalFailsafe(): () => void {
   if (!process.stdin.isTTY) return () => {};
-  process.stdout.write("\x1b[?1049h\x1b[2J\x1b[3J\x1b[H\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h");
+  process.stdout.write("\x1b[?1049h\x1b[2J\x1b[3J\x1b[H");
   let restored = false;
   const cleanup = () => {
     if (restored) return;
     restored = true;
     process.stdout.write("\x1b[?2004l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l\x1b[?25h");
   };
-  // Restore the primary buffer only on process exit — not on the first SIGINT.
-  // A SIGINT handler that resets the terminal before Ink/App unmount leaves the
-  // TUI running in a broken screen while Ctrl+C appears to do nothing.
+  // Emergency fallback cleanup on exit in case unmount is bypassed
   process.once("exit", cleanup);
   return cleanup;
 }
@@ -66,24 +69,6 @@ function currentBranch(workspaceRoot: string): string {
   } catch {
     return "";
   }
-}
-
-// One-time, non-blocking check — whether run_shell's Docker sandbox (see
-// tools/shell.ts's own lazy ensureDockerAvailable) is actually reachable and
-// the sandbox image is present locally, so the footer's Sandbox indicator
-// reflects reality instead of assuming it's always up.
-function checkDockerAvailable(image?: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const probe = spawn("docker", ["info"], { stdio: "ignore" });
-    probe.on("close", (code) => {
-      if (code !== 0) return resolve(false);
-      if (!image) return resolve(true);
-      const imgProbe = spawn("docker", ["image", "inspect", image], { stdio: "ignore" });
-      imgProbe.on("close", (imgCode) => resolve(imgCode === 0));
-      imgProbe.on("error", () => resolve(false));
-    });
-    probe.on("error", () => resolve(false));
-  });
 }
 
 // Debug-only: dump every raw stdin chunk (as JSON-escaped text) to
@@ -145,85 +130,118 @@ const cfg = loadConfig();
   store.attach(bus);
   const detectedProject = detectProjectInfo(cfg.workspaceRoot);
   bus.publish({ type: "project.detected", info: detectedProject });
+  let sandboxProbe: Promise<boolean | undefined> = Promise.resolve(undefined);
   if (cfg.sandbox === false) {
     bus.publish({ type: "sandbox.detected", available: false, enabled: false });
   } else {
-    checkDockerAvailable(cfg.shellImage ?? BRAND.sandboxImage).then((available) =>
-      bus.publish({ type: "sandbox.detected", available, enabled: true }),
-    );
+    const probe = checkSandboxImage(cfg.shellImage ?? BRAND.sandboxImage);
+    probe.then((available) => bus.publish({ type: "sandbox.detected", available, enabled: true }));
+    sandboxProbe = probe;
   }
 
-  const agent = new Agent({ config: cfg });
-  // Start the plugin host + all P0-P2 services before the first user
-  // message so plugins can contribute tools, models, and context.
-  // Failure here is non-fatal: the agent still works with whatever
-  // kernel + service plane loaded; plugins just won't be active.
-  try {
-    await agent.startHost();
-  } catch (err) {
+  function buildLocalShellAgent(agent: Agent): ShellAgent {
+    return {
+      runUserMessage: (message: string) => agent.runUserMessage(message),
+      setModel: (model: string) => agent.setModel(model),
+      setTier: (tier: "local" | "cloud") => agent.setTier(tier),
+      resetContext: () => agent.resetContext(),
+      resumeSession: () => agent.resumeSession(),
+      resumeSessionById: (id: string) => agent.resumeSessionById(id),
+      hasResumableSession: () => agent.hasResumableSession(),
+      listSessions: () => agent.listSessions(),
+      getTools: () =>
+        agent
+          .getRegistry()
+          .getTools()
+          .map((t) => ({ name: t.name, description: t.description, category: agent.getRegistry().categoryOf(t.name) })),
+      listModels: () => agent.listModels(),
+      modelAvailability: (models: string[]) => agent.modelAvailability(models),
+      modelCapabilities: (models: string[]) => agent.modelCapabilities(models),
+      runPlan: (goal: string) => agent.runPlan(goal),
+      hasResumablePlan: () => agent.hasResumablePlan(),
+      getCapabilities: () => agent.getCapabilities(),
+      buildSandboxImage: () => agent.buildSandboxImage(),
+      resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
+      resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
+      resolveMcpElicitation: (resp: McpElicitationResponse) => agent.resolveMcpElicitation(resp),
+      validateModel: () => agent.validateModel(),
+      getSkillsRegistry: () => agent.getSkillsRegistry(),
+      pinSkill: (id: string | null) => agent.pinSkill(id),
+      usageAll: (range?: "24h" | "7d" | "30d", groupBy?: "model") => agent.usageAll(range, groupBy),
+      balanceAll: () => agent.balanceAll(),
+      importGguf: (model: string, path: string) => agent.importGguf(model, path),
+      pullModel: (model: string, onEvent) => agent.pullModel(model, onEvent),
+    };
+  }
+
+  const serverIndex = args.indexOf("--server");
+  const serverUrl =
+    process.env.NEXUM_SERVER_URL ||
+    (serverIndex !== -1
+      ? args[serverIndex + 1]?.startsWith("-")
+        ? "http://127.0.0.1:3777"
+        : (args[serverIndex + 1] ?? "http://127.0.0.1:3777")
+      : undefined);
+
+  let shellAgent: ShellAgent;
+  let agent: Agent | undefined;
+
+  if (serverUrl) {
+    const client = new NexumClient({ baseUrl: serverUrl });
+    shellAgent = createRemoteAgentBridge(client, bus);
     bus.publish({
       type: "logs.appended",
-      level: "warn",
-      source: "plugins",
-      message: `plugin host start failed: ${err instanceof Error ? err.message : String(err)}`,
+      level: "info",
+      source: "server",
+      message: `Connected to remote Nexum Server at ${client.baseUrl}`,
     });
+  } else {
+    agent = new Agent({ config: cfg });
+    sandboxProbe
+      .then((ready) => agent!.getCapabilities(ready))
+      .then((caps) => {
+        for (const c of startupWarnings(caps)) {
+          bus.publish({ type: "logs.appended", level: "warn", source: "capabilities", message: formatCapability(c) });
+        }
+      })
+      .catch(() => {});
+    try {
+      await agent.startHost();
+    } catch (err) {
+      bus.publish({
+        type: "logs.appended",
+        level: "warn",
+        source: "plugins",
+        message: `plugin host start failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+    agent.setProjectInfo(detectedProject);
+    wireAgentBridge(agent as unknown as BridgeableAgent, bus, { workspaceRoot: agent.workspaceRoot });
+    agent
+      .connectConfiguredMcpServers()
+      .then((servers) => bus.publish({ type: "mcp.changed", servers }))
+      .catch((e) => bus.publish({ type: "logs.appended", level: "error", source: "mcp", message: String(e) }));
+    shellAgent = buildLocalShellAgent(agent);
   }
-  agent.setProjectInfo(detectedProject);
 
-  // Agent.on<E extends AgentEventName> is structurally compatible with
-  // BridgeableAgent.on<E extends string> at runtime (the bridge only uses
-  // event names Agent emits), but TypeScript's generic-method variance rules
-  // reject the assignment statically because AgentEventName is narrower than
-  // string. Cast at this single bootstrap boundary.
-  wireAgentBridge(agent as unknown as BridgeableAgent, bus);
-
-  // Non-blocking: connecting spawns a subprocess per configured MCP server,
-  // which shouldn't hold up the TUI's first paint. Publishes even an empty
-  // list so the MCP actor moves out of "muted" once startup settles.
-  agent
-    .connectConfiguredMcpServers()
-    .then((servers) => bus.publish({ type: "mcp.changed", servers }))
-    .catch((e) => bus.publish({ type: "logs.appended", level: "error", source: "mcp", message: String(e) }));
-
-  const shellAgent = {
-    runUserMessage: (message: string) => agent.runUserMessage(message),
-    setModel: (model: string) => agent.setModel(model),
-    setTier: (tier: "local" | "cloud") => agent.setTier(tier),
-    resetContext: () => agent.resetContext(),
-    resumeSession: () => agent.resumeSession(),
-    resumeSessionById: (id: string) => agent.resumeSessionById(id),
-    hasResumableSession: () => agent.hasResumableSession(),
-    listSessions: () => agent.listSessions(),
-    getTools: () =>
-      agent
-        .getRegistry()
-        .getTools()
-        .map((t) => ({ name: t.name, description: t.description, category: agent.getRegistry().categoryOf(t.name) })),
-    listModels: () => agent.listModels(),
-    modelAvailability: (models: string[]) => agent.modelAvailability(models),
-    modelCapabilities: (models: string[]) => agent.modelCapabilities(models),
-    runPlan: (goal: string) => agent.runPlan(goal),
-    hasResumablePlan: () => agent.hasResumablePlan(),
-    resolveApproval: (id: string, approved: boolean) => agent.resolveApproval(id, approved),
-    resolveClarification: (resp: ClarificationResponse) => agent.resolveClarification(resp),
-    validateModel: () => agent.validateModel(),
-    getSkillsRegistry: () => agent.getSkillsRegistry(),
-    pinSkill: (id: string | null) => agent.pinSkill(id),
-  };
-
-  const disableFeatures = enableTerminalFeatures();
+  const restoreFailsafe = setupTerminalFailsafe();
   const instance = render(
     React.createElement(App, { bus, store, agent: shellAgent, workspaceRoot: cfg.workspaceRoot, initialTask }),
-    { exitOnCtrlC: false },
+    {
+      exitOnCtrlC: false,
+      alternateScreen: true,
+      mouse: true,
+    },
   );
-  registerForceQuitHandlers(() => instance.unmount(), disableFeatures);
+  registerForceQuitHandlers(() => instance.unmount(), restoreFailsafe);
   await instance.waitUntilExit();
-  disableFeatures();
-  // Drain the plugin host + all services on shutdown.
-  try {
-    await agent.stopHost();
-  } catch {
-    // best-effort — process is exiting anyway
+  restoreFailsafe();
+  if (agent) {
+    try {
+      await agent.stopHost();
+    } catch {
+      // best-effort — process is exiting anyway
+    }
   }
   process.exit(0);
 })();

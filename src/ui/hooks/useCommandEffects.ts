@@ -2,9 +2,13 @@ import { useCallback } from "react";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventBus } from "../../runtime/events/bus.js";
+import type { BalanceResponse, UsageResponse } from "@nemesis-oss/ollama-sdk";
+import type { AccountBalance, AccountUsage } from "../../models/adapters/provider.js";
+import { formatPullProgress } from "../../models/pull-progress.js";
 import { Store } from "../../runtime/store.js";
 import { CommandEffect } from "../../interaction/slash-commands.js";
 import { runDoctor } from "../../cli/doctor.js";
+import { formatCapability } from "../../cli/capabilities.js";
 import { WorkspaceManager } from "../../platform/workspace.js";
 import { workspaceStateDir } from "../../platform/paths.js";
 import { saveWorkspaceConfig } from "../../cli/config.js";
@@ -248,6 +252,134 @@ export function useCommandEffects(
             });
           break;
         }
+        case "capabilities": {
+          if (effect.action === "fix") {
+            bus.publish({ type: "notification", kind: "info", text: "Checking the sandbox image…" });
+            agent
+              ?.buildSandboxImage?.()
+              .then((r) => bus.publish({ type: "notification", kind: r.ok ? "success" : "error", text: r.message }))
+              .catch((err: unknown) =>
+                bus.publish({
+                  type: "notification",
+                  kind: "error",
+                  text: `Sandbox build failed: ${err instanceof Error ? err.message : String(err)}`,
+                }),
+              );
+            break;
+          }
+          agent
+            ?.getCapabilities?.()
+            .then((caps) => {
+              const mark = { active: "●", available: "◐", degraded: "▲", off: "○" } as const;
+              const rows = caps.map((c) => `• ${mark[c.state]} ${formatCapability(c)}`);
+              bus.publish({
+                type: "conversation.message",
+                role: "assistant",
+                text:
+                  "**Capabilities** (● active ◐ on demand ▲ degraded ○ off)\n\n" +
+                  rows.join("\n") +
+                  (caps.some((c) => c.id === "sandbox" && c.state === "degraded")
+                    ? "\n\nRun `/capabilities fix` to build the sandbox image."
+                    : ""),
+              });
+            })
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Capability check failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
+        case "usage": {
+          if (!agent?.usageAll) {
+            bus.publish({ type: "notification", kind: "error", text: "Usage is unavailable — no agent connected" });
+            break;
+          }
+          bus.publish({ type: "notification", kind: "info", text: "Fetching Ollama Cloud usage…" });
+          agent
+            .usageAll(effect.range, effect.groupBy)
+            .then((accounts) =>
+              bus.publish({ type: "conversation.message", role: "assistant", text: formatUsage(accounts) }),
+            )
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Usage failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
+        case "balance": {
+          if (!agent?.balanceAll) {
+            bus.publish({ type: "notification", kind: "error", text: "Balance is unavailable — no agent connected" });
+            break;
+          }
+          bus.publish({ type: "notification", kind: "info", text: "Fetching Ollama Cloud balance…" });
+          agent
+            .balanceAll()
+            .then((accounts) =>
+              bus.publish({ type: "conversation.message", role: "assistant", text: formatBalance(accounts) }),
+            )
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Balance failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
+        case "pull": {
+          if (!agent?.pullModel) {
+            bus.publish({ type: "notification", kind: "error", text: "Model pull is unavailable" });
+            break;
+          }
+          bus.publish({ type: "notification", kind: "info", text: `Pulling ${effect.model}…` });
+          // Registry frames arrive several times a second; one notification a
+          // second keeps the feed readable and still shows speed and ETA moving.
+          let lastReport = 0;
+          agent
+            .pullModel(effect.model, (event) => {
+              const now = Date.now();
+              if (now - lastReport < PULL_REPORT_INTERVAL_MS) return;
+              lastReport = now;
+              bus.publish({
+                type: "notification",
+                kind: "info",
+                text: `${effect.model}: ${formatPullProgress(event)}`,
+              });
+            })
+            .then(() => bus.publish({ type: "notification", kind: "success", text: `Model ${effect.model} pulled` }))
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Pull failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
+        case "import-gguf": {
+          if (!agent?.importGguf) {
+            bus.publish({ type: "notification", kind: "error", text: "GGUF import is unavailable" });
+            break;
+          }
+          bus.publish({ type: "notification", kind: "info", text: `Importing ${effect.model}…` });
+          agent
+            .importGguf(effect.model, effect.path)
+            .then(() => bus.publish({ type: "notification", kind: "success", text: `Model ${effect.model} created` }))
+            .catch((err: unknown) =>
+              bus.publish({
+                type: "notification",
+                kind: "error",
+                text: `Import failed: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+            );
+          break;
+        }
         case "evolve":
           await handleEvolveEffect(bus, workspaceRoot, effect.action, effect.target);
           break;
@@ -303,4 +435,94 @@ async function handleEvolveEffect(
   } finally {
     registry.close();
   }
+}
+
+const usd = (n: number): string => `$${n.toFixed(n > 0 && n < 0.01 ? 4 : 2)}`;
+
+/** Minimum gap between `/pull` progress notifications. */
+const PULL_REPORT_INTERVAL_MS = 1000;
+
+function usageLines(u: UsageResponse): string {
+  const t = u.totals;
+  const tokens =
+    t.input_tokens !== undefined
+      ? `\u2022 Tokens: ${t.input_tokens.toLocaleString()} in (${(t.cached_input_tokens ?? 0).toLocaleString()} cached)` +
+        ` / ${(t.output_tokens ?? 0).toLocaleString()} out`
+      : "";
+  // `partial` marks the in-progress bucket — including it would report a
+  // half-elapsed hour as a real drop in traffic.
+  const recent = u.buckets.filter((b) => !b.partial && b.request_count > 0).slice(-3);
+  const rows = recent.length
+    ? `\n\nRecent ${u.granularity}s:\n` +
+      recent.map((b) => `\u2022 ${b.from} \u2014 ${b.request_count} req, ${usd(b.usage_usd ?? 0)}`).join("\n")
+    : "";
+  // `groups` is present only for `/usage ... model`: the server ranks the top
+  // models and rolls everything past that limit into `remainder`.
+  const byModel = t.groups?.length
+    ? `\n\nBy model:\n` +
+      t.groups
+        .map((g) => `\u2022 ${g.model} \u2014 ${g.request_count.toLocaleString()} req, ${usd(g.usage_usd ?? 0)}`)
+        .concat(
+          t.remainder
+            ? [
+                `\u2022 Other \u2014 ${t.remainder.request_count.toLocaleString()} req, ${usd(t.remainder.usage_usd ?? 0)}`,
+              ]
+            : [],
+        )
+        .join("\n")
+    : "";
+  return (
+    `(${u.range}, ${u.scope})\n\n\u2022 Requests: ${t.request_count.toLocaleString()}\n` +
+    `\u2022 Spend: ${usd(t.usage_usd ?? 0)}${tokens}${byModel}${rows}`
+  );
+}
+
+export function formatUsage(accounts: AccountUsage[]): string {
+  if (accounts.length === 0) return "**Ollama Cloud usage**\n\nNo Ollama Cloud API key configured.";
+  const sections = accounts.map((a) =>
+    a.usage ? `**${a.label}**\n${usageLines(a.usage)}` : `**${a.label}**\n\u2022 \u2717 ${a.error ?? "unavailable"}`,
+  );
+  // Pools exist for availability, so the pool's real cost has to be visible
+  // without adding the per-key numbers up by hand.
+  const ok = accounts.flatMap((a) => (a.usage ? [a.usage] : []));
+  if (ok.length > 1) {
+    const requests = ok.reduce((n, u) => n + u.totals.request_count, 0);
+    const spend = ok.reduce((n, u) => n + (u.totals.usage_usd ?? 0), 0);
+    sections.unshift(
+      `**${ok.length} accounts**\n\n\u2022 Requests: ${requests.toLocaleString()}\n\u2022 Spend: ${usd(spend)}`,
+    );
+  }
+  return `**Ollama Cloud usage**\n\n${sections.join("\n\n---\n\n")}`;
+}
+
+function balanceLines(b: BalanceResponse): string {
+  const lines =
+    "balance_usd" in b.included
+      ? [
+          `\u2022 Included: ${usd(b.included.balance_usd)} of ${usd(b.included.allowance_usd)}`,
+          `\u2022 Period: ${b.included.period.from} \u2192 ${b.included.period.until}`,
+        ]
+      : [
+          `\u2022 Session limit: ${b.included.session.remaining_percent}% left (resets ${b.included.session.resets_at})`,
+          `\u2022 Weekly limit: ${b.included.weekly.remaining_percent}% left (resets ${b.included.weekly.resets_at})`,
+        ];
+  lines.push(`\u2022 Purchased: ${usd(b.purchased.balance_usd)}`);
+  return lines.join("\n");
+}
+
+function formatBalance(accounts: AccountBalance[]): string {
+  if (accounts.length === 0) return "**Ollama Cloud balance**\n\nNo Ollama Cloud API key configured.";
+  const sections = accounts.map((a) =>
+    a.balance
+      ? `**${a.label}**\n${balanceLines(a.balance)}`
+      : `**${a.label}**\n\u2022 \u2717 ${a.error ?? "unavailable"}`,
+  );
+  const ok = accounts.flatMap((a) => (a.balance ? [a.balance] : []));
+  if (ok.length > 1) {
+    // Purchased credits are the only figure that sums across accounts —
+    // legacy plans report percentages, which don't add up.
+    const purchased = ok.reduce((n, b) => n + b.purchased.balance_usd, 0);
+    sections.unshift(`**${ok.length} accounts**\n\n\u2022 Purchased: ${usd(purchased)}`);
+  }
+  return `**Ollama Cloud balance**\n\n${sections.join("\n\n---\n\n")}`;
 }

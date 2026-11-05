@@ -23,8 +23,59 @@ import { LocalWorker } from "../../models/local-worker.js";
 import { Verifier } from "../../models/verification/verifier.js";
 import { SelfConsistency } from "../../models/verification/self-consistency.js";
 import { ModelCapabilityRegistry } from "../../models/profiles/model-capability-registry.js";
+import { DecisionGateway, SystemOneDecisionGateway, type SystemOneEnvironment } from "../../models/decision/index.js";
+import { OllamaSystemOneClient } from "../../models/decision/ollama-system-one-client.js";
 
 export type StatusEmitter = (message: string) => void;
+
+/** Optional ModelStack overrides — currently only the Decision Plane DI seam. */
+export interface ModelStackOptions {
+  /**
+   * Inject a custom {@link DecisionGateway}. When supplied, this is used in
+   * place of the auto-built System One gateway. The primary purpose is test
+   * injection (FakeDecisionGateway) — production callers should let the
+   * stack build its own gateway from the CliConfig.
+   *
+   * If `cfg.enableDecision` is false, this is ignored — the Decision Plane
+   * stays fully disabled. If `cfg.tier` is `cloud`, the injected gateway is
+   * honored (because the caller explicitly knows what they're doing — e.g.
+   * an integration test against a local fake that ignores the cloud tier).
+   */
+  decisionGateway?: DecisionGateway;
+}
+
+/**
+ * Local-tier environment for the auto-built System One gateway. Probes the
+ * local Ollama server's version lazily via the SDK's `version` operation
+ * (declared in the SDK's public `./generated/api` subpath) on the first
+ * `decide()` call — gateway construction stays cheap. The result is cached
+ * for the lifetime of the stack: Ollama versions don't change without a
+ * server restart, and the gateway only uses the version to enforce the
+ * `minVersion: 0.35.0` contract.
+ */
+class LocalSystemOneEnvironment implements SystemOneEnvironment {
+  readonly tier = "local" as const;
+  private readonly provider: Provider;
+  private cached: string | undefined | null = null;
+
+  constructor(provider: Provider) {
+    this.provider = provider;
+  }
+
+  async getVersion(): Promise<string | undefined> {
+    if (this.cached !== null) return this.cached === undefined ? undefined : this.cached;
+    try {
+      // The SDK's public `version()` — the same probe its systemOne cloud gate uses.
+      const { version } = await this.provider.getOllamaClient().version();
+      this.cached = typeof version === "string" ? version : undefined;
+    } catch {
+      // Local Ollama unreachable — let the gateway try anyway and surface
+      // the real transport error if the user actually calls decide().
+      this.cached = undefined;
+    }
+    return this.cached === undefined ? undefined : this.cached;
+  }
+}
 
 export class ModelStack {
   readonly provider: Provider;
@@ -39,15 +90,46 @@ export class ModelStack {
   readonly availabilityChecker: ModelAvailabilityChecker | undefined;
   readonly keyManager: KeyManager | undefined;
 
+  /**
+   * The Decision Plane gateway, or undefined when the plane is disabled.
+   * Disabled by default; enabled via `cfg.enableDecision=true`. Auto-
+   * disabled when `cfg.tier === 'cloud'` (System One is local-only). Tests
+   * inject a fake via {@link ModelStackOptions.decisionGateway}.
+   */
+  readonly decisionGateway: DecisionGateway | undefined;
+  /**
+   * The dedicated decision model, independent of the primary generation
+   * `model`. Used by decision consumers (Wave 4+) when they build
+   * DecisionRequests that target this model.
+   */
+  readonly decisionModel: string | undefined;
+
   private readonly cfg: CliConfig;
   private readonly emitStatus: StatusEmitter;
   private catalogRefreshed: Promise<void> | null = null;
   private catalogRefreshedAt = 0;
   private static readonly CATALOG_TTL_MS = 60_000;
 
-  constructor(cfg: CliConfig, emitStatus: StatusEmitter) {
+  constructor(cfg: CliConfig, emitStatus: StatusEmitter, opts: ModelStackOptions = {}) {
     this.cfg = cfg;
     this.emitStatus = emitStatus;
+
+    // Hybrid local-cloud components first — the KeyManager feeds the cloud
+    // Provider's per-request key selection below. Only worth attaching with a
+    // real pool (2+ keys): with a single key there is nothing to bind or
+    // queue and the selector only adds availability-probe latency. The
+    // acquire timeout is tightened from the KeyManager's 30s default so a
+    // fully-saturated pool degrades to the plain endpoint pool (and SDK
+    // failover) instead of stalling an interactive turn for half a minute.
+    this.availabilityChecker =
+      cfg.enableAvailabilityCheck && cfg.apiKeys?.length
+        ? new ModelAvailabilityChecker(cfg.apiKeys, { ttlMs: cfg.availabilityCheckTtlMs })
+        : undefined;
+    this.keyManager =
+      this.availabilityChecker && cfg.apiKeys?.length
+        ? new KeyManager(cfg.apiKeys, this.availabilityChecker, { acquireTimeoutMs: 5_000 })
+        : undefined;
+    const keySelector = cfg.apiKeys && cfg.apiKeys.length > 1 ? this.keyManager : undefined;
 
     this.provider = new Provider({
       tier: cfg.tier,
@@ -55,6 +137,8 @@ export class ModelStack {
       host: cfg.host,
       apiKey: cfg.apiKey,
       apiKeys: cfg.apiKeys,
+      accountLabels: cfg.accountLabels,
+      keySelector,
       ...(cfg.timeoutMs ? { timeoutMs: cfg.timeoutMs } : {}),
     });
 
@@ -75,6 +159,7 @@ export class ModelStack {
           host: cfg.tier === "cloud" ? cfg.host : undefined,
           apiKey: cfg.apiKey,
           apiKeys: cfg.apiKeys,
+          keySelector,
           ...(cfg.timeoutMs ? { timeoutMs: cfg.timeoutMs } : {}),
         })
       : undefined;
@@ -87,16 +172,7 @@ export class ModelStack {
       logger: { warn: (msg: string) => this.emitStatus(msg) },
     });
 
-    // hybrid local-cloud components (each optional per config)
     this.heuristicRouter = cfg.enableHeuristicGate ? new HeuristicRouter() : undefined;
-    this.availabilityChecker =
-      cfg.enableAvailabilityCheck && cfg.apiKeys?.length
-        ? new ModelAvailabilityChecker(cfg.apiKeys, { ttlMs: cfg.availabilityCheckTtlMs })
-        : undefined;
-    this.keyManager =
-      this.availabilityChecker && cfg.apiKeys?.length
-        ? new KeyManager(cfg.apiKeys, this.availabilityChecker)
-        : undefined;
 
     const quickLocalProvider = cfg.quickModel
       ? new Provider({
@@ -118,6 +194,37 @@ export class ModelStack {
       this.availabilityChecker
         .refreshAll()
         .catch((e: Error) => this.emitStatus(`[Availability] refresh error: ${e.message}`));
+    }
+
+    // ── Decision Plane (System One) ───────────────────────────────────────────
+    //
+    // System One is local-only by contract (see `contracts/overlays/systemone.yaml`
+    // in the upstream SDK). When the runtime tier is `cloud` the stack never
+    // builds a gateway — System One must NOT silently route to Provider.chat on
+    // the cloud tier. The cloud-tier auto-disable also avoids instantiating
+    // OllamaSystemOneClient against a cloud client (which would be refused
+    // eagerly by the gateway's `tier === 'cloud'` check, but there is no
+    // reason to construct it in the first place).
+    //
+    // When enabled and local, the stack builds a SystemOneDecisionGateway
+    // around an OllamaSystemOneClient that calls the SDK's public
+    // `OllamaClient.systemOne(request, { signal })`. The local Ollama version
+    // probe (used by the gateway to enforce `minVersion: 0.35.0`) is the SDK's
+    // public `version()`.
+    this.decisionModel = cfg.decisionModel;
+    if (cfg.enableDecision && cfg.tier === "local") {
+      this.decisionGateway =
+        opts.decisionGateway ??
+        new SystemOneDecisionGateway({
+          client: new OllamaSystemOneClient(localProvider.getOllamaClient()),
+          environment: new LocalSystemOneEnvironment(localProvider),
+        });
+    } else {
+      // Disabled by config OR auto-disabled in a cloud tier. An explicit
+      // injection still wins ONLY when the plane is enabled — otherwise the
+      // caller is asking for both "disabled" and "use this gateway", which is
+      // a contradiction; the disabled flag wins and the gateway is dropped.
+      this.decisionGateway = cfg.enableDecision ? opts.decisionGateway : undefined;
     }
   }
 

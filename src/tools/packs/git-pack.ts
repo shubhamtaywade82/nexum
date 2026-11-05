@@ -7,7 +7,7 @@
  * remains as a compat export.
  */
 
-import { GitTool } from "../git-tools.js";
+import { GitReadTool, GitTool } from "../git-tools.js";
 import { GitHubTool } from "../github-tools.js";
 import { ToolPack, packOf } from "../gateway/tool-pack.js";
 import type { ToolRisk } from "../../core/tools/tool-contract.js";
@@ -18,7 +18,18 @@ export function gitPack(root: string): ToolPack {
     "git",
     "Local git operations: status, diff, log, commit.",
     "vcs",
-    [{ tool: new GitTool(root), category: "Git", metadata: { risk: "high" as ToolRisk } }],
+    [
+      { tool: new GitTool(root), category: "Git", metadata: { risk: "high" as ToolRisk } },
+      {
+        tool: new GitReadTool(root),
+        category: "Git",
+        metadata: {
+          risk: "read" as ToolRisk,
+          sideEffects: { filesystem: false, process: true },
+          policy: { confirmation: "never", uiInvocable: true },
+        },
+      },
+    ],
     "Git",
   );
 }

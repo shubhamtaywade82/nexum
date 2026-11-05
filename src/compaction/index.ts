@@ -133,6 +133,19 @@ export class CompactionPolicy {
     const keepRecent = this.opts.keepRecentMessages ?? 6;
     const minToCompact = this.opts.minMessagesToCompact ?? 8;
 
+    // Too short to be worth compacting, or nothing removable once the
+    // verbatim tail is kept: compacting would only destroy live context.
+    if (input.messages.length < minToCompact || input.messages.length <= keepRecent) {
+      return {
+        shouldCompact: false,
+        estimatedTokens,
+        budget,
+        messagesToCompact: 0,
+        messagesToKeep: input.messages.length,
+        reason: `too few messages (${input.messages.length})`,
+      };
+    }
+
     if (estimatedTokens <= trigger) {
       return {
         shouldCompact: false,
@@ -147,9 +160,9 @@ export class CompactionPolicy {
     // We need to compact enough messages to get down to `target`.
     // Walk from oldest to newest, accumulating tokens, until removing more
     // would put us under target.
-    const messagesToCompact = Math.max(
-      minToCompact,
-      this.countMessagesToCompact(input.messages, estimatedTokens - target, keepRecent),
+    const messagesToCompact = Math.min(
+      input.messages.length - keepRecent,
+      Math.max(minToCompact, this.countMessagesToCompact(input.messages, estimatedTokens - target, keepRecent)),
     );
 
     return {

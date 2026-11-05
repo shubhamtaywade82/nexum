@@ -1,5 +1,8 @@
-import "dotenv/config";
+// No `import "dotenv/config"`: a workspace .env is repository content and is
+// loaded by loadConfig() only once the workspace is trusted (workspace-trust.ts).
 import * as readline from "node:readline";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import chalk from "chalk";
@@ -290,6 +293,107 @@ export async function startTui(opts?: { config?: Partial<CliConfig> }): Promise<
     completer,
   });
 
+  agent.on("onMcpElicitationRequested", (request) => {
+    if (spinner.isSpinning) spinner.stop();
+    console.log(chalk.cyan.bold("\n[MCP] " + request.message));
+    if (request.mode === "url") {
+      console.log(chalk.yellow("URL: " + (request.url ?? "(missing)")));
+      rl.question(chalk.green("Open and accept? [y/N] "), (answer) => {
+        if (answer.trim().toLowerCase() !== "y" || !request.url) {
+          agent.resolveMcpElicitation({ id: request.id, action: "decline" });
+          return;
+        }
+        try {
+          const url = new URL(request.url);
+          if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("unsupported URL scheme");
+          const child =
+            process.platform === "darwin"
+              ? spawn("open", [request.url], { detached: true, stdio: "ignore" })
+              : process.platform === "win32"
+                ? spawn("cmd", ["/c", "start", "", request.url], { detached: true, stdio: "ignore" })
+                : spawn("xdg-open", [request.url], { detached: true, stdio: "ignore" });
+          child.once("error", () => agent.resolveMcpElicitation({ id: request.id, action: "decline" }));
+          child.once("spawn", () => {
+            child.unref();
+            agent.resolveMcpElicitation({ id: request.id, action: "accept" });
+          });
+        } catch {
+          agent.resolveMcpElicitation({ id: request.id, action: "decline" });
+        }
+      });
+      return;
+    }
+
+    const schema = request.requestedSchema;
+    if (!schema) {
+      agent.resolveMcpElicitation({ id: request.id, action: "decline" });
+      return;
+    }
+
+    (async () => {
+      const content: Record<string, string | number | boolean | string[]> = {};
+      for (const [name, field] of Object.entries(schema.properties)) {
+        const required = new Set(schema.required ?? []).has(name);
+        const suffix = field.description ? chalk.gray(" — " + field.description) : "";
+        if (field.enum || field.oneOf) {
+          const values = field.enum ?? field.oneOf?.map((item) => item.const) ?? [];
+          const labels = field.enum ?? field.oneOf?.map((item) => item.title) ?? values;
+          console.log(chalk.yellow("[" + name + "]" + suffix));
+          values.forEach((value, i) => console.log("  " + (i + 1) + ". " + (labels[i] ?? value) + " (" + value + ")"));
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("Choose" + (required ? " (required)" : "") + ": "), resolve),
+          );
+          const chosen = values[Number(answer.trim()) - 1];
+          if (chosen !== undefined) content[name] = chosen;
+          else if (required) {
+            agent.resolveMcpElicitation({ id: request.id, action: "decline" });
+            return;
+          }
+        } else if (field.type === "boolean") {
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("[" + name + "] true/false: "), resolve),
+          );
+          if (/^(true|false)$/i.test(answer.trim())) content[name] = answer.trim().toLowerCase() === "true";
+          else if (required) {
+            agent.resolveMcpElicitation({ id: request.id, action: "decline" });
+            return;
+          }
+        } else if (field.type === "number" || field.type === "integer") {
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("[" + name + "] number: "), resolve),
+          );
+          const numeric = Number(answer.trim() || String(field.default ?? ""));
+          if (Number.isFinite(numeric) && (field.type !== "integer" || Number.isInteger(numeric)))
+            content[name] = numeric;
+          else if (required) {
+            agent.resolveMcpElicitation({ id: request.id, action: "decline" });
+            return;
+          }
+        } else if (field.type === "array") {
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("[" + name + "] comma-separated choices: "), resolve),
+          );
+          const values = answer
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+          if (values.length > 0) content[name] = values;
+          else if (required) {
+            agent.resolveMcpElicitation({ id: request.id, action: "decline" });
+            return;
+          }
+        } else {
+          const answer = await new Promise<string>((resolve) =>
+            rl.question(chalk.green("[" + name + "]" + suffix + ": "), resolve),
+          );
+          if (answer.length > 0 || required) content[name] = answer;
+        }
+      }
+      agent.resolveMcpElicitation({ id: request.id, action: "accept", content });
+      rl.prompt();
+    })();
+  });
+
   agent.on("onClarificationRequested", (request) => {
     if (spinner.isSpinning) spinner.stop();
     console.log(chalk.cyan.bold(`\n? ${request.question}`));
@@ -544,5 +648,15 @@ export async function startTui(opts?: { config?: Partial<CliConfig> }): Promise<
 
   rl.on("SIGINT", () => {
     rl.close();
+  });
+}
+
+// `npm run dev:legacy` runs this file directly: start the readline REPL.
+// (Imported as a module, it only exports startTui.)
+const isDirectRun = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+if (isDirectRun) {
+  startTui().catch((err) => {
+    console.error(err);
+    process.exit(1);
   });
 }

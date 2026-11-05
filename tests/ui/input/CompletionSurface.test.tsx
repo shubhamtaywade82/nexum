@@ -1,5 +1,5 @@
 import React from "react";
-import { render } from "ink-testing-library";
+import { render } from "../wide-render.js";
 import { CompletionSurface } from "../../../src/ui/input/CompletionSurface.js";
 import { CompletionRow } from "../../../src/ui/input/CompletionRow.js";
 import { CompletionItem } from "../../../src/interaction/completion.js";

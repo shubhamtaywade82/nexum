@@ -94,30 +94,51 @@ describe("AcceptanceController", () => {
 describe("GeneralizationGate (fixed-executor protocol)", () => {
   const gate = new GeneralizationGate();
 
-  it("passes when the candidate holds or improves held-out under the frozen executor", () => {
+  it("generalizes when the candidate holds under every transfer executor, reporting the held-out delta", () => {
     const verdict = gate.evaluate(
       [
         cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.8 }),
         cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.85 }),
+        cell({ harnessId: "H0", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.85 }),
       ],
       "H0",
       "H1",
+      ["gemini"],
     );
     expect(verdict.generalized).toBe(true);
+    expect(verdict.transferDeltas["gemini"]).toBeCloseTo(0.05);
     expect(verdict.heldOutDeltas["qwen"]).toBeCloseTo(0.05);
   });
 
-  it("fails on held-out regression under the primary executor", () => {
+  it("reports a held-out regression without failing the gate: held-out is never a veto", () => {
     const verdict = gate.evaluate(
       [
         cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.8 }),
         cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.7 }),
+        cell({ harnessId: "H0", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+      ],
+      "H0",
+      "H1",
+      ["gemini"],
+    );
+    expect(verdict.generalized).toBe(true);
+    expect(verdict.violations).toEqual([]);
+    expect(verdict.heldOutDeltas["qwen"]).toBeCloseTo(-0.1);
+  });
+
+  it("does not generalize without a transfer executor: there is no decision axis", () => {
+    const verdict = gate.evaluate(
+      [
+        cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.95 }),
       ],
       "H0",
       "H1",
     );
     expect(verdict.generalized).toBe(false);
-    expect(verdict.violations[0]).toContain("Held-out regression");
+    expect(verdict.rationale).toContain("no transfer executor was evaluated");
   });
 
   it("fails when a transfer executor collapses (executor sensitivity check)", () => {
@@ -165,21 +186,74 @@ describe("GeneralizationGate (fixed-executor protocol)", () => {
     expect(verdict.executorSensitivity).toBeCloseTo(0.08);
   });
 
-  it("rejects cells with insufficient runs", () => {
+  it("reports executor sensitivity as unmeasured with a single executor", () => {
     const verdict = gate.evaluate(
       [
-        cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", runs: 1 }),
-        cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", runs: 5 }),
+        cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", taskSuccessRate: 0.9 }),
       ],
       "H0",
       "H1",
     );
+    expect(verdict.executorSensitivity).toBeNull();
+    expect(verdict.rationale).toContain("no transfer executor was evaluated");
+  });
+
+  it("rejects transfer cells with insufficient runs", () => {
+    const verdict = gate.evaluate(
+      [
+        cell({ harnessId: "H0", executorModel: "gemini", split: "transfer", runs: 1 }),
+        cell({ harnessId: "H1", executorModel: "gemini", split: "transfer", runs: 5 }),
+      ],
+      "H0",
+      "H1",
+      ["gemini"],
+    );
     expect(verdict.generalized).toBe(false);
-    expect(verdict.violations[0]).toContain("Insufficient runs");
+    expect(verdict.violations[0]).toContain("Insufficient runs for transfer evaluation");
+  });
+
+  it("ignores held-out cells with insufficient runs, since they cannot decide", () => {
+    const verdict = gate.evaluate(
+      [
+        cell({ harnessId: "H0", executorModel: "qwen", split: "held_out", runs: 1 }),
+        cell({ harnessId: "H1", executorModel: "qwen", split: "held_out", runs: 5 }),
+        cell({ harnessId: "H0", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+        cell({ harnessId: "H1", executorModel: "gemini", split: "transfer", taskSuccessRate: 0.8 }),
+      ],
+      "H0",
+      "H1",
+      ["gemini"],
+    );
+    expect(verdict.generalized).toBe(true);
+    expect(verdict.violations).toEqual([]);
   });
 });
 
 describe("EvolutionMetricsTracker (first-class loop metrics)", () => {
+  it("reports unmeasured quantities as null and averages only measured values", () => {
+    const t = new EvolutionMetricsTracker();
+    t.record(switchRecord({ visibleGain: 0.1, transferGain: null, executorSensitivity: null }));
+    t.record(switchRecord({ visibleGain: null, transferGain: 0.04, executorSensitivity: null }));
+    const report = t.report();
+    expect(report.meanVisibleGain).toBeCloseTo(0.1);
+    expect(report.meanTransferGain).toBeCloseTo(0.04);
+    expect(report.meanExecutorSensitivity).toBeNull();
+  });
+
+  it("computes experience correlation only from recorded experience confidence", () => {
+    const t = new EvolutionMetricsTracker();
+    for (let i = 0; i < 4; i++) t.record(switchRecord({ heldOutGain: i / 10, promoted: i % 2 === 0 }));
+    expect(t.report().experienceImprovementCorrelation).toBeNull();
+
+    const withExperience = new EvolutionMetricsTracker();
+    withExperience.record(switchRecord({ experienceConfidence: 0.9, promoted: true }));
+    withExperience.record(switchRecord({ experienceConfidence: 0.8, promoted: true }));
+    withExperience.record(switchRecord({ experienceConfidence: 0.2, promoted: false }));
+    withExperience.record(switchRecord({ experienceConfidence: null, promoted: false }));
+    expect(withExperience.report().experienceImprovementCorrelation).toBeGreaterThan(0.9);
+  });
+
   it("computes promotion precision = genuinely better on held-out / promoted", () => {
     const t = new EvolutionMetricsTracker();
     t.record(switchRecord({ versionId: "H1", promoted: true, genuinelyBetterOnHeldOut: true }));

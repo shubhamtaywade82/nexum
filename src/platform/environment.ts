@@ -57,12 +57,6 @@ export function envIs(key: string, value: string): boolean {
   return readEnv(key) === value;
 }
 
-/** True when either form is set to any of `values`. */
-export function envIn(key: string, values: readonly string[]): boolean {
-  const v = readEnv(key);
-  return v !== undefined && values.includes(v);
-}
-
 /**
  * Every currently-set DEVAGENT_* product variable (full names), for
  * `nexum migrate` reporting. Does not warn — it reports, it doesn't read.

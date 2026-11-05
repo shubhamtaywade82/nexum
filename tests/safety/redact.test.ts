@@ -1,4 +1,4 @@
-import { redactText, redactObject, detectSecretPatterns } from "../../src/safety/redact.js";
+import { redactText, redactObject } from "../../src/safety/redact.js";
 
 describe("Safety - Redact", () => {
   it("redacts AWS key patterns", () => {
@@ -9,13 +9,6 @@ describe("Safety - Redact", () => {
   it("redacts Bearer tokens and generic api keys", () => {
     const text = "Authorization: Bearer mySecretToken1234567890";
     expect(redactText(text)).toContain("[REDACTED]");
-  });
-
-  it("detects secret patterns", () => {
-    const text = "api_key = 1234567890abcdef and AKIAIOSFODNN7EXAMPLE";
-    const detected = detectSecretPatterns(text);
-    expect(detected).toContain("aws");
-    expect(detected).toContain("generic_key");
   });
 
   it("deeply redacts object properties", () => {

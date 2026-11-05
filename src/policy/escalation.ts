@@ -91,10 +91,3 @@ export function evaluateEscalation(
     materiallyUnresolved,
   };
 }
-
-export function shouldEscalateAfterLocalFailure(
-  unresolved: MateriallyUnresolvedFlags,
-  extra: EscalationFlags = {},
-): boolean {
-  return evaluateEscalation({ ...extra, localFailed: true }, unresolved).escalate;
-}

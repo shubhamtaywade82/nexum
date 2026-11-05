@@ -1,4 +1,4 @@
-import { useIsScreenReaderEnabled } from "ink";
+import { useIsScreenReaderEnabled } from "@nemesis-oss/termina-core";
 import * as React from "react";
 
 import { useMotion } from "./use-motion.js";

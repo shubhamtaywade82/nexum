@@ -1,4 +1,4 @@
-import { evaluateEscalation, shouldEscalateAfterLocalFailure } from "../../src/policy/escalation.js";
+import { evaluateEscalation } from "../../src/policy/escalation.js";
 
 describe("Policy - Escalation", () => {
   it("escalates when multiFile or schemaChange flags are set", () => {
@@ -9,8 +9,9 @@ describe("Policy - Escalation", () => {
   });
 
   it("escalates on unresolved task failure", () => {
-    const shouldEsc = shouldEscalateAfterLocalFailure({ testsFailed: true });
-    expect(shouldEsc).toBe(true);
+    const res = evaluateEscalation({ localFailed: true }, { testsFailed: true });
+    expect(res.escalate).toBe(true);
+    expect(res.reasons).toContain("local_failed_unresolved");
   });
 
   it("does not escalate when no escalation flags or failures are present", () => {

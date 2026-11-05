@@ -79,16 +79,29 @@ export class KeyManager {
       }
     }
 
-    // 2. Try to bind an unbound idle slot.
+    // 2. Try to bind an unbound idle slot. The slot is marked busy BEFORE the
+    // probe await: the probe is async, and without the reservation two
+    // concurrent acquires for different models could both select the same
+    // slot, both see the probe succeed, and clobber each other's binding
+    // while sharing one key — leaving a second key idle for no reason. If
+    // the probe says the model is unavailable, the reservation is dropped
+    // and the next unbound slot is tried.
     for (const slot of this.slots) {
       if (slot.boundModel === "" && !slot.busy) {
-        const ok = await this.checker.isAvailable(slot.apiKey, model);
+        slot.busy = true;
+        let ok: boolean;
+        try {
+          ok = await this.checker.isAvailable(slot.apiKey, model);
+        } catch {
+          ok = false;
+        }
         if (ok) {
           slot.boundModel = model;
-          slot.busy = true;
           return slot.apiKey;
         }
-        // Model not available on this key — leave slot unbound but don't busy it.
+        // Model not available on this key — drop the reservation and try
+        // the next unbound slot.
+        slot.busy = false;
       }
     }
 

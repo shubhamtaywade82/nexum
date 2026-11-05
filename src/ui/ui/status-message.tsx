@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import type { ReactNode } from "react";
 
 import { useTheme } from "./hooks/use-theme.js";

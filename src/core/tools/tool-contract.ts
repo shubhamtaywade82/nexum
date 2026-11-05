@@ -81,11 +81,23 @@ export interface ToolExecutionSpec {
    * (git commit/push, GitHub mutations, trading, external API mutations).
    */
   idempotencyKey?: "none" | "required" | "auto";
+  /**
+   * Where a process-spawning tool runs: "sandbox" (isolated container) or
+   * "host" (the user's own account). Argument-based "benign command" allows
+   * never apply to host execution.
+   */
+  isolation?: "sandbox" | "host";
 }
 
 /** Human-in-the-loop policy attached to the tool itself. */
 export interface ToolPolicySpec {
   confirmation: "never" | "optional" | "required";
+  /**
+   * A rendered UI may call this tool directly, outside any agent run (see host/ui-tools.ts).
+   * Separate from `risk`: risk says how dangerous a call is, this says who may make it without
+   * an agent in the loop. Opt-in only; a tool that is not marked here is agent-run only.
+   */
+  uiInvocable?: boolean;
 }
 
 export interface ToolDefinition {

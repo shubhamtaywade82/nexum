@@ -3,7 +3,7 @@ import { ProviderError } from "../adapters/provider.js";
 export interface ModelAvailability {
   model: string;
   available: boolean;
-  /** 'ok' | 'subscription_required' | 'not_found' | 'network_error' */
+  /** 'ok' | 'subscription_required' | 'payment_required' | 'forbidden' | 'not_found' | 'network_error' | 'timeout' | 'http_<status>' */
   reason: string;
   checkedAt: number; // Date.now()
 }
@@ -244,6 +244,8 @@ export class ModelAvailabilityChecker {
           reason: text.toLowerCase().includes("subscription") ? "subscription_required" : "forbidden",
         };
       }
+      // 402 is billing (plan or credits), matching the SDK's OllamaPaymentRequiredError.
+      if (resp.status === 402) return { ...base, available: false, reason: "payment_required" };
       if (resp.status === 404) return { ...base, available: false, reason: "not_found" };
       return { ...base, available: false, reason: `http_${resp.status}` };
     } catch (e) {

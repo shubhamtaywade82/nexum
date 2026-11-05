@@ -142,6 +142,214 @@ describe("Provider apiKeys pool (Ollama Cloud only)", () => {
   });
 });
 
+describe("Provider keySelector (KeyManager wiring)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+  afterEach(() => {
+    delete (globalThis as any).fetch;
+  });
+
+  const okBody = (content = "ok") =>
+    new Response(JSON.stringify({ model: "m", message: { role: "assistant", content }, done: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+  function authOf(call: unknown[]): string {
+    const headers = (call[1] as { headers?: HeadersInit } | undefined)?.headers;
+    return new Headers(headers ?? {}).get("authorization") ?? "";
+  }
+
+  it("sends the request with the key the selector acquired", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(okBody());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: { acquire: async () => "key_b", release: jest.fn() },
+    });
+    await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_b");
+  });
+
+  it("releases the acquired key after success and after failure", async () => {
+    (globalThis as any).fetch = jest.fn().mockResolvedValue(okBody());
+    const release = jest.fn();
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: { acquire: async () => "key_b", release },
+    });
+
+    await provider.chat([{ role: "user", content: "hi" }]);
+    expect(release).toHaveBeenCalledWith("key_b");
+    expect(release).toHaveBeenCalledTimes(1);
+
+    (globalThis as any).fetch = jest.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "boom" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(provider.chat([{ role: "user", content: "hi" }])).rejects.toThrow();
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the plain endpoint pool when acquire throws", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(okBody());
+    (globalThis as any).fetch = fakeFetch;
+    const release = jest.fn();
+
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: {
+        acquire: async () => {
+          throw new Error("all keys busy");
+        },
+        release,
+      },
+    });
+    const res = await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(res.message.content).toBe("ok");
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_a"); // first pool key by priority
+    expect(release).not.toHaveBeenCalled(); // nothing was acquired, nothing to release
+  });
+
+  it("keeps SDK failover as a safety net below the preferred key", async () => {
+    const fakeFetch = jest.fn().mockImplementation(async () => {
+      if (fakeFetch.mock.calls.length === 1) {
+        return new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return okBody();
+    });
+    (globalThis as any).fetch = fakeFetch;
+    const release = jest.fn();
+
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: { acquire: async () => "key_b", release },
+    });
+    const res = await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(res.message.content).toBe("ok");
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_b"); // preferred key tried first
+    expect(authOf(fakeFetch.mock.calls[1])).toBe("Bearer key_a"); // failed over to the rest of the pool
+    expect(release).toHaveBeenCalledWith("key_b");
+  });
+
+  it("re-uses the same preferred key for the same model across calls (warmth binding)", async () => {
+    const fakeFetch = jest.fn().mockImplementation(async () => okBody());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({
+      tier: "cloud",
+      model: "m",
+      apiKeys: ["key_a", "key_b"],
+      host: "https://x",
+      keySelector: { acquire: async () => "key_b", release: jest.fn() },
+    });
+    await provider.chat([{ role: "user", content: "one" }]);
+    await provider.chat([{ role: "user", content: "two" }]);
+
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_b");
+    expect(authOf(fakeFetch.mock.calls[1])).toBe("Bearer key_b");
+  });
+});
+
+// Documents the answer to "are multiple API keys auto-switched in live
+// sessions?": yes — a 429 (or timeout/auth/5xx) on the serving key rotates
+// the session to the next key in the pool automatically, mid-conversation,
+// with no manual switching. These tests pin the behavior by asserting which
+// key actually served each request via the Authorization header.
+describe("documented behavior: automatic key rotation in live sessions", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+  afterEach(() => {
+    delete (globalThis as any).fetch;
+  });
+
+  function authOf(call: unknown[]): string {
+    const headers = (call[1] as { headers?: HeadersInit } | undefined)?.headers;
+    return new Headers(headers ?? {}).get("authorization") ?? "";
+  }
+
+  it("a 429 on the serving key transparently rotates the session to the next key — no manual switch needed", async () => {
+    const fakeFetch = jest.fn().mockImplementation(async () => {
+      if (fakeFetch.mock.calls.length === 1) {
+        return new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ model: "m", message: { role: "assistant", content: "ok" }, done: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "cloud", model: "m", apiKeys: ["key_a", "key_b"], host: "https://x" });
+    const res = await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(res.message.content).toBe("ok");
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer key_a");
+    expect(authOf(fakeFetch.mock.calls[1])).toBe("Bearer key_b");
+  });
+
+  it("the next request starts from the last healthy key (rotation state persists across calls)", async () => {
+    const fakeFetch = jest.fn().mockImplementation(async () => {
+      const n = fakeFetch.mock.calls.length;
+      if (n === 1) {
+        return new Response(JSON.stringify({ error: "rate limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          model: "m",
+          message: { role: "assistant", content: n === 2 ? "first" : "second" },
+          done: true,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "cloud", model: "m", apiKeys: ["key_a", "key_b"], host: "https://x" });
+    await provider.chat([{ role: "user", content: "hi" }]);
+    const res = await provider.chat([{ role: "user", content: "hi again" }]);
+
+    expect(res.message.content).toBe("second");
+    expect(fakeFetch).toHaveBeenCalledTimes(3);
+    // Third call (second chat) went straight to the key that recovered the
+    // session — the rate-limited key was skipped by its circuit breaker.
+    expect(authOf(fakeFetch.mock.calls[2])).toBe("Bearer key_b");
+  });
+});
+
 describe("Provider streaming", () => {
   function streamOf(lines: string[]): Response {
     const encoder = new TextEncoder();
@@ -223,5 +431,174 @@ describe("Provider host resolution", () => {
     const provider = new Provider({ tier: "local", model: "m", host: "http://proxy.internal", apiKey: "k" });
     provider.setTier("cloud");
     expect(provider.currentHost).toBe("http://proxy.internal");
+  });
+});
+
+// ── ollama-sdk 1.9 surfaces ────────────────────────────────────────────────
+
+const okChat = () =>
+  jest.fn().mockResolvedValue(
+    new Response(JSON.stringify({ model: "m", message: { role: "assistant", content: "ok" }, done: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+
+describe("Provider context window sizing", () => {
+  it("sizes one request from ChatOptions.contextLength", async () => {
+    const fakeFetch = okChat();
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", host: "http://127.0.0.1:1" });
+    await provider.chat([{ role: "user", content: "hi" }], { contextLength: 28_096 });
+
+    const body = JSON.parse(fakeFetch.mock.calls[0][1].body as string);
+    expect(body.options.num_ctx).toBe(28_096);
+  });
+
+  it("keeps the local default window when the request sizes none", async () => {
+    const fakeFetch = okChat();
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", host: "http://127.0.0.1:1" });
+    await provider.chat([{ role: "user", content: "hi" }]);
+
+    const body = JSON.parse(fakeFetch.mock.calls[0][1].body as string);
+    expect(body.options.num_ctx).toBe(16_384);
+  });
+
+  it("leaves cloud window sizing to the caller", async () => {
+    const fakeFetch = okChat();
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "cloud", model: "m", apiKey: "k", host: "https://x" });
+    await provider.chat([{ role: "user", content: "hi" }]);
+
+    const body = JSON.parse(fakeFetch.mock.calls[0][1].body as string);
+    expect(body.options).toBeUndefined();
+  });
+
+  it("rejects client-side when the estimate overflows a throw-on-overflow client", async () => {
+    (globalThis as any).fetch = okChat();
+    const provider = new Provider({
+      tier: "local",
+      model: "m",
+      host: "http://127.0.0.1:1",
+      contextLength: 64,
+      onContextOverflow: "throw",
+    });
+
+    await expect(provider.chat([{ role: "user", content: "word ".repeat(2000) }])).rejects.toThrow(ProviderError);
+  });
+});
+
+describe("Provider vision passthrough", () => {
+  it("lets the SDK resolve data-URI images down to raw base64", async () => {
+    const fakeFetch = okChat();
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", host: "http://127.0.0.1:1" });
+    await provider.chat([{ role: "user", content: "look", images: ["data:image/png;base64,AAAA"] }]);
+
+    const body = JSON.parse(fakeFetch.mock.calls[0][1].body as string);
+    expect(body.messages[0].images).toEqual(["AAAA"]);
+  });
+});
+
+describe("Provider Ollama Cloud account ops", () => {
+  const usageBody = JSON.stringify({
+    range: "7d",
+    scope: "self",
+    granularity: "day",
+    totals: { request_count: 3, usage_usd: 0.42 },
+    buckets: [],
+  });
+  const usageOk = () => new Response(usageBody, { status: 200, headers: { "content-type": "application/json" } });
+  const authOf = (call: unknown[]) => new Headers((call[1] as RequestInit | undefined)?.headers).get("authorization");
+
+  it("reports no accounts when no API key is configured", async () => {
+    const provider = new Provider({ tier: "local", model: "m" });
+    await expect(provider.usageAll()).resolves.toEqual([]);
+    await expect(provider.balanceAll()).resolves.toEqual([]);
+  });
+
+  it("targets ollama.com/api/usage with the configured key", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(usageOk());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", apiKey: "acct_key" });
+    const [account] = await provider.usageAll();
+
+    expect(account.error).toBeUndefined();
+    expect(account.usage?.totals.request_count).toBe(3);
+    const reqUrl = new URL(fakeFetch.mock.calls[0][0] as string);
+    expect(reqUrl.hostname).toBe("ollama.com");
+    expect(reqUrl.pathname).toBe("/api/usage");
+    expect(authOf(fakeFetch.mock.calls[0])).toBe("Bearer acct_key");
+  });
+
+  it("queries every key in the pool as its own account", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(usageOk());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", apiKeys: ["key_aaa1", "key_bbb2"] });
+    const accounts = await provider.usageAll();
+
+    expect(accounts.map((a) => a.label)).toEqual(["Key 1 (…aaa1)", "Key 2 (…bbb2)"]);
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(new Set(fakeFetch.mock.calls.map(authOf))).toEqual(new Set(["Bearer key_aaa1", "Bearer key_bbb2"]));
+  });
+
+  it("names a row after its configured account label", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(usageOk());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({
+      tier: "local",
+      model: "m",
+      apiKeys: ["key_aaa1", "key_bbb2"],
+      accountLabels: { key_aaa1: "me@example.com" },
+    });
+    const accounts = await provider.usageAll();
+
+    // labelled account wins; the other keeps the masked-key fallback
+    expect(accounts.map((a) => a.label)).toEqual(["me@example.com", "Key 2 (…bbb2)"]);
+  });
+
+  it("de-duplicates a repeated key instead of reporting one account twice", async () => {
+    const fakeFetch = jest.fn().mockResolvedValue(usageOk());
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", apiKeys: ["same_key", "same_key"] });
+    await expect(provider.usageAll()).resolves.toHaveLength(1);
+  });
+
+  it("keeps one dead account from hiding the healthy ones", async () => {
+    const fakeFetch = jest.fn((url: unknown, init?: RequestInit) => {
+      const dead = new Headers(init?.headers).get("authorization") === "Bearer dead_bbbb";
+      return Promise.resolve(
+        dead
+          ? new Response(JSON.stringify({ error: "invalid api key" }), {
+              status: 401,
+              headers: { "content-type": "application/json" },
+            })
+          : usageOk(),
+      );
+    });
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "local", model: "m", apiKeys: ["live_aaaa", "dead_bbbb"] });
+    const accounts = await provider.usageAll();
+
+    expect(accounts).toHaveLength(2);
+    expect(accounts.find((a) => a.label.includes("aaaa"))?.usage?.totals.request_count).toBe(3);
+    expect(accounts.find((a) => a.label.includes("bbbb"))?.error).toBeDefined();
+  });
+});
+
+describe("Provider GGUF publishing", () => {
+  it("refuses importGguf on the cloud tier", async () => {
+    const provider = new Provider({ tier: "cloud", model: "m", apiKey: "k" });
+    await expect(provider.importGguf("local-model", "/tmp/a.gguf")).rejects.toThrow(/local tier/);
   });
 });

@@ -168,6 +168,8 @@ export interface ExperimentArtifactPayload {
     activatedAt: number;
     ok: boolean;
     error?: string;
+    /** True when a runtime consumer reads the pointer: `nexum` started from the harness checkout runs that commit. */
+    consumedByRuntime: boolean;
   } | null;
   decision: {
     verdict: "eligible" | "rejected" | "inconclusive" | "failed";
@@ -240,6 +242,8 @@ export interface ExperimentArtifactInput {
     activatedAt: number;
     ok: boolean;
     error?: string;
+    /** True when a runtime consumer reads the pointer: `nexum` started from the harness checkout runs that commit. */
+    consumedByRuntime: boolean;
   } | null;
 }
 

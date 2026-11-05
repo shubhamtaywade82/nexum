@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import { jest } from "@jest/globals";
 
-jest.unstable_mockModule("node:child_process", () => ({ spawn: jest.fn() }));
+jest.unstable_mockModule("node:child_process", () => ({
+  spawn: jest.fn(),
+  execFile: jest.fn(),
+  execFileSync: jest.fn(),
+}));
 
 const { spawn } = await import("node:child_process");
 const { Agent } = await import("../../src/cli/agent.js");

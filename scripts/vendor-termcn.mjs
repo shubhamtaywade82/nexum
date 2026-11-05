@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * Vendor termcn (ink-ui) components into Nexum's src/tui/ui/.
+ * Vendor termcn (ink-ui) components into Nexum's src/ui/ui/.
  *
  * termcn is a shadcn-style registry: each component is a JSON manifest whose
  * `files[]` carry full source. The shadcn CLI normally installs these with
  * `shadcn add @termcn/ink/<name>`; this script performs the same copy-paste
  * install locally so the vendored components become Nexum-owned source:
  *
- *   components/ui/<x>.tsx          -> src/tui/ui/<x>.tsx
- *   hooks/<x>.ts                   -> src/tui/ui/hooks/<x>.ts
- *   lib/<x>.ts                     -> src/tui/ui/lib/<x>.ts
- *   lib/terminal-themes/<x>.ts     -> src/tui/ui/lib/terminal-themes/<x>.ts
- *   providers/<x>.tsx              -> src/tui/ui/providers/<x>.tsx
+ *   components/ui/<x>.tsx          -> src/ui/ui/<x>.tsx
+ *   hooks/<x>.ts                   -> src/ui/ui/hooks/<x>.ts
+ *   lib/<x>.ts                     -> src/ui/ui/lib/<x>.ts
+ *   lib/terminal-themes/<x>.ts     -> src/ui/ui/lib/terminal-themes/<x>.ts
+ *   providers/<x>.tsx              -> src/ui/ui/providers/<x>.tsx
  *
  * Import paths are rewritten from the registry's `@/` alias convention to
  * Node16-style relative imports with explicit `.js` extensions (required by
@@ -29,7 +29,7 @@ import { dirname, join, relative, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT_ROOT = join(REPO_ROOT, "src", "tui", "ui");
+const OUT_ROOT = join(REPO_ROOT, "src", "ui", "ui");
 const CACHE_DIR = join(REPO_ROOT, "scripts", "termcn-cache");
 const RAW_BASE = "https://raw.githubusercontent.com/shadcn-labs/termcn/main/apps/web/public/r/ink";
 
@@ -43,7 +43,7 @@ if (COMPONENTS.length === 0) {
   process.exit(1);
 }
 
-/** Map a termcn install target to its path under src/tui/ui/. */
+/** Map a termcn install target to its path under src/ui/ui/. */
 function mapTarget(target) {
   if (target.startsWith("components/ui/")) return target.slice("components/ui/".length);
   return target;
@@ -106,7 +106,7 @@ function rewriteImports(content, outFile) {
     let mapped;
     if (spec.startsWith("components/ui/")) mapped = spec.slice("components/ui/".length);
     else mapped = spec;
-    const targetModule = posix.join("src/tui/ui", mapped);
+    const targetModule = posix.join("src/ui/ui", mapped);
     const normOut = outFile.replaceAll("\\", "/");
     const fromDir = posix.dirname(normOut.slice(REPO_ROOT.replaceAll("\\", "/").length + 1));
     let rel = posix.relative(fromDir, targetModule);
@@ -122,11 +122,11 @@ function rewriteImports(content, outFile) {
   return rewritten;
 }
 
-/** Path of outFile relative to src/tui/ui/ (for targeted patches). */
+/** Path of outFile relative to src/ui/ui/ (for targeted patches). */
 function mapTargetRelativeToUi(outFile) {
   const norm = outFile.replaceAll("\\", "/");
-  const idx = norm.indexOf("src/tui/ui/");
-  return idx === -1 ? "" : norm.slice(idx + "src/tui/ui/".length);
+  const idx = norm.indexOf("src/ui/ui/");
+  return idx === -1 ? "" : norm.slice(idx + "src/ui/ui/".length);
 }
 
 /**
@@ -203,7 +203,7 @@ async function vendor(name, stack) {
     checkExternalImports(content, name);
     mkdirSync(dirname(outPath), { recursive: true });
     writeFileSync(outPath, content.endsWith("\n") ? content : `${content}\n`);
-    console.log(`  ✓ ${name} -> src/tui/ui/${mapTarget(target)}`);
+    console.log(`  ✓ ${name} -> src/ui/ui/${mapTarget(target)}`);
   }
   vendored.add(name);
 
@@ -215,7 +215,7 @@ async function vendor(name, stack) {
   }
 }
 
-console.log(`Vendoring ${COMPONENTS.length} termcn component(s) into src/tui/ui/ ...`);
+console.log(`Vendoring ${COMPONENTS.length} termcn component(s) into src/ui/ui/ ...`);
 for (const c of COMPONENTS) {
   await vendor(c, []);
 }

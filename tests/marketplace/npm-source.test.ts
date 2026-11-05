@@ -225,6 +225,52 @@ describe("NpmMarketplaceSource", () => {
       expect(readFileSync(destPath).toString()).toBe("fake tarball content");
     });
 
+    it("downloads the pinned version even when latest has moved on", async () => {
+      const fetched: string[] = [];
+      global.fetch = mockFetch((url) => {
+        fetched.push(url);
+        if (url.includes("/@nexum-plugin%2Ffoo")) {
+          return {
+            ok: true,
+            json: {
+              name: "@nexum-plugin/foo",
+              "dist-tags": { latest: "1.5.0" },
+              versions: {
+                "1.4.0": { version: "1.4.0", dist: { tarball: "https://registry.test/foo-1.4.0.tgz" } },
+                "1.5.0": { version: "1.5.0", dist: { tarball: "https://registry.test/foo-1.5.0.tgz" } },
+              },
+            },
+          };
+        }
+        if (url.endsWith(".tgz")) return { ok: true, arrayBuffer: new TextEncoder().encode(url).buffer };
+        return { ok: false, status: 404 };
+      });
+      const destPath = join(tmpDir, "foo.tgz");
+      await source.download(
+        { id: "foo", name: "Foo", version: "1.4.0", npmPackage: "@nexum-plugin/foo", source: "npm" },
+        destPath,
+      );
+      expect(fetched).toContain("https://registry.test/foo-1.4.0.tgz");
+      expect(fetched).not.toContain("https://registry.test/foo-1.5.0.tgz");
+    });
+
+    it("refuses a version the registry never published", async () => {
+      global.fetch = mockFetch(() => ({
+        ok: true,
+        json: {
+          name: "@nexum-plugin/foo",
+          "dist-tags": { latest: "1.5.0" },
+          versions: { "1.5.0": { version: "1.5.0", dist: { tarball: "https://registry.test/foo-1.5.0.tgz" } } },
+        },
+      }));
+      await expect(
+        source.download(
+          { id: "foo", name: "Foo", version: "1.4.0", npmPackage: "@nexum-plugin/foo", source: "npm" },
+          join(tmpDir, "foo.tgz"),
+        ),
+      ).rejects.toThrow(/has no published version 1\.4\.0/);
+    });
+
     it("throws when entry has no npmPackage", async () => {
       await expect(
         source.download({ id: "x", name: "X", version: "1.0.0", source: "npm" }, join(tmpDir, "x.tgz")),

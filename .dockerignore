@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+*.log
+.env*
+!.env.example
+.nexum
+tests
+docs
+scratch
+CHANGELOG.md

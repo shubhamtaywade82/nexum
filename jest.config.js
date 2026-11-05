@@ -1,3 +1,25 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+
+// `npm test` sets NEXUM_TEST_NO_GLOBAL, but that only isolated the trust store:
+// config and global skills still came from the developer's real ~/.nexum, so
+// results depended on whose machine ran them. This runs in Jest's parent
+// process; setting HOME from a setup file would not reach the native
+// os.homedir(), because each test file gets a copy of process.env.
+if (process.env.NEXUM_TEST_NO_GLOBAL) {
+  // Playwright finds its browsers under the real home; keep the browser tests running.
+  const browserCache = [".cache", join("Library", "Caches")]
+    .map((dir) => join(homedir(), dir, "ms-playwright"))
+    .find((dir) => existsSync(dir));
+  if (browserCache && !process.env.PLAYWRIGHT_BROWSERS_PATH) process.env.PLAYWRIGHT_BROWSERS_PATH = browserCache;
+
+  const home = mkdtempSync(join(tmpdir(), "nexum-test-home-"));
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.on("exit", () => rmSync(home, { recursive: true, force: true }));
+}
+
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 export default {
   preset: "ts-jest/presets/default-esm",

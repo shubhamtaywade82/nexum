@@ -5,13 +5,15 @@ export class PlanGenerationError extends Error {}
 
 const PLAN_PROMPT = `Decompose the following task into a short ordered list of steps.
 Respond with ONLY a JSON array, no prose, in this exact shape:
-[{"id": "s1", "description": "...", "dependencies": []}, ...]
-Each step's "dependencies" lists the "id"s of steps that must complete first (empty array if none).`;
+[{"id": "s1", "description": "...", "dependencies": [], "verify": "..."}, ...]
+Each step's "dependencies" lists the "id"s of steps that must complete first (empty array if none).
+"verify" is optional: a shell command that exits 0 only when the step is done (e.g. a focused test run). Omit it when no command can prove the step.`;
 
 interface RawStep {
   id: unknown;
   description: unknown;
   dependencies: unknown;
+  verify?: unknown;
 }
 
 function extractJsonArray(text: string): unknown {
@@ -40,12 +42,14 @@ function validateSteps(parsed: unknown): PlanStep[] {
     if (!raw.dependencies.every((dep) => typeof dep === "string")) {
       throw new PlanGenerationError(`step at index ${i} has invalid dependencies: all elements must be strings`);
     }
+    const verify = typeof raw.verify === "string" && raw.verify.trim() ? raw.verify.trim() : undefined;
     return {
       id: raw.id,
       description: raw.description,
       dependencies: raw.dependencies as string[],
       status: "pending",
       retryCount: 0,
+      ...(verify ? { verify } : {}),
     };
   });
 }
@@ -74,7 +78,12 @@ export async function replanSteps(
     .map((h) => `- ${h.stepId}: ${h.outcome.kind === "success" ? "" : h.outcome.error}`)
     .join("\n");
   const remainingSummary = JSON.stringify(
-    remaining.map((s) => ({ id: s.id, description: s.description, dependencies: s.dependencies })),
+    remaining.map((s) => ({
+      id: s.id,
+      description: s.description,
+      dependencies: s.dependencies,
+      ...(s.verify ? { verify: s.verify } : {}),
+    })),
   );
   const messages: ChatMessage[] = [
     { role: "system", content: PLAN_PROMPT },

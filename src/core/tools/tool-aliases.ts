@@ -56,9 +56,3 @@ export function canonicalToolName(rawName: string): string {
   const clean = name.trim();
   return TOOL_ALIASES[clean] ?? TOOL_ALIASES[clean.toLowerCase()] ?? clean;
 }
-
-/** Is this name an alias (not already canonical)? */
-export function isToolAlias(name: string): boolean {
-  const clean = name.trim();
-  return clean in TOOL_ALIASES || clean.toLowerCase() in TOOL_ALIASES;
-}

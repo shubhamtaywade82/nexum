@@ -1,0 +1,17 @@
+{
+  "name": "broker-mcp-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Example: a read-only MCP server that wraps a broker REST API with contractful-ts. Not part of the nexum package.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test.mjs",
+    "e2e": "node e2e-nexum.mjs",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "contractful-ts": "0.4.2",
+    "zod": "4.6.7"
+  }
+}

@@ -201,7 +201,7 @@ a time. The only structural addition is `src/platform/`:
 
 ```
 src/platform/
-├── brand.ts        # BRAND constants + LEGACY_PRODUCT_NAMES
+├── brand.ts        # BRAND constants
 ├── environment.ts  # NEXUM_* > DEVAGENT_* resolution + deprecation warnings
 ├── paths.ts        # config-dir names, workspace-root discovery
 └── workspace.ts    # WorkspaceManager: detect / migrate / initialize / resolve

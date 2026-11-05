@@ -71,10 +71,23 @@ export function describeConfirmation(
   name: string,
   args: Record<string, unknown>,
   policyReason: string,
-): { title: string; summary: string } {
-  const legacy = classifyApprovalNeeded(name, args);
-  if (legacy) return legacy;
-  return { title: `Confirm ${name}`, summary: policyReason };
+): { title: string; summary: string; detail?: string } {
+  const detail = previewOf(args);
+  const spec = classifyApprovalNeeded(name, args) ?? { title: `Confirm ${name}`, summary: policyReason };
+  return detail ? { ...spec, detail } : spec;
+}
+
+// Enough to judge the change at a glance; the full text still reaches the tool if approved.
+const PREVIEW_LIMIT = 4_000;
+
+/** What a file-changing call will write, so the user approves the content and not just a path. */
+function previewOf(args: Record<string, unknown>): string | undefined {
+  const raw = args.content ?? args.patch ?? args.diff ?? args.new_lines ?? args.text;
+  const text = Array.isArray(raw) ? raw.join("\n") : typeof raw === "string" ? raw : undefined;
+  if (!text) return undefined;
+  return text.length > PREVIEW_LIMIT
+    ? `${text.slice(0, PREVIEW_LIMIT)}\n… (${text.length - PREVIEW_LIMIT} more characters)`
+    : text;
 }
 
 // ── Broker ──────────────────────────────────────────────────────────────────

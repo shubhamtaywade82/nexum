@@ -1,5 +1,10 @@
-import { CliConfig, loadConfig } from "./config.js";
+import { CliConfig, loadConfig, type McpCliServerConfig } from "./config.js";
 import { WorkspaceManager } from "../platform/workspace.js";
+import { BRAND } from "../platform/brand.js";
+import { collectCapabilities, type FeatureStatus } from "./capabilities.js";
+import { buildSandboxImage, checkSandboxImage } from "./sandbox-image.js";
+import { summarizePlan } from "../orchestration/plan-summary.js";
+import type { PullProgressEvent } from "@nemesis-oss/ollama-sdk";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
 import { ModelStack } from "./services/model-stack.js";
@@ -9,6 +14,7 @@ import { ExecutionManager } from "./services/execution-manager.js";
 import { CheckpointStore } from "../runtime/checkpoint.js";
 import { SessionStore, SessionMeta } from "../runtime/session.js";
 import { LoopDetector } from "../orchestration/loop-detector.js";
+import { assessComplexity } from "../orchestration/complexity.js";
 import { PlanStep, Planner } from "../orchestration/types.js";
 import { generatePlan, replanSteps } from "../ui/plan-generator.js";
 import { SkillMeta } from "../skills/types.js";
@@ -26,17 +32,46 @@ import { IntentResolver } from "../intent/intent-resolver.js";
 import { MemoryStore } from "../memory/store.js";
 import { DocsStore } from "../docs/store.js";
 import { AgentConversation } from "./agent-conversation.js";
-import { AgentToolManager } from "./agent-tools.js";
+import { AgentToolManager, type McpRegistrationOptions } from "./agent-tools.js";
+import { McpApprovalStore, McpTrustPolicy, mcpTrustPolicyFromConfig } from "../mcp/trust.js";
+import { resolveMcpEnv } from "../mcp/env.js";
+import { preservingTrust, WorkspaceTrustStore } from "./workspace-trust.js";
 import { AgentIntelligence } from "./agent-intelligence.js";
 import { AgentLearning } from "./agent-learning.js";
 import { DynamicToolSelector } from "../tools/discovery.js";
+import { historyPack } from "../tools/packs/history-pack.js";
+import { webPack } from "../tools/packs/web-pack.js";
+import { DecisionToolSelector } from "../tools/decision-tool-selector.js";
+import { DecisionRoutingHintResolver } from "../models/router/decision-routing-hint.js";
+import { HeuristicRouter } from "../models/router/heuristic-router.js";
+import { DecisionVerificationGate } from "../runtime/critic/decision-gate.js";
+import { HookEngine } from "../hooks/engine.js";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
 
 // ── Agent-harness primitives (P0+P1+P2) ──────────────────────────────────
-import { DefaultPluginHost, standardProfile, type PluginHost } from "../platform/plugins/index.js";
+import {
+  DefaultPluginHost,
+  compactionServicePlugin,
+  hookEnginePlugin,
+  jobServicePlugin,
+  modelRegistryPlugin,
+  sessionQueryServicePlugin,
+  subagentServicePlugin,
+  toolRegistryPlugin,
+  type NexumPlugin,
+  type PluginHost,
+} from "../platform/plugins/index.js";
 import { SettingsService, registerDefaultSpecs } from "../settings/index.js";
-import { ProfileRegistry, registerBuiltinProfiles } from "../profiles/index.js";
+import {
+  ProfileComposer,
+  ProfileLoader,
+  ProfileRegistry,
+  ProfileResolver,
+  registerBuiltinProfiles,
+} from "../profiles/index.js";
 import { ControlPlaneService, registerDefaultMetrics } from "../control-plane/index.js";
 import { CredentialService } from "../credentials/index.js";
 import { JobService } from "../jobs/index.js";
@@ -47,19 +82,32 @@ import { ContextService, defaultContextProviders } from "../context-providers/in
 import { AttachmentStore } from "../attachments/index.js";
 import { WorkflowService } from "../workflow/index.js";
 import { WebhookService } from "../webhooks/index.js";
+import { agentRunWorker, declarativeRule, isDeclarativeRuleSpec } from "../webhooks/agent-actions.js";
+import { DurableJobQueue, type QueueWorker } from "../jobs/durable-queue.js";
+import { SqliteArtifactStore } from "../artifacts/index.js";
+import { offloadLargeOutput } from "../tools/artifact-tools.js";
 import { WebService, defaultWebService } from "../web-service/index.js";
 
 import { LOCAL_DELEGATION_SYSTEM_ADDENDUM } from "../tools/delegate-tool.js";
 import { detectEscalationHint, isLookupPrompt } from "./agent-escalation.js";
 // ── Kernel (agent execution kernel) ───────────────────────────────────
 import { ApprovalBroker, describeConfirmation } from "../core/policy/approval-broker.js";
+import { FILE_EDIT_TOOLS } from "../core/policy/rules.js";
+import type { ApprovalMode } from "../protocol/types.js";
 import { DefaultModelGateway } from "../models/gateway/model-gateway.js";
 import { ModelCapabilityRegistry } from "../models/profiles/model-capability-registry.js";
+import { budgetForProfile, CHARS_PER_TOKEN, type ModelBudget } from "../models/profiles/context-budget.js";
 import { DefaultAgentRuntime, devAgentDescriptor } from "../runtime/agent/agent-runtime.js";
 import { createExecutionContext } from "../runtime/context/execution-context.js";
+import { ExecutionEventStore } from "../runtime/persistence/execution-event-store.js";
+import { ExecutionRecorder } from "../runtime/persistence/execution-recorder.js";
+import { newRunId } from "../core/identity.js";
+import { flushProcessTelemetry, telemetrySink } from "../observability/process-telemetry.js";
+import { budgetFromEnv, isBudgetExceeded, recordUsage, totalUsed } from "../observability/budget.js";
 import type { ExecutionRequest } from "../core/types.js";
 import type { StrategyHooks } from "../runtime/strategies/strategy-hooks.js";
 import { AgentConversationContext } from "./agent-conversation-context.js";
+import type { McpElicitationRequest, McpElicitationResponse } from "../core/user-input.js";
 
 // Confirmation gate for irreversible actions lives in the kernel now
 // (src/kernel/policy/approval-broker.ts): the classification table and the
@@ -87,7 +135,23 @@ export interface AgentEvents {
   onPlanUpdate?: (goal: string, steps: PlanStep[], status: "running" | "completed" | "failed") => void;
   onApprovalRequested?: (request: ApprovalRequest) => void;
   onClarificationRequested?: (request: ClarificationRequest) => void;
-  onModelUsed?: (tier: string, model: string) => void;
+  onMcpElicitationRequested?: (request: McpElicitationRequest) => void;
+  onModelUsed?: (
+    tier: string,
+    model: string,
+    usage?: { promptTokens: number; completionTokens: number; latencyMs: number },
+  ) => void;
+  /**
+   * A model call outside the turn loop (background conversation summary). Kept apart from
+   * onModelUsed, which drives "the model answering now" in the UI. Counts are null when the
+   * provider reported none.
+   */
+  onBackgroundModelUsage?: (info: {
+    purpose: "summary";
+    model: string;
+    promptTokens: number | null;
+    completionTokens: number | null;
+  }) => void;
   /** Whole-mission phase system (see runtime/mission-derive.ts): a new mission
    * begins, a phase's status changes, or a live plan step transitions. */
   onMissionStarted?: (goal: string) => void;
@@ -100,6 +164,8 @@ type AgentEventHandler<E extends AgentEventName> = NonNullable<AgentEvents[E]>;
 
 export interface AgentOptions {
   config?: Partial<CliConfig>;
+  /** Inject a Decision Plane gateway (tests); honored only when enableDecision is on. */
+  decisionGateway?: import("../models/decision/index.js").DecisionGateway;
   events?: AgentEvents;
   skillsHomeDir?: string;
 }
@@ -115,7 +181,10 @@ export class Agent {
   readonly railsIndex: AgentIntelligence["railsIndex"];
   readonly browser: BrowserManager;
   readonly binanceStream: BinanceStreamManager;
-  private readonly toolSelector: DynamicToolSelector;
+  private readonly toolSelector: Pick<DynamicToolSelector, "selectTools">;
+  /** Decision plane (System One), present only when enableDecision is on and local. */
+  private readonly routingHints?: DecisionRoutingHintResolver;
+  private readonly answerGate?: DecisionVerificationGate;
 
   // ── services (review item 1): the god class's extracted concerns ──────
   /** Model plane: providers, catalog, routing, hybrid components. */
@@ -154,6 +223,11 @@ export class Agent {
   readonly workflows: WorkflowService;
   /** Verified external event ingress. */
   readonly webhooks: WebhookService;
+  /** Versioned, provenance-carrying outputs (oversized tool outputs, reports). */
+  readonly artifacts: SqliteArtifactStore;
+  /** Durable work that survives restarts (webhook-triggered agent runs). */
+  readonly workQueue: DurableJobQueue;
+  private agentRunWorkerInstance?: QueueWorker;
   /** Separated web capability providers (search/fetch/http/browser). */
   readonly web: WebService;
 
@@ -164,9 +238,32 @@ export class Agent {
   private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>();
 
   readonly workspaceRoot: string;
-  private readonly mcpServerConfigs: Array<{ name: string; command: string; args?: string[] }>;
+  private readonly mcpServerConfigs: McpCliServerConfig[];
+  /** >0 while a plan is executing, so its steps (which re-enter runUserMessage) never trigger the /plan hint. */
+  private planDepth = 0;
+  /** Times the user declined the "run as a plan?" offer this session; after two the offer stops. */
+  private planDeclines = 0;
+  private readonly capabilityConfig: {
+    sandbox: boolean;
+    image: string;
+    localWorker: boolean;
+    dockerTool: boolean;
+    autoPlan: "ask" | "always" | "off";
+  };
+  /** P2 trust tier: built from config when any server sets trust/tools/maxRisk. */
+  private readonly mcpTrust?: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
+  /** Set per run by the host (CreateRunRequest.approvalMode); confirmations it covers are never asked. */
+  approvalMode: ApprovalMode = "ask";
   readonly intentResolver = new IntentResolver();
+  /** Session token budget from NEXUM_TOKEN_BUDGET (0 = unlimited), enforced per run by the kernel BudgetTracker. */
+  readonly tokenBudget = budgetFromEnv();
+  /**
+   * Programmatic hooks (prompt submit, pre/post tool use) for embedders and
+   * in-process plugins (provided to the plugin host as HOOK_ENGINE). A
+   * pre-tool deny is reported to the model as a tool result, not dropped.
+   */
+  readonly hooks = new HookEngine();
   projectInfo?: ProjectInfo;
 
   // ── Kernel (agent execution kernel) ─────────────────────────────────
@@ -178,6 +275,8 @@ export class Agent {
   readonly modelGateway: DefaultModelGateway;
   /** Kernel runtime: agent registry + strategy registry + agent gate. */
   readonly runtime: DefaultAgentRuntime;
+  /** Durable per-run execution event log (.nexum/runs/), read by sessionQuery. */
+  readonly runEvents: ExecutionEventStore;
   /** Capability profiles synced from every catalog refresh (ModelStack). */
   get modelProfiles(): ModelCapabilityRegistry {
     return this.stack.modelProfiles;
@@ -187,6 +286,13 @@ export class Agent {
     const cfg = { ...loadConfig(), ...(opts.config ?? {}) };
     this.workspaceRoot = cfg.workspaceRoot;
     this.mcpServerConfigs = cfg.mcpServers ?? [];
+    this.capabilityConfig = {
+      sandbox: cfg.sandbox !== false,
+      image: cfg.shellImage ?? BRAND.sandboxImage,
+      localWorker: !!cfg.enableLocalWorker,
+      dockerTool: !!cfg.dockerTool,
+      autoPlan: cfg.autoPlan ?? "ask",
+    };
     this.autoApproveFlag = cfg.autoApprove ?? false;
 
     this.events = opts.events ?? {};
@@ -194,7 +300,9 @@ export class Agent {
     // ── services (review item 1) ─────────────────────────────────────────
     // ModelStack owns the providers/catalog/router/hybrid composition that
     // used to be 80 lines of constructor here.
-    this.stack = new ModelStack(cfg, (msg) => this.emit("onStatus", msg));
+    this.stack = new ModelStack(cfg, (msg) => this.emit("onStatus", msg), {
+      ...(opts.decisionGateway ? { decisionGateway: opts.decisionGateway } : {}),
+    });
 
     // ApprovalManager owns the human-in-the-loop gates (approvals +
     // clarifications) that used to be pending-promise maps here.
@@ -202,19 +310,24 @@ export class Agent {
       autoApprove: cfg.autoApprove ?? false,
       onApprovalRequested: (request) => this.emit("onApprovalRequested", request),
       onClarificationRequested: (request) => this.emit("onClarificationRequested", request),
+      onMcpElicitationRequested: (request) => this.emit("onMcpElicitationRequested", request),
       hasApprovalListener: () => !!this.events.onApprovalRequested || !!this.listeners.get("onApprovalRequested")?.size,
       hasClarificationListener: () =>
         !!this.events.onClarificationRequested || !!this.listeners.get("onClarificationRequested")?.size,
+      hasMcpElicitationListener: () =>
+        !!this.events.onMcpElicitationRequested || !!this.listeners.get("onMcpElicitationRequested")?.size,
     });
 
     this.conversation = new AgentConversation();
 
     this.tools = new AgentToolManager();
-    this.tools.registerBaseTools(cfg.workspaceRoot, (stream, chunk) => this.emit("onShellOutput", stream, chunk), {
-      sandbox: cfg.sandbox,
-      image: cfg.shellImage,
-      timeoutSec: cfg.shellTimeoutSec,
-    });
+    this.tools.registerBaseTools(
+      cfg.workspaceRoot,
+      (stream, chunk) => this.emit("onShellOutput", stream, chunk),
+      { sandbox: cfg.sandbox, image: cfg.shellImage, timeoutSec: cfg.shellTimeoutSec },
+      { writeScope: cfg.writeScope },
+      { dockerTool: cfg.dockerTool, dockerEgress: cfg.dockerEgress },
+    );
     this.tools.registerHybridTools(this.stack.localWorker);
     this.tools.registerClarificationTool(this);
 
@@ -236,7 +349,7 @@ export class Agent {
     this.tools.registerRailsTools(this.intelligence.railsIndex);
 
     this.browser = new BrowserManager();
-    this.tools.registerBrowserTools(this.browser);
+    this.tools.registerBrowserTools(this.browser, () => this.attachments);
     this.binanceStream = new BinanceStreamManager();
     this.tools.registerBinanceStreamTools(this.binanceStream);
 
@@ -246,18 +359,49 @@ export class Agent {
     // Workspace state (memory/checkpoint/sessions/docs) lives under .nexum —
     // resolved (and migrated from legacy .devagent when present) by the
     // WorkspaceManager, the single owner of that decision (docs/REBRANDING.md §4).
-    const statePaths = new WorkspaceManager(cfg.workspaceRoot).ensure();
+    // (the one-time .devagent → .nexum migration copies config.json: keep a
+    // trusted workspace trusted across it, never trust an untrusted one)
+    const statePaths = preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), () =>
+      new WorkspaceManager(cfg.workspaceRoot).ensure(),
+    );
+
+    // P2 trust tier: entries with trust/tools/maxRisk gates get a policy;
+    // entries without keep the connect-freely behavior (listing = consent).
+    this.mcpTrust = this.mcpServerConfigs.some(
+      (s) => s.trust !== undefined || s.tools !== undefined || s.maxRisk !== undefined,
+    )
+      ? mcpTrustPolicyFromConfig(this.mcpServerConfigs, {
+          // approvals stored in an untrusted workspace are repository
+          // content: ignore them (servers needing approval then ask)
+          approvals: cfg.workspaceTrust?.trusted
+            ? new McpApprovalStore(join(statePaths.dir, "mcp-trust.json"), (write) =>
+                preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), write),
+              )
+            : undefined,
+        })
+      : undefined;
 
     this.memory = new MemoryStore(statePaths.memoryDb);
     this.planCheckpoint = new CheckpointStore(statePaths.checkpoint);
 
     // SessionManager owns conversation persistence + summarization.
+    const sessionStore = new SessionStore(statePaths.sessionsDir);
     this.sessions = new SessionManager({
-      store: new SessionStore(statePaths.sessionsDir),
+      store: sessionStore,
       memory: this.memory,
       stack: this.stack,
       onMemorySummary: (summary) => this.emit("onMemorySummary", summary),
       onError: (e) => this.emit("onError", e),
+      onModelResponse: (response) => {
+        const prompt = response.prompt_eval_count as number | undefined;
+        const completion = response.eval_count as number | undefined;
+        this.emit("onBackgroundModelUsage", {
+          purpose: "summary",
+          model: typeof response.model === "string" ? response.model : this.currentModel,
+          promptTokens: typeof prompt === "number" ? prompt : null,
+          completionTokens: typeof completion === "number" ? completion : null,
+        });
+      },
     });
 
     this.docs = new DocsStore(statePaths.docsDb);
@@ -279,7 +423,7 @@ export class Agent {
       projectLanguage,
     });
 
-    this.toolSelector = new DynamicToolSelector({
+    const dynamicSelector = new DynamicToolSelector({
       mode: cfg.toolSelectionMode,
       maxActiveTools: cfg.maxActiveTools,
       provider: this.stack.provider,
@@ -296,6 +440,28 @@ export class Agent {
       },
     });
 
+    // Decision plane (System One): bounded-choice consumers replace the
+    // free-form "small model lists tool names" path, resolve ambiguous
+    // routing, and gate the critic. Each falls back to deterministic
+    // behavior on any DecisionError — System One is never the authority.
+    const decisionGateway = this.stack.decisionGateway;
+    if (decisionGateway) {
+      const decisionModel = this.stack.decisionModel ?? "tev1";
+      this.toolSelector = new DecisionToolSelector({
+        decisionGateway,
+        decisionModel,
+        maxActiveTools: cfg.maxActiveTools,
+      });
+      this.routingHints = new DecisionRoutingHintResolver({
+        heuristicRouter: this.stack.heuristicRouter ?? new HeuristicRouter(),
+        decisionGateway,
+        decisionModel,
+      });
+      this.answerGate = new DecisionVerificationGate({ decisionGateway, decisionModel });
+    } else {
+      this.toolSelector = dynamicSelector;
+    }
+
     // ── Kernel wiring: gateways, broker, runtime ────────────────────────
     this.modelGateway = new DefaultModelGateway({
       router: this.stack.router,
@@ -303,7 +469,16 @@ export class Agent {
       registry: this.stack.modelProfiles,
     });
 
-    this.runtime = new DefaultAgentRuntime();
+    // Every run is recorded durably (.nexum/runs/<runId>.events.jsonl) so
+    // sessions can be searched, traced and replayed after the process exits.
+    this.runEvents = new ExecutionEventStore({ rootDir: statePaths.dir });
+    // The recorder's live sink feeds process-wide telemetry (spans + metrics).
+    const live = telemetrySink();
+    const recorder = new ExecutionRecorder({ store: this.runEvents, ...(live ? { live } : {}) });
+    this.runtime = new DefaultAgentRuntime({
+      recorder: (ctx) =>
+        recorder.forRun({ runId: ctx.runId, traceId: ctx.traceId, sessionId: ctx.sessionId, agentId: ctx.agentId }),
+    });
     this.runtime.agents.register(devAgentDescriptor());
 
     // ExecutionManager owns run scopes + planned missions (needs runtime
@@ -311,8 +486,10 @@ export class Agent {
     this.execution = new ExecutionManager({
       runtime: this.runtime,
       checkpoint: this.planCheckpoint,
-      runStep: (message) => this.runUserMessage(message),
+      runStep: (message, opts) => this.runUserMessage(message, undefined, opts),
       onStepChange: (step) => this.emit("onMissionStep", step),
+      runCommand: (command) => this.runVerificationCommand(command),
+      stepBudget: () => this.budgetFor("quick"),
     });
 
     // ── Agent-harness primitives wiring (P0+P1+P2) ─────────────────────
@@ -327,22 +504,34 @@ export class Agent {
     // before the first user message, so that plugin setup doesn't block
     // constructor-time concerns like UI rendering.
     this.pluginHost = new DefaultPluginHost({ workspaceRoot: cfg.workspaceRoot });
-    this.pluginHost.registerAll(standardProfile.plugins());
 
     // Settings service with default specs.
     this.settings = new SettingsService({ rootDir: statePaths.dir });
     registerDefaultSpecs(this.settings);
 
-    // Profile registry with built-in profiles.
+    // Profile registry: built-ins + user profiles (~/.nexum/profiles, and
+    // .nexum/profiles in a trusted workspace). User profiles are JSON, so
+    // they contribute settings + dependsOn only — plugins come from code.
     this.profiles = new ProfileRegistry();
     registerBuiltinProfiles(this.profiles);
+    const userProfiles = new ProfileLoader({
+      ...(cfg.workspaceTrust?.trusted ? { workspaceRoot: cfg.workspaceRoot } : {}),
+      homeDir: homedir(),
+    }).load();
+    for (const rec of userProfiles) {
+      if (this.profiles.has(rec.bundle.id)) continue;
+      this.profiles.register({ ...rec.bundle, plugins: [] }, "user", rec.loadedFrom);
+    }
 
     // Control plane with default metrics.
     this.controlPlane = new ControlPlaneService();
     registerDefaultMetrics(this.controlPlane);
 
-    // Credential service (env + file providers).
-    this.credentials = new CredentialService({ rootDir: statePaths.dir });
+    // Credential service: env always; the .nexum credentials file only in a
+    // trusted workspace (in an untrusted one it is repository content and
+    // would otherwise override real env credentials). Consumed by MCP server
+    // `env` entries of the form `credential:NAME`.
+    this.credentials = new CredentialService(cfg.workspaceTrust?.trusted ? { rootDir: statePaths.dir } : {});
 
     // Job service.
     this.jobs = new JobService({ maxConcurrent: 8 });
@@ -359,15 +548,16 @@ export class Agent {
     this.compaction = new CompactionService();
 
     // Session query service (backed by the workspace's session + event stores).
-    this.sessionQuery = new SessionQueryService({
-      // These are wired later when the embedding app provides them — the
-      // service is functional without them (returns empty results).
-    });
+    this.sessionQuery = new SessionQueryService({ eventStore: this.runEvents, sessionStore: sessionStore });
 
-    // Context providers (default set).
-    this.contextProviders = new ContextService();
+    // Context providers (default set). Workspace root + AGENTS.md already
+    // live in the configured system prompt, so that provider is dropped here
+    // instead of duplicating it every turn.
+    this.contextProviders = new ContextService({ maxTokens: 1_500 });
+    // Runtime/session-reference only contribute opaque ids — noise to a model.
+    const skipProviders = new Set(["workspace", "runtime", "session-reference"]);
     for (const provider of defaultContextProviders()) {
-      this.contextProviders.registerProvider(provider);
+      if (!skipProviders.has(provider.id)) this.contextProviders.registerProvider(provider);
     }
 
     // Attachment store.
@@ -376,12 +566,89 @@ export class Agent {
     // Workflow service (durable, persisted to .nexum/workflows/).
     this.workflows = new WorkflowService({ rootDir: statePaths.dir });
 
-    // Webhook service (persisted to .nexum/webhooks/).
+    // Webhook service (persisted to .nexum/webhooks/). Declarative
+    // `agent.run` rules enqueue durable jobs (.nexum/queue.db, deduped per
+    // event); the worker that runs them starts with the first such rule.
     this.webhooks = new WebhookService({ rootDir: statePaths.dir });
+    this.workQueue = new DurableJobQueue(join(statePaths.dir, "queue.db"));
+    // Versioned outputs with provenance; oversized tool outputs land here.
+    this.artifacts = new SqliteArtifactStore(join(statePaths.dir, "artifacts.db"));
+    this.webhooks.setActionCompiler((spec) => {
+      if (!isDeclarativeRuleSpec(spec)) return undefined;
+      this.ensureAgentRunWorker();
+      return declarativeRule(spec, this.workQueue);
+    });
 
-    // Web service (Node fetch + simple extractor).
+    this.mountProfile(cfg.profile ?? "nexum-cli");
+
+    // Web service (SSRF-guarded Node fetch + extractor + web search).
     this.web = defaultWebService();
+
+    // Model-facing tools over services that exist only after statePaths:
+    // session/run history (read-only) and browserless web access.
+    this.tools.registerToolPack(historyPack(this.sessionQuery, this.artifacts));
+    this.tools.registerToolPack(webPack(this.web));
   }
+
+  /**
+   * Mount a profile on the plugin host: its composed plugins (dependencies
+   * first), with every built-in service plugin backed by THIS agent's live
+   * instance — a plugin that looks up the job/subagent/compaction/session
+   * services gets the ones the agent actually uses, not detached copies —
+   * plus the hook engine. Profile settings are applied to SettingsService.
+   * An unknown profile falls back to nexum-cli.
+   */
+  private mountProfile(requested: string): void {
+    const id = this.profiles.has(requested) ? requested : "nexum-cli";
+    if (id !== requested) this.emit("onStatus", `unknown profile "${requested}"; using nexum-cli`);
+    const closure: string[] = [];
+    const visit = (pid: string) => {
+      if (closure.includes(pid) || !this.profiles.has(pid)) return;
+      for (const dep of this.profiles.get(pid)?.bundle.dependsOn ?? []) visit(dep);
+      closure.push(pid);
+    };
+    visit(id);
+    const resolved = ProfileResolver.resolve(ProfileComposer.compose(this.profiles, closure));
+
+    const live: Record<string, () => NexumPlugin> = {
+      "job-service": () => jobServicePlugin({ service: this.jobs }),
+      "subagent-service": () => subagentServicePlugin({ service: this.subagents }),
+      "compaction-service": () => compactionServicePlugin({ service: this.compaction }),
+      "session-query-service": () => sessionQueryServicePlugin({ service: this.sessionQuery }),
+      "tool-registry": () => toolRegistryPlugin({ catalog: this.tools.kernelCatalog }),
+      "model-registry": () => modelRegistryPlugin({ registry: this.stack.modelProfiles, gateway: this.modelGateway }),
+    };
+    const seen = new Set<string>();
+    const plugins: NexumPlugin[] = [];
+    for (const plugin of [...resolved.plugins, hookEnginePlugin(this.hooks)]) {
+      const pid = plugin.manifest.id;
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      plugins.push(live[pid]?.() ?? plugin);
+    }
+    this.pluginHost.registerAll(plugins);
+
+    for (const [key, value] of Object.entries(resolved.settings)) {
+      try {
+        this.settings.set(key, value, `profile:${id}`);
+      } catch (err) {
+        this.emit("onStatus", `profile ${id}: setting ${key} ignored (${err instanceof Error ? err.message : err})`);
+      }
+    }
+    this.activeProfile = id;
+  }
+
+  /** Start (once) the worker that runs queued webhook-triggered agent runs. */
+  private ensureAgentRunWorker(): void {
+    if (this.agentRunWorkerInstance) return;
+    this.agentRunWorkerInstance = agentRunWorker(this.workQueue, async (prompt) => {
+      this.emit("onStatus", "running a webhook-triggered task");
+      return this.runUserMessage(prompt);
+    }).start();
+  }
+
+  /** Profile mounted on the plugin host (see mountProfile). */
+  activeProfile = "nexum-cli";
 
   /**
    * Start the plugin host and all mounted services. Must be called before
@@ -397,12 +664,21 @@ export class Agent {
   /**
    * Stop the plugin host and drain all services. Called on shutdown.
    */
+  /** Resolves once background model work started by earlier turns (the conversation summary) has finished. */
+  whenIdle(): Promise<void> {
+    return this.sessions.idle();
+  }
+
   async stopHost(): Promise<void> {
     this.controlPlane.drain();
+    await this.agentRunWorkerInstance?.stop();
     await this.jobs.stopAll();
     await this.subagents.stopAll();
     await this.pluginHost.stop();
     this.controlPlane.stop();
+    this.workQueue.close();
+    this.artifacts.close();
+    await flushProcessTelemetry();
   }
 
   on<E extends AgentEventName>(event: E, handler: AgentEventHandler<E>): this {
@@ -425,7 +701,70 @@ export class Agent {
     this.listeners.get(event)?.forEach((h) => h(...args));
   }
 
-  async runUserMessage(userMessage: string, _priority?: PlanStep["priority"]): Promise<string> {
+  /**
+   * Route a top-level request that looks like several dependent steps to the orchestrator
+   * (checkpointed, dependency-ordered, parallel, resumable) instead of one long chat turn.
+   * autoPlan "ask" (default) needs approval, "always" does not, "off" never routes. Never applies
+   * inside a running plan. Returns the plan summary, or null to continue as a normal turn.
+   */
+  private async routeMultiStep(userMessage: string): Promise<string | null> {
+    if (this.planDepth > 0 || this.capabilityConfig.autoPlan === "off") return null;
+    const assessment = assessComplexity(userMessage);
+    if (!assessment.multiStep) return null;
+
+    const why = assessment.signals.join(", ");
+    if (this.capabilityConfig.autoPlan === "ask") {
+      const declinedTwice = this.planDeclines >= 2;
+      const approved =
+        !declinedTwice &&
+        (await this.requestApproval(
+          "Run as a plan?",
+          `This looks multi-step (${why}). Plan mode checkpoints each step, runs independent steps in parallel and can resume after a crash.`,
+        ));
+      if (!approved) {
+        if (!declinedTwice) this.planDeclines++;
+        this.emit("onStatus", `this looks multi-step (${why}): /plan <goal> runs it as a checkpointed plan`);
+        return null;
+      }
+    }
+
+    this.emit("onStatus", `running as a plan (${why})`);
+    let steps: PlanStep[];
+    try {
+      steps = await this.runPlan(userMessage);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!this.hasResumablePlan()) {
+        // Plan generation failed before any step ran: nothing to undo, answer as a normal turn.
+        this.emit("onStatus", `plan could not be generated (${message}); continuing as a normal turn`);
+        return null;
+      }
+      const failure = `Plan failed: ${message}. Run /plan to resume the checkpointed plan.`;
+      this.conversation.pushUserMessage(userMessage);
+      this.conversation.pushAssistantMessage(failure);
+      this.sessions.save(this.conversation.getMessages());
+      return failure;
+    }
+    const summary = summarizePlan(steps);
+    this.conversation.pushUserMessage(userMessage);
+    this.conversation.pushAssistantMessage(summary);
+    this.sessions.save(this.conversation.getMessages());
+    return summary;
+  }
+
+  async runUserMessage(
+    userMessage: string,
+    _priority?: PlanStep["priority"],
+    opts: { escalate?: boolean } = {},
+  ): Promise<string> {
+    const submitted = await this.hooks.runUserPromptSubmit(userMessage);
+    if (!submitted.allow) {
+      const blocked = `Request blocked by hook: ${submitted.reason}`;
+      this.emit("onStatus", blocked);
+      return blocked;
+    }
+    userMessage = submitted.updatedPrompt ?? userMessage;
+
     const clarificationReq = this.intentResolver.checkAmbiguity(userMessage, this.projectInfo);
     if (
       clarificationReq &&
@@ -435,6 +774,15 @@ export class Agent {
       userMessage = this.intentResolver.refinePrompt(userMessage, resp, clarificationReq.options);
       this.emit("onStatus", `refined intent: "${userMessage}"`);
     }
+
+    if (isBudgetExceeded(this.tokenBudget)) {
+      const exhausted = `Token budget exhausted: ${totalUsed(this.tokenBudget)}/${this.tokenBudget.limit} tokens used this session (NEXUM_TOKEN_BUDGET). Raise the budget or start a new session.`;
+      this.emit("onStatus", exhausted);
+      return exhausted;
+    }
+
+    const planned = await this.routeMultiStep(userMessage);
+    if (planned !== null) return planned;
 
     const learnings = this.learning.getLearnings();
     const activatedSkills = this.learning.resolveForPrompt(userMessage);
@@ -465,6 +813,8 @@ export class Agent {
         })),
       );
     }
+
+    await this.injectProviderContext(userMessage);
 
     this.learning.learning.recorder.begin(
       userMessage,
@@ -506,6 +856,7 @@ export class Agent {
     // divergence, or explicit hints escalate to the primary model.
     let escalated = false;
     let delegationAddendumInjected = false;
+    const forceEscalate = opts.escalate === true;
     const injectDelegationAddendum = () => {
       if (this.stack.localWorker && !delegationAddendumInjected) {
         this.conversation.pushSystemMessage(LOCAL_DELEGATION_SYSTEM_ADDENDUM);
@@ -517,12 +868,27 @@ export class Agent {
     // proof/multi-step/etc.) skips the quick-model attempt entirely instead of
     // waiting for the quick model to discover it's out of its depth and call
     // escalate_task.
-    if (this.stack.heuristicRouter && !escalated) {
-      const heuristic = this.stack.heuristicRouter.classify(userMessage);
+    const routing = this.routingHints
+      ? await this.routingHints.resolve(userMessage).then((h) => ({
+          decision: h.decision,
+          why: h.via === "decision" ? "decision plane classified it as cloud-tier" : "heuristic pre-filter",
+        }))
+      : this.stack.heuristicRouter
+        ? ((h) => ({ decision: h.decision, why: `heuristic pre-filter matched "${h.trigger}"` }))(
+            this.stack.heuristicRouter.classify(userMessage),
+          )
+        : undefined;
+    if (forceEscalate) {
+      escalated = true;
+      injectDelegationAddendum();
+      this.emit("onStatus", "escalating to primary model: a local attempt at this step already failed verification");
+    }
+    if (routing && !escalated) {
+      const heuristic = routing;
       if (heuristic.decision === "cloud") {
         escalated = true;
         injectDelegationAddendum();
-        this.emit("onStatus", `escalating to primary model: heuristic pre-filter matched "${heuristic.trigger}"`);
+        this.emit("onStatus", `escalating to primary model: ${heuristic.why}`);
       } else if (heuristic.decision === "unknown" && !requiresToolEvidence && this.stack.selfConsistency) {
         // Self-consistency, not verbalized self-confidence: measures agreement
         // across independent samples rather than asking the model to judge its
@@ -548,6 +914,30 @@ export class Agent {
     // errored; read at the top of the NEXT turn's buffering decision, then reset —
     // see the "recoveredFromError"/verifying logic below.
     let previousTurnHadToolError = false;
+    // Consecutive tool-error count across turns (unlike previousTurnHadToolError,
+    // NOT reset every turn) — catches a quick model that keeps calling tools with
+    // different-but-still-wrong arguments. verifyingRecovery below only escalates
+    // when the model gives up and answers prose instead of calling a tool; a weak
+    // model that just keeps retrying with malformed args never trips that path and
+    // can flail indefinitely on the quick model. Reset on any successful tool call.
+    let consecutiveToolErrors = 0;
+    // Actions the user already denied this turn. Small models re-ask for the same thing with a tweaked path or
+    // wording; a second prompt for something already refused is noise, so it is refused without asking.
+    const deniedActions = new Set<string>();
+    const actionKey = (name: string, args: Record<string, unknown>): string => {
+      const target =
+        typeof args.path === "string" ? resolve(this.workspaceRoot, args.path) : (args.command ?? args.args);
+      return `${name}:${JSON.stringify(target ?? args)}`;
+    };
+    const TOOL_FAILURE_ESCALATION_THRESHOLD = 2;
+    // Past this many failures in a row the model is flailing (e.g. a broken sandbox), not converging:
+    // the loop detector only catches repeats of the same call, and each retry burns a model turn.
+    const MAX_CONSECUTIVE_TOOL_ERRORS = 6;
+    // Budget of the model answering the current turn (resolved in onTurnStart)
+    // and the size of the tool schemas last advertised, charged to it.
+    let turnBudget: ModelBudget | undefined;
+    const runId = newRunId();
+    let lastToolSchemaChars = 0;
 
     // ── Kernel-native execution: the think→act→observe loop itself lives in
     // the kernel's ReActStrategy now (roadmap step 1, docs/guide/kernel.md).
@@ -557,15 +947,41 @@ export class Agent {
     // with the previously hard-coded loop is the design constraint — the
     // legacy reasoning is preserved verbatim inside the hooks.
     const hooks: StrategyHooks = {
-      onTurnStart: (turnInfo) => {
+      onTurnStart: async (turnInfo) => {
+        if (!escalated && consecutiveToolErrors >= TOOL_FAILURE_ESCALATION_THRESHOLD) {
+          escalated = true;
+          injectDelegationAddendum();
+          this.emit(
+            "onStatus",
+            `escalating to primary model: quick model failed ${consecutiveToolErrors} consecutive tool calls`,
+          );
+        }
         this.conversation.pruneContext();
+        // Size this turn to the model that will answer it: a quick 2B model
+        // and a cloud model share one transcript, but not one budget.
+        turnBudget = this.budgetFor(escalated ? escalationHint : "quick");
+        if (turnBudget) {
+          const compacted = await this.conversation.compactToBudget(
+            turnBudget.contextTokens,
+            this.compaction,
+            Math.ceil(lastToolSchemaChars / CHARS_PER_TOKEN),
+          );
+          if (compacted) {
+            this.emit(
+              "onStatus",
+              `compacted ${compacted} messages to fit ${turnBudget.modelId} (${turnBudget.contextTokens} tokens)`,
+            );
+          }
+        }
         this.emit("onStatus", `turn ${turnInfo.turn + 1}`);
       },
 
       selectTools: async () => {
         const activeTools = await this.toolSelector.selectTools(
           userMessage,
-          this.conversation.getMessages(),
+          // Context notes describe the environment, not the task: keep them
+          // out of the selector's recent-history keyword window.
+          this.conversation.getMessages().filter((m) => !m.content.startsWith(CONTEXT_NOTE_PREFIX)),
           this.tools.registry.getTools(),
         );
         // escalate_task must always be offered while still on the local model —
@@ -581,7 +997,13 @@ export class Agent {
           const delegateTool = this.tools.registry.getTools().find((t) => t.name === "delegate_to_local");
           if (delegateTool) activeTools.push(delegateTool);
         }
-        return activeTools.map((t) => t.schema);
+        // Small models pick tools worse as the list grows: cap to the
+        // answering model's toolBudget, keeping the routing tools above.
+        const pinnedNames = new Set(["escalate_task", "delegate_to_local"]);
+        const capped = turnBudget ? capTools(activeTools, turnBudget.toolBudget, pinnedNames) : activeTools;
+        const schemas = capped.map((t) => t.schema);
+        lastToolSchemaChars = JSON.stringify(schemas).length;
+        return schemas;
       },
 
       callModel: async (turnInfo, opts) => {
@@ -609,10 +1031,20 @@ export class Agent {
         const verifyingRecovery = !escalated && previousTurnHadToolError;
         previousTurnHadToolError = false;
         const verifying = verifyingLookup || verifyingRecovery;
-        let buffered: string[] | null = verifying ? [] : null;
+        // Opt-in critic pass (NEXUM_VERIFIER) on quick-model final answers.
+        // Off by default for the reason above: a small model judging its own
+        // output is weak evidence. When on, the answer is buffered so a
+        // rejected draft never reaches the UI.
+        const critiquing = !escalated && !!this.stack.verifier;
+        let buffered: string[] | null = verifying || critiquing ? [] : null;
         const makeChatOpts = (): ChatOptions => ({
           stream: true,
+          signal: this.execution.signal,
           tools: opts.tools as ChatOptions["tools"],
+          // Window on the wire = the budget the transcript was just compacted
+          // against, plus the output reserve. Without this Ollama falls back to
+          // its server default (2048–4096) and silently truncates the prompt.
+          ...(turnBudget ? { contextLength: turnBudget.contextTokens + turnBudget.reserveOutputTokens } : {}),
           onChunk: (chunk: ChatResponse) => {
             const delta = chunk.message?.content;
             if (typeof delta === "string" && delta) {
@@ -652,6 +1084,22 @@ export class Agent {
           buffered = null;
           chatOpts = makeChatOpts();
           chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
+        } else if (
+          critiquing &&
+          !(assistantMessage.tool_calls ?? []).length &&
+          (assistantMessage.content ?? "").trim() &&
+          (await this.critiqueQuickAnswer(userMessage, assistantMessage.content ?? "")) !== null
+        ) {
+          const issues = this.lastCritique ?? [];
+          this.emit("onStatus", `escalating to primary model: critic rejected the quick-model answer`);
+          escalated = true;
+          injectDelegationAddendum();
+          this.conversation.pushSystemMessage(
+            `[system] A reviewer rejected the previous draft answer:\n${issues.map((i) => `- ${i}`).join("\n")}\nAddress these issues in your answer.`,
+          );
+          buffered = null;
+          chatOpts = makeChatOpts();
+          chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
         } else if (buffered) {
           for (const delta of buffered) {
             lastAssistantText += delta;
@@ -671,8 +1119,14 @@ export class Agent {
         // provider's own current tier/model there.
         const routedTier = (response.routedTier as string | undefined) ?? this.stack.provider.currentTier;
         const routedModel = (response.routedModel as string | undefined) ?? this.stack.provider.currentModel;
-        this.emit("onModelUsed", routedTier, routedModel);
-        this.emitUsage(response, elapsedMs);
+        const usage = this.readUsage(response);
+        if (usage) {
+          const { promptTokens, completionTokens } = usage;
+          this.emit("onModelUsed", routedTier, routedModel, { promptTokens, completionTokens, latencyMs: elapsedMs });
+          this.emit("onUsage", { ...usage, latencyMs: elapsedMs });
+        } else {
+          this.emit("onModelUsed", routedTier, routedModel);
+        }
       },
 
       prepareToolCall: (call) => {
@@ -703,6 +1157,13 @@ export class Agent {
       },
 
       beforeToolCall: async (call) => {
+        const decision = await this.hooks.runPreToolUse({ toolName: call.name, input: call.args });
+        if (!decision.allow) {
+          // Answer the tool call so the transcript keeps call/result adjacency.
+          this.conversation.pushToolResult(JSON.stringify({ error: "HookDenied", message: decision.reason }));
+          this.emit("onStatus", `tool ${call.name} denied by hook: ${decision.reason}`);
+          return false;
+        }
         this.emit("onToolCall", call.name, call.args);
         return true;
       },
@@ -713,14 +1174,28 @@ export class Agent {
       // existing emit-based approval UX — same titles, same deny-on-no-
       // listener default, same AUTO_APPROVE bypass — via describeConfirmation.
       resolveConfirmation: async ({ name, args, reason }) => {
+        if (this.approvalMode === "yolo" || (this.approvalMode === "auto-edit" && FILE_EDIT_TOOLS.has(name))) {
+          this.emit("onStatus", `auto-approved (${this.approvalMode}): ${name}`);
+          return true;
+        }
+        const key = actionKey(name, args);
+        if (deniedActions.has(key)) return false;
         const spec = describeConfirmation(name, args, reason);
-        return this.approvals.requestApproval(spec.title, spec.summary);
+        const approved = await this.approvals.requestApproval(spec.title, spec.summary, spec.detail);
+        if (!approved) deniedActions.add(key);
+        return approved;
       },
 
-      onToolObserved: (obs) => {
+      onToolObserved: async (obs) => {
         const { name, args, result } = obs;
         const data = result.data;
         const record = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+        await this.hooks.runPostToolUse({
+          toolName: name,
+          input: args,
+          result: typeof data === "string" ? data : JSON.stringify(data),
+          isError: !result.ok || typeof record.error === "string",
+        });
 
         if (record.error === "PathEscapeError") {
           this.conversation.pushToolResult(
@@ -731,6 +1206,15 @@ export class Agent {
             "[system] The previous tool call escaped the workspace root. Retry with a path under the current workspace root.",
           );
           previousTurnHadToolError = true;
+          consecutiveToolErrors += 1;
+          if (!escalated) {
+            escalated = true;
+            injectDelegationAddendum();
+            this.emit(
+              "onStatus",
+              `escalating to ${escalationHint ?? "the primary model"}: local model escaped workspace root`,
+            );
+          }
 
           if (this.loopDetector.record(name, args, "PathEscapeError")) {
             return {
@@ -744,7 +1228,22 @@ export class Agent {
 
         this.emit("onToolResult", name, record);
         this.intelligence.feedRailsIndex(name, args, record);
-        this.conversation.pushToolResult(typeof data === "string" ? data : JSON.stringify(data, null, 2));
+        const resultText = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+        // Oversized outputs live outside the context: excerpt + artifact id,
+        // sized to the answering model (a quarter of its budget, ≥ 4K chars).
+        const offloaded =
+          name === "artifact_read"
+            ? { text: resultText }
+            : offloadLargeOutput(this.artifacts, resultText, {
+                tool: name,
+                threshold: Math.max(4_000, Math.floor((turnBudget?.contextChars ?? 48_000) / 4)),
+                args,
+                runId,
+                sessionId: this.sessions.sessionId,
+                agentId: "devagent",
+              });
+        if (offloaded.artifactId) this.emit("onStatus", `stored large ${name} output as ${offloaded.artifactId}`);
+        this.conversation.pushToolResult(offloaded.text);
 
         if (name === "escalate_task" && record.escalate === true) {
           escalated = true;
@@ -752,15 +1251,32 @@ export class Agent {
           this.emit("onStatus", `escalating to ${escalationHint ?? "the primary model"}: ${record.reason}`);
         }
 
-        if (typeof record.error === "string") {
+        // A shell command that exits non-zero reports exitCode, not error, but is just as much a failure.
+        const failure =
+          typeof record.error === "string"
+            ? record.error
+            : typeof record.exitCode === "number" && record.exitCode !== 0
+              ? `exit ${record.exitCode}`
+              : null;
+        if (failure) {
           previousTurnHadToolError = true;
-          if (this.loopDetector.record(name, args, record.error)) {
+          consecutiveToolErrors += 1;
+          if (this.loopDetector.record(name, args, failure)) {
             return {
               abortRun: true,
               terminal: "loop_abort",
               output: `${lastAssistantText}\n[aborted] tool loop detected after repeated: ${name}`,
             };
           }
+          if (consecutiveToolErrors >= MAX_CONSECUTIVE_TOOL_ERRORS) {
+            return {
+              abortRun: true,
+              terminal: "loop_abort",
+              output: `${lastAssistantText}\n[aborted] ${consecutiveToolErrors} tool calls failed in a row (last: ${name}, ${failure}).`,
+            };
+          }
+        } else {
+          consecutiveToolErrors = 0;
         }
       },
 
@@ -788,12 +1304,18 @@ export class Agent {
       unattended: this.autoApproveFlag,
     };
     const context = createExecutionContext(request, {
-      runId: this.sessions.sessionId,
+      // One run id per message: each run gets its own seq-ordered event log.
+      runId,
       sessionId: this.sessions.sessionId,
       signal: this.execution.signal,
       context: new AgentConversationContext(this.conversation),
       modelGateway: this.modelGateway,
       toolGateway: this.tools.gateway,
+      // The remaining session budget caps this run; the kernel stops the run
+      // with budget_exhausted when it is crossed mid-loop.
+      ...(this.tokenBudget.limit > 0
+        ? { budget: { maxTotalTokens: Math.max(1, this.tokenBudget.limit - totalUsed(this.tokenBudget)) } }
+        : {}),
     });
 
     try {
@@ -801,7 +1323,18 @@ export class Agent {
         hooks,
         maxToolTurns: this.maxToolTurns,
       });
+      // The kernel's per-run usage (including a call that crossed the budget)
+      // is the source of truth for the session budget.
+      recordUsage(this.tokenBudget, result.usage?.totalTokens ?? 0, 0);
 
+      if (result.status === "budget_exhausted" && this.tokenBudget.limit > 0) {
+        // A budget stop is a policy outcome, not a crash: keep what was
+        // produced and say why the run ended.
+        success = false;
+        const notice = `[stopped] token budget exhausted: ${totalUsed(this.tokenBudget)}/${this.tokenBudget.limit} tokens (NEXUM_TOKEN_BUDGET)`;
+        this.emit("onStatus", notice);
+        return finish("error", lastAssistantText ? `${lastAssistantText}\n${notice}` : notice);
+      }
       if (result.status !== "completed") {
         success = false;
         finish("error", result.output);
@@ -825,6 +1358,111 @@ export class Agent {
     }
   }
 
+  /** Provider context last injected (minus the clock), to inject only on change. */
+  private lastProviderContextKey = "";
+  private lastProviderContextNote = "";
+
+  /**
+   * Context providers (git branch, files the request names, runtime state,
+   * time) as one context note before the user message — not in the system
+   * prompt, whose prefix must stay stable for the model server's KV cache.
+   * Injected only when something other than the clock changed.
+   */
+  private async injectProviderContext(prompt: string): Promise<void> {
+    const referencedFiles = [...new Set(prompt.match(/[\w@./-]+\.[A-Za-z0-9]{1,8}\b/g) ?? [])].slice(0, 5);
+    let assembled;
+    try {
+      assembled = await this.contextProviders.assemble({
+        prompt,
+        workspaceRoot: this.workspaceRoot,
+        sessionId: this.sessions.sessionId,
+        agentId: "devagent",
+        referencedFiles,
+      });
+    } catch (err) {
+      this.emit("onStatus", `context providers failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    if (!assembled.fragments.length) return;
+    const key = assembled.fragments
+      .filter((f) => f.kind !== "time")
+      .map((f) => `${f.provider}:${f.content}`)
+      .join("\n");
+    // Re-inject when the previous note is gone (reset, resume, prune, compaction).
+    const stillPresent =
+      this.lastProviderContextNote !== "" &&
+      this.conversation.getMessages().some((m) => m.content === this.lastProviderContextNote);
+    if (key === this.lastProviderContextKey && stillPresent) return;
+    this.lastProviderContextKey = key;
+    this.lastProviderContextNote = `${CONTEXT_NOTE_PREFIX}\n${assembled.content}`;
+    this.conversation.pushSystemMessage(this.lastProviderContextNote);
+  }
+
+  /** Issues from the most recent rejected critique (read right after critiqueQuickAnswer). */
+  private lastCritique: string[] | null = null;
+
+  /**
+   * Critic pass on a quick-model draft. The decision gate (when the decision
+   * plane is on) first decides whether critique is warranted at all; the
+   * Verifier then judges. Returns the issues on REJECT, null to accept.
+   * A critic outage accepts the draft — this is a quality pass, not a
+   * safety boundary (policy and sandbox still gate every action).
+   */
+  private async critiqueQuickAnswer(goal: string, draft: string): Promise<string[] | null> {
+    this.lastCritique = null;
+    const verifier = this.stack.verifier;
+    if (!verifier) return null;
+    if (this.answerGate) {
+      const gate = await this.answerGate.shouldEscalate({ goal, input: draft });
+      if (!gate.escalate) return null;
+    }
+    try {
+      const result = await verifier.verify(goal, draft);
+      if (result.verdict === "VERIFIED") return null;
+      this.lastCritique = result.issues ?? [];
+      return this.lastCritique;
+    } catch (err) {
+      this.emit("onStatus", `critic unavailable, accepting draft: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Run a plan step's `verify` command through the tool gateway — same
+   * policy engine, sandbox and approval UX as a model-issued run_shell.
+   * The exit code is the verdict; a denied or failed invocation is a
+   * failed verification, never a pass.
+   */
+  async runVerificationCommand(command: string): Promise<{ exitCode: number; output?: string }> {
+    this.emit("onStatus", `verifying: ${command}`);
+    const ctx = { agentId: "devagent", unattended: this.autoApproveFlag, signal: this.execution.signal };
+    let result = await this.tools.gateway.invoke("run_shell", { command }, ctx);
+    if (!result.ok && result.error?.code === "ConfirmationRequired") {
+      const spec = describeConfirmation("run_shell", { command }, result.error.message);
+      if (!(await this.approvals.requestApproval(spec.title, spec.summary))) {
+        return { exitCode: -1, output: "verification command not approved" };
+      }
+      result = await this.tools.gateway.invoke("run_shell", { command }, { ...ctx, confirmed: true });
+    }
+    const data = result.data ?? {};
+    const exitCode = typeof data.exitCode === "number" ? data.exitCode : -1;
+    const output = [data.stdout, data.stderr, result.error?.message]
+      .filter((p): p is string => typeof p === "string" && p.length > 0)
+      .join("\n");
+    return { exitCode: result.ok ? exitCode : exitCode === 0 ? -1 : exitCode, output };
+  }
+
+  /**
+   * Budget for the model that a capability routes to first (or the direct
+   * provider model when capability is null). Undefined until the catalog
+   * has profiled that model — callers then keep the count-based behavior.
+   */
+  budgetFor(capability: Capability | null): ModelBudget | undefined {
+    const name = capability ? this.stack.catalog.modelsFor(capability)[0]?.name : this.stack.provider.currentModel;
+    const profile = name ? this.stack.modelProfiles.get(name) : undefined;
+    return profile ? budgetForProfile(profile) : undefined;
+  }
+
   pinSkill(id: string | null): void {
     this.learning.pinSkill(id);
   }
@@ -833,15 +1471,25 @@ export class Agent {
     return this.learning.getSkillsRegistry();
   }
 
+  /** What the host needs to run MCP servers once for all sessions: the config and the trust policy built from it. */
+  mcpHostConfig(): { servers: McpCliServerConfig[]; trust?: McpTrustPolicy; credentials: CredentialService } {
+    return { servers: this.mcpServerConfigs, trust: this.mcpTrust, credentials: this.credentials };
+  }
+
   flushLearning(): Promise<void> {
     return this.learning.flushLearning();
   }
 
-  async runPlannedTask(steps: PlanStep[], planner: Planner): Promise<PlanStep[]> {
+  async runPlannedTask(steps: PlanStep[], planner: Planner, goal?: string): Promise<PlanStep[]> {
     // Delegated to the ExecutionManager service (review item 1): the plan's
     // concurrency gate comes from the runtime's GateRegistry, the run-scope
     // abort signal cancels cooperatively, and the checkpoint is kept for resume.
-    return this.execution.runPlannedTask(steps, planner);
+    this.planDepth++;
+    try {
+      return await this.execution.runPlannedTask(steps, planner, goal);
+    } finally {
+      this.planDepth--;
+    }
   }
 
   /**
@@ -850,7 +1498,12 @@ export class Agent {
    * reset to "pending" — the process died mid-step, so its outcome is unknown.
    */
   async resumePlannedTask(planner: Planner): Promise<PlanStep[] | null> {
-    return this.execution.resumePlannedTask(planner);
+    this.planDepth++;
+    try {
+      return await this.execution.resumePlannedTask(planner);
+    } finally {
+      this.planDepth--;
+    }
   }
 
   hasResumablePlan(): boolean {
@@ -873,6 +1526,14 @@ export class Agent {
 
   async requestClarification(request: ClarificationRequest): Promise<ClarificationResponse> {
     return this.approvals.requestClarification(request);
+  }
+
+  async requestMcpElicitation(request: McpElicitationRequest): Promise<McpElicitationResponse> {
+    return this.approvals.requestMcpElicitation(request);
+  }
+
+  resolveMcpElicitation(response: McpElicitationResponse): void {
+    this.approvals.resolveMcpElicitation(response);
   }
 
   resolveClarification(response: ClarificationResponse): void {
@@ -916,7 +1577,7 @@ export class Agent {
     this.emit("onMissionPhase", "plan", "completed");
     this.emit("onPlanUpdate", goal, steps, "running");
     this.emit("onMissionPhase", "execute", "running");
-    const finalSteps = await this.runPlannedTask(steps, planner);
+    const finalSteps = await this.runPlannedTask(steps, planner, goal);
     const failed = finalSteps.some((s) => s.status === "failed");
     this.emit("onMissionPhase", "execute", failed ? "failed" : "completed");
     this.emit("onMissionPhase", "complete", failed ? "failed" : "completed");
@@ -980,12 +1641,40 @@ export class Agent {
     return this.stack.listModels();
   }
 
+  /** One plain model reply: no tools, memory or session. For clients' housekeeping prompts (titles, tags). */
+  async completeOnce(messages: ChatMessage[]): Promise<string> {
+    await this.stack.ensureCatalog();
+    const reply = await this.stack.routeWithFallback("quick", messages, { stream: false });
+    return reply.message.content;
+  }
+
   modelAvailability(models: string[]): Record<string, boolean> {
     return this.stack.modelAvailability(models);
   }
 
   async modelCapabilities(models: string[]): Promise<Record<string, Capability[]>> {
     return this.stack.modelCapabilities(models);
+  }
+
+  /** Ollama Cloud request counts + spend, one row per pooled API key. */
+  usageAll(range?: "24h" | "7d" | "30d", groupBy?: "model") {
+    const opts = { ...(range ? { range } : {}), ...(groupBy ? { groupBy } : {}) };
+    return this.stack.provider.usageAll(Object.keys(opts).length > 0 ? opts : undefined);
+  }
+
+  /** Ollama Cloud remaining included + purchased credits, one row per key. */
+  balanceAll() {
+    return this.stack.provider.balanceAll();
+  }
+
+  /** Publishes a local GGUF file as an Ollama model (blob upload + /api/create). */
+  importGguf(model: string, path: string) {
+    return this.stack.provider.importGguf(model, path);
+  }
+
+  /** Downloads a model from the Ollama registry; `onEvent` receives every progress frame. */
+  pullModel(model: string, onEvent: (event: PullProgressEvent) => void) {
+    return this.stack.provider.pullModel(model, onEvent);
   }
 
   resetContext(): void {
@@ -1023,21 +1712,18 @@ export class Agent {
   // Ollama's /api/chat response carries eval_count/prompt_eval_count/eval_duration
   // (nanoseconds) untyped through ChatResponse's index signature — read them here
   // rather than widening the shared type for fields only this call site needs.
-  private emitUsage(response: { [key: string]: unknown }, latencyMs: number): void {
+  private readUsage(response: {
+    [key: string]: unknown;
+  }): { promptTokens: number; completionTokens: number; tokensPerSecond: number } | undefined {
     const promptTokens = response.prompt_eval_count as number | undefined;
     const completionTokens = response.eval_count as number | undefined;
     const evalDurationNs = response.eval_duration as number | undefined;
-    if (typeof promptTokens !== "number" && typeof completionTokens !== "number") return;
+    if (typeof promptTokens !== "number" && typeof completionTokens !== "number") return undefined;
     const tokensPerSecond =
       typeof completionTokens === "number" && typeof evalDurationNs === "number" && evalDurationNs > 0
         ? completionTokens / (evalDurationNs / 1e9)
         : 0;
-    this.emit("onUsage", {
-      promptTokens: promptTokens ?? 0,
-      completionTokens: completionTokens ?? 0,
-      tokensPerSecond,
-      latencyMs,
-    });
+    return { promptTokens: promptTokens ?? 0, completionTokens: completionTokens ?? 0, tokensPerSecond };
   }
 
   getRegistry() {
@@ -1077,20 +1763,65 @@ export class Agent {
     this.execution.endExecutionRun();
   }
 
-  async registerMcpServer(command: string, args: string[] = []): Promise<void> {
-    await this.tools.registerMcpServer(command, args);
+  async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<void> {
+    await this.tools.registerMcpServer(command, args, {
+      ...opts,
+      elicitation: opts.elicitation ?? { request: (request) => this.requestMcpElicitation(request) },
+    });
+  }
+
+  /** Offline snapshot of which features are usable, degraded or off, limited to what this workspace needs.
+   * `sandboxImageReady` comes from the caller's Docker probe (undefined = not probed yet). */
+  async getCapabilities(sandboxImageReady?: boolean): Promise<FeatureStatus[]> {
+    if (sandboxImageReady === undefined && this.capabilityConfig.sandbox) {
+      sandboxImageReady = await checkSandboxImage(this.capabilityConfig.image);
+    }
+    return collectCapabilities({
+      workspaceRoot: this.workspaceRoot,
+      sandbox: {
+        enabled: this.capabilityConfig.sandbox,
+        image: this.capabilityConfig.image,
+        imageReady: sandboxImageReady,
+      },
+      railsIndexEnabled: this.railsIndex.enabled,
+      lspProviders: this.lspManager.registry.allProviders(),
+      docsCached: this.docs.listSources().map((s) => s.slug),
+      mcpServersConfigured: this.mcpServerConfigs.length,
+      localWorkerEnabled: this.capabilityConfig.localWorker,
+      dockerToolEnabled: this.capabilityConfig.dockerTool,
+    });
+  }
+
+  /** Builds the default sandbox image after the user approves. Never runs unattended. */
+  async buildSandboxImage(): Promise<{ ok: boolean; message: string }> {
+    const { image, sandbox } = this.capabilityConfig;
+    if (!sandbox) return { ok: false, message: "sandbox is disabled; nothing to build" };
+    if (await checkSandboxImage(image)) return { ok: true, message: `${image} is already available` };
+    const approved = await this.requestApproval(
+      "Build sandbox image?",
+      `Runs \`docker build\` for ${image} from the shipped Dockerfile. It downloads a base image and packages (network access, a few minutes).`,
+    );
+    if (!approved) return { ok: false, message: "sandbox image build declined" };
+    this.emit("onStatus", `building sandbox image ${image}…`);
+    return buildSandboxImage(image);
   }
 
   /** Connects every MCP server listed in config.mcpServers, one at a time
    * (each spawns a subprocess). Never throws — a server that fails to start
-   * shows up as `connected: false` rather than aborting the others or the
-   * TUI's own startup. */
+   * (or is denied by the trust policy) shows up as `connected: false` rather
+   * than aborting the others or the TUI's own startup. */
   async connectConfiguredMcpServers(): Promise<McpServerState[]> {
     const results: McpServerState[] = [];
     for (const server of this.mcpServerConfigs) {
       const start = Date.now();
       try {
-        const tools = await this.tools.registerMcpServer(server.command, server.args ?? []);
+        const env = await resolveMcpEnv(server.env, this.credentials);
+        const tools = await this.tools.registerMcpServer(server.command, server.args ?? [], {
+          serverName: server.name,
+          ...(env ? { env } : {}),
+          ...(this.mcpTrust ? { trust: this.mcpTrust } : {}),
+          elicitation: { request: (request) => this.requestMcpElicitation(request) },
+        });
         results.push({
           name: server.name,
           connected: true,
@@ -1104,4 +1835,18 @@ export class Agent {
     }
     return results;
   }
+}
+
+/** Prefix of the provider context note injected before a user message. */
+const CONTEXT_NOTE_PREFIX = "[context]";
+
+/** Keep at most `budget` tools, never dropping pinned ones (they count toward it). */
+export function capTools<T extends { name: string }>(tools: T[], budget: number, pinned: Set<string>): T[] {
+  if (tools.length <= budget) return tools;
+  const keep = tools.filter((t) => pinned.has(t.name));
+  for (const t of tools) {
+    if (keep.length >= budget) break;
+    if (!pinned.has(t.name)) keep.push(t);
+  }
+  return tools.filter((t) => keep.includes(t));
 }

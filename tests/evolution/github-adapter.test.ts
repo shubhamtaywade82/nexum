@@ -172,8 +172,13 @@ describe("GitHubDeliveryAdapter", () => {
         return {
           status: 200,
           json: [
-            { state: "CHANGES_REQUESTED", user: { login: "r1" }, submitted_at: "2026-01-01T00:00:00Z" },
-            { state: "APPROVED", user: { login: "r2" }, submitted_at: "2026-01-02T00:00:00Z" },
+            {
+              state: "CHANGES_REQUESTED",
+              commit_id: "sha",
+              user: { login: "r1" },
+              submitted_at: "2026-01-01T00:00:00Z",
+            },
+            { state: "APPROVED", commit_id: "sha", user: { login: "r2" }, submitted_at: "2026-01-02T00:00:00Z" },
           ],
         };
       }
@@ -191,10 +196,55 @@ describe("GitHubDeliveryAdapter", () => {
     expect(ci.passed).toBe(true);
     expect(controller.record("exp-gh-1").lifecycle.state).toBe("REVIEW_PENDING");
 
-    const review = await adapter.syncReviewFeedback(controller, "exp-gh-1", 42);
+    const review = await adapter.syncReviewFeedback(controller, "exp-gh-1", 42, "sha");
     expect(review.state).toBe("approved");
     expect(review.reviewer).toBe("r2"); // LATEST review wins
     expect(controller.record("exp-gh-1").lifecycle.state).toBe("APPROVED");
+  });
+
+  it("does not accept an approval of an earlier commit, since it does not cover the code that would merge", async () => {
+    const { runner } = fakeGit();
+    const { client } = fakeHttp((path) => {
+      if (path.includes("/reviews")) {
+        return {
+          status: 200,
+          json: [
+            { state: "APPROVED", commit_id: "older-sha", user: { login: "r2" }, submitted_at: "2026-01-02T00:00:00Z" },
+          ],
+        };
+      }
+      return { status: 200, json: {} };
+    });
+    const adapter = new GitHubDeliveryAdapter(
+      { owner: "o", repo: "r", baseBranch: "main" },
+      { runGit: runner, http: client, sleep: NO_SLEEP },
+    );
+    const controller = new ExperimentController();
+    controller.startExperiment(startInput());
+    walkToDelivered(controller, "exp-gh-1");
+    const stateBefore = controller.record("exp-gh-1").lifecycle.state;
+
+    const review = await adapter.syncReviewFeedback(controller, "exp-gh-1", 42, "sha");
+    expect(review.state).toBe("pending");
+    expect(controller.record("exp-gh-1").lifecycle.state).toBe(stateBefore);
+  });
+
+  it("pins the merge to the reviewed head sha, so a commit pushed after approval is not merged unreviewed", async () => {
+    const { runner } = fakeGit();
+    const { client, requests } = fakeHttp(() => ({ status: 200, json: { merged: true } }));
+    const adapter = new GitHubDeliveryAdapter(
+      { owner: "o", repo: "r", baseBranch: "main" },
+      { runGit: runner, http: client, sleep: NO_SLEEP },
+    );
+
+    expect(await adapter.mergePullRequest(42, "reviewed-sha")).toBe(true);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        path: "/repos/o/r/pulls/42/merge",
+        method: "PUT",
+        body: { merge_method: "squash", sha: "reviewed-sha" },
+      }),
+    ]);
   });
 
   it("waits for pending checks instead of reporting a premature verdict", async () => {
@@ -252,7 +302,8 @@ describe("GitHubDeliveryAdapter", () => {
       if (path.includes("/check-runs")) {
         return { status: 200, json: { check_runs: [{ name: "CI", status: "completed", conclusion: "success" }] } };
       }
-      if (path.includes("/reviews")) return { status: 200, json: [{ state: "APPROVED", user: { login: "rev" } }] };
+      if (path.includes("/reviews"))
+        return { status: 200, json: [{ state: "APPROVED", commit_id: "cafe1234", user: { login: "rev" } }] };
       return { status: 200, json: {} };
     });
     const adapter = new GitHubDeliveryAdapter(

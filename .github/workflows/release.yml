@@ -38,6 +38,8 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
+        env:
+          HUSKY: "0"
 
       - name: Verify release version
         shell: bash

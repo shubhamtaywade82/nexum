@@ -10,6 +10,8 @@ function result(overrides: Partial<BenchmarkResult>): BenchmarkResult {
     pass: true,
     latencyMs: 100,
     tokensPerSec: 20,
+    tokens: 0,
+    tokensEstimated: false,
     ...overrides,
   };
 }

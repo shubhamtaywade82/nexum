@@ -1,6 +1,6 @@
 # Terminal UI & Keybindings
 
-Nexum features an interactive React terminal interface built on Ink with alternate screen buffer support (`\x1b[?1049h`).
+Nexum features an interactive React terminal interface built on termina (`@nemesis-oss/termina-core`, an Ink-compatible renderer) with alternate screen buffer support (`\x1b[?1049h`).
 
 ---
 
@@ -25,13 +25,13 @@ Nexum features an interactive React terminal interface built on Ink with alterna
 
 ## Global Keybindings
 
-| Shortcut | Action |
-| :--- | :--- |
-| `Ctrl+M` | Open Model Switcher overlay |
-| `Ctrl+P` | Open Universal Command Palette |
-| `Ctrl+D` | Open Execution DAG overlay |
-| `Ctrl+K` | Open Search Everywhere |
-| `Ctrl+B` | Toggle Sidebar (Sessions, Tools, Skills) |
+| Shortcut | Action                                     |
+| :------- | :----------------------------------------- |
+| `Ctrl+M` | Open Model Switcher overlay                |
+| `Ctrl+P` | Open Universal Command Palette             |
+| `Ctrl+D` | Open Execution DAG overlay                 |
+| `Ctrl+K` | Open Search Everywhere                     |
+| `Ctrl+B` | Toggle Sidebar (Sessions, Tools, Skills)   |
 | `Ctrl+C` | Cancel in-flight turn (Double press quits) |
 
 ---
@@ -55,7 +55,7 @@ The TUI is fully theme-driven: every component resolves colors from semantic
 tokens (`primary`, `success`, `warning`, `error`, `info`, `accent`,
 `mutedForeground`, `selection`, …) provided by the vendored [termcn
 (ink-ui)](https://github.com/shadcn-labs/termcn) component layer in
-`src/tui/ui/`. Changing a theme never requires touching a component.
+`src/ui/ui/`. Changing a theme never requires touching a component.
 
 **Built-in themes (15):** `default`, `midnight`, `solarized` (Nexum-native)
 plus `dracula`, `nord`, `github`, `gruvbox`, `tokyo-night`, `monokai`,
@@ -74,8 +74,8 @@ The active theme applies instantly across every zone, overlay, and view —
 no restart. Terminal color-depth degradation (truecolor → 256 → 16) is
 handled by the rendering layer, so hex palettes degrade gracefully.
 
-Adding a theme: drop a palette file into `src/tui/ui/lib/terminal-themes/`
+Adding a theme: drop a palette file into `src/ui/ui/lib/terminal-themes/`
 (or vendor one with `node scripts/vendor-termcn.mjs theme-<name>`), then
-register it in `src/tui/ui/theme-registry.ts` and add its name to
+register it in `src/ui/ui/theme-registry.ts` and add its name to
 `THEME_ORDER` in `src/runtime/types.ts` — the compiler enforces that every
 name has a palette.

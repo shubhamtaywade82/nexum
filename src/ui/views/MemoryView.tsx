@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "@nemesis-oss/termina-core";
 import { MemoryItem } from "../../runtime/types.js";
 import { tail, truncate, wrapText } from "../layout/truncate.js";
 import { ViewProps } from "./ConversationView.js";

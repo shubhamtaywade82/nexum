@@ -13,6 +13,8 @@ export interface SessionQueryServicePluginOptions {
   /** Pass through to SessionQueryServiceOptions. */
   eventStore?: unknown;
   sessionStore?: unknown;
+  /** Provide this existing service instead of creating one. */
+  service?: SessionQueryService;
 }
 
 export function sessionQueryServicePlugin(opts: SessionQueryServicePluginOptions = {}) {
@@ -26,10 +28,12 @@ export function sessionQueryServicePlugin(opts: SessionQueryServicePluginOptions
       requires: [],
     },
     setup(ctx) {
-      const service = new SessionQueryService({
-        eventStore: opts.eventStore as never,
-        sessionStore: opts.sessionStore as never,
-      });
+      const service =
+        opts.service ??
+        new SessionQueryService({
+          eventStore: opts.eventStore as never,
+          sessionStore: opts.sessionStore as never,
+        });
       ctx.provide(SESSION_QUERY_SERVICE.id, service);
       ctx.declareCapability("session-query");
       ctx.log.debug("session query service registered");

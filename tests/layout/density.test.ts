@@ -1,10 +1,4 @@
-import {
-  activeViewRows,
-  densityForWidth,
-  detailForDensity,
-  MAX_COMPLETION_ROWS,
-  promptAreaRows,
-} from "../../src/ui/layout/density.js";
+import { activeViewRows, densityForWidth, detailForDensity, MAX_COMPLETION_ROWS } from "../../src/ui/layout/density.js";
 
 describe("density tiers", () => {
   it("maps widths to the frozen tiers", () => {
@@ -49,23 +43,5 @@ describe("density tiers", () => {
 describe("MAX_COMPLETION_ROWS", () => {
   it("is defined as 6", () => {
     expect(MAX_COMPLETION_ROWS).toBe(6);
-  });
-});
-
-describe("promptAreaRows", () => {
-  it("returns promptBarHeight when no completions", () => {
-    expect(promptAreaRows(1, 0)).toBe(1);
-    expect(promptAreaRows(2, 0)).toBe(2);
-  });
-
-  it("adds completion rows up to MAX_COMPLETION_ROWS", () => {
-    expect(promptAreaRows(1, 3)).toBe(4); // 1 + 3
-    expect(promptAreaRows(1, 6)).toBe(7); // 1 + 6
-    expect(promptAreaRows(1, 20)).toBe(7); // 1 + 6 (capped at MAX_COMPLETION_ROWS)
-  });
-
-  it("combines with multiline prompt height", () => {
-    expect(promptAreaRows(2, 4)).toBe(6); // 2 + 4
-    expect(promptAreaRows(2, 20)).toBe(8); // 2 + 6 (capped)
   });
 });
