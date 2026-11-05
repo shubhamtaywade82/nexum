@@ -1024,6 +1024,7 @@ export class Agent {
         let buffered: string[] | null = verifying || critiquing ? [] : null;
         const makeChatOpts = (): ChatOptions => ({
           stream: true,
+          signal: this.execution.signal,
           tools: opts.tools as ChatOptions["tools"],
           // Window on the wire = the budget the transcript was just compacted
           // against, plus the output reserve. Without this Ollama falls back to

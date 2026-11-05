@@ -111,6 +111,8 @@ export interface ChatOptions {
    * silently truncates to its server default (2048–4096) with no error. Takes
    * precedence over `options.num_ctx`. */
   contextLength?: number;
+  /** Aborts the in-flight request — a cancelled run must not keep generating until the model finishes. */
+  signal?: AbortSignal;
 }
 
 /** A Responses request whose `model` defaults to the provider's configured one. */
@@ -420,6 +422,7 @@ export class Provider {
         messages: messages as unknown as SdkMessage[],
         tools: opts.tools as any,
         ...(Object.keys(options).length > 0 ? { options } : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
       };
 
       try {
