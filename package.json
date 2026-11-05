@@ -94,6 +94,7 @@
     "vitepress": "^1.6.4"
   },
   "dependencies": {
+    "@11ty/gray-matter": "^3.0.0",
     "@modelcontextprotocol/client": "^2.4.0",
     "@nemesis-oss/binance-sdk": "^3.0.0",
     "@nemesis-oss/ollama-sdk": "^1.24.2",
@@ -108,7 +109,6 @@
     "diff": "^9.0.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
-    "gray-matter": "^4.0.3",
     "ioredis": "^6.0.0",
     "marked": "^15.0.12",
     "marked-terminal": "^7.3.0",
@@ -208,5 +208,8 @@
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}": "prettier --write"
+  },
+  "overrides": {
+    "undici": "^7.29.0"
   }
 }

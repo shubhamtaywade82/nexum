@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import matter from "gray-matter";
+import matter from "@11ty/gray-matter";
 import { AslTaskKind, AslTaskStatus, AslDocument } from "./types.js";
 
 const VALID_TASK_KINDS: AslTaskKind[] = [
