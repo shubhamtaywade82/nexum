@@ -105,6 +105,30 @@ export class GitPublishRule implements PolicyRule {
   }
 }
 
+/** Tools that change files in the workspace; also what "auto-edit" approval mode pre-approves. */
+export const FILE_EDIT_TOOLS: ReadonlySet<string> = new Set([
+  "write_file",
+  "append_file",
+  "apply_patch",
+  "patch_file",
+  "edit_file_lines",
+  "copy_file",
+  "move_file",
+  "rename_symbol",
+]);
+
+/** File edits: asked before they happen, so an agent never rewrites the user's repo unseen. */
+export class FileEditRule implements PolicyRule {
+  readonly id = "file-edit";
+  readonly description = "Requires confirmation for every workspace file change.";
+
+  evaluate(request: PolicyRequest): PolicyDecision | null {
+    if (!FILE_EDIT_TOOLS.has(request.tool.id)) return null;
+    const path = typeof request.args.path === "string" ? request.args.path : "workspace files";
+    return confirm(request.tool.id, `${request.tool.id} on "${path}"`, this.id);
+  }
+}
+
 /**
  * delete_file: irreversible workspace mutation — always asks, regardless of
  * arguments (legacy parity: every delete was gated).

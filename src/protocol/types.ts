@@ -285,7 +285,14 @@ export const CreateRunRequestSchema = z.object({
    * clarifications skipped, so a headless client never leaves a run waiting on nobody.
    */
   interactive: z.boolean().default(false),
+  /**
+   * Which confirmations this run answers itself: "ask" (default) asks the client for each one,
+   * "auto-edit" pre-approves workspace file edits, "yolo" pre-approves everything. Policy denials
+   * still apply, and a server started with --yolo approves everything regardless.
+   */
+  approvalMode: z.enum(["ask", "auto-edit", "yolo"]).default("ask"),
 });
+export type ApprovalMode = CreateRunRequest["approvalMode"];
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>;
 
 /** Body of POST /sessions/:id/tools/:name — a read-only tool call from a rendered UI. */

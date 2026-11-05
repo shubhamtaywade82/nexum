@@ -75,7 +75,7 @@ export function cancelRun({ agent, bridge }: AgentEntry): boolean {
 async function runAgentInBackground(
   agent: Agent,
   bridge: RunEventBridge,
-  { goal, presentation, interactive }: CreateRunRequest,
+  { goal, presentation, interactive, approvalMode }: CreateRunRequest,
   ctx: {
     repos: Repos;
     eventBus: RedisEventBus;
@@ -107,6 +107,7 @@ async function runAgentInBackground(
 
   const messageCountBefore = agent.conversation.getMessages().length;
   agent.conversation.presentationInstructions = presentationInstructions(presentation);
+  agent.approvalMode = approvalMode;
 
   try {
     const output: NexumRunOutput = presentOutput(await agent.runUserMessage(goal), presentation);
