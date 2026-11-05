@@ -157,6 +157,10 @@ export type NexumRunEvent =
       ts: number;
     }
   | { type: "thought"; runId: string; text: string; ts: number }
+  // Live-only text fragments (never persisted or replayed): the run's final `thought` / `run.completed`
+  // carry the authoritative text, so clients treat deltas as a draft that the final event replaces.
+  | { type: "thought.delta"; runId: string; text: string; ts: number }
+  | { type: "answer.delta"; runId: string; text: string; ts: number }
   | {
       type: "tool.started";
       runId: string;
@@ -173,13 +177,24 @@ export type NexumRunEvent =
       result: Record<string, unknown>;
       ts: number;
     }
-  | { type: "model.used"; runId: string; tier: string; model: string; ts: number }
+  | {
+      type: "model.used";
+      runId: string;
+      tier: string;
+      model: string;
+      /** Token counts for this model call, when the provider reported them. */
+      promptTokens?: number;
+      completionTokens?: number;
+      ts: number;
+    }
   | {
       type: "run.approval.required";
       runId: string;
       interactionId: string;
       title: string;
       summary: string;
+      /** What the action will write (file content or patch), truncated; absent when there is nothing to preview. */
+      detail?: string;
       tool?: string;
       ts: number;
     }
@@ -281,7 +296,16 @@ export const CreateRunRequestSchema = z.object({
    * clarifications skipped, so a headless client never leaves a run waiting on nobody.
    */
   interactive: z.boolean().default(false),
+  /**
+   * Which confirmations this run answers itself: "ask" (default) asks the client for each one,
+   * "auto-edit" pre-approves workspace file edits, "yolo" pre-approves everything. Policy denials
+   * still apply, and a server started with --yolo approves everything regardless.
+   */
+  approvalMode: z.enum(["ask", "auto-edit", "yolo"]).default("ask"),
+  /** "auto" tries the quick (local) model first and escalates when needed; "primary" goes straight to the configured model. */
+  modelTier: z.enum(["auto", "primary"]).default("auto"),
 });
+export type ApprovalMode = CreateRunRequest["approvalMode"];
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>;
 
 /** Body of POST /sessions/:id/tools/:name — a read-only tool call from a rendered UI. */

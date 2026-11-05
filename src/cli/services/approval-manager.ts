@@ -45,12 +45,20 @@ export class ApprovalManager {
    * Deny by default when nobody can answer — without a listener the
    * promise would never resolve and headless consumers would deadlock.
    */
-  async requestApproval(title: string, summary: string): Promise<boolean> {
+  async requestApproval(title: string, summary: string, detail?: string): Promise<boolean> {
     if (this.opts.autoApprove) return true;
     if (!this.opts.hasApprovalListener()) return false;
 
     const id = `appr-${randomUUID()}`;
-    const request: ApprovalRequest = { id, title, summary, filesChanged: 0, additions: 0, deletions: 0 };
+    const request: ApprovalRequest = {
+      id,
+      title,
+      summary,
+      filesChanged: 0,
+      additions: 0,
+      deletions: 0,
+      ...(detail ? { diff: detail } : {}),
+    };
     const approved = await new Promise<boolean>((resolve) => {
       this.pendingApprovals.set(id, resolve);
       this.opts.onApprovalRequested?.(request);
@@ -68,7 +76,7 @@ export class ApprovalManager {
   async resolveConfirmation(name: string, args: Record<string, unknown>, reason: string): Promise<boolean> {
     // describeConfirmation returns the legacy {title, summary} pair
     const spec = describeConfirmation(name, args, reason);
-    return this.requestApproval(spec.title, spec.summary);
+    return this.requestApproval(spec.title, spec.summary, spec.detail);
   }
 
   /** Pause until the UI answers a clarification (options picker). */

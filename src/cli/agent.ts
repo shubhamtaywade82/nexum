@@ -46,7 +46,7 @@ import { DecisionRoutingHintResolver } from "../models/router/decision-routing-h
 import { HeuristicRouter } from "../models/router/heuristic-router.js";
 import { DecisionVerificationGate } from "../runtime/critic/decision-gate.js";
 import { HookEngine } from "../hooks/engine.js";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
@@ -92,6 +92,8 @@ import { LOCAL_DELEGATION_SYSTEM_ADDENDUM } from "../tools/delegate-tool.js";
 import { detectEscalationHint, isLookupPrompt } from "./agent-escalation.js";
 // ── Kernel (agent execution kernel) ───────────────────────────────────
 import { ApprovalBroker, describeConfirmation } from "../core/policy/approval-broker.js";
+import { FILE_EDIT_TOOLS } from "../core/policy/rules.js";
+import type { ApprovalMode } from "../protocol/types.js";
 import { DefaultModelGateway } from "../models/gateway/model-gateway.js";
 import { ModelCapabilityRegistry } from "../models/profiles/model-capability-registry.js";
 import { budgetForProfile, CHARS_PER_TOKEN, type ModelBudget } from "../models/profiles/context-budget.js";
@@ -251,6 +253,8 @@ export class Agent {
   /** P2 trust tier: built from config when any server sets trust/tools/maxRisk. */
   private readonly mcpTrust?: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
+  /** Set per run by the host (CreateRunRequest.approvalMode); confirmations it covers are never asked. */
+  approvalMode: ApprovalMode = "ask";
   readonly intentResolver = new IntentResolver();
   /** Session token budget from NEXUM_TOKEN_BUDGET (0 = unlimited), enforced per run by the kernel BudgetTracker. */
   readonly tokenBudget = budgetFromEnv();
@@ -917,7 +921,18 @@ export class Agent {
     // model that just keeps retrying with malformed args never trips that path and
     // can flail indefinitely on the quick model. Reset on any successful tool call.
     let consecutiveToolErrors = 0;
+    // Actions the user already denied this turn. Small models re-ask for the same thing with a tweaked path or
+    // wording; a second prompt for something already refused is noise, so it is refused without asking.
+    const deniedActions = new Set<string>();
+    const actionKey = (name: string, args: Record<string, unknown>): string => {
+      const target =
+        typeof args.path === "string" ? resolve(this.workspaceRoot, args.path) : (args.command ?? args.args);
+      return `${name}:${JSON.stringify(target ?? args)}`;
+    };
     const TOOL_FAILURE_ESCALATION_THRESHOLD = 2;
+    // Past this many failures in a row the model is flailing (e.g. a broken sandbox), not converging:
+    // the loop detector only catches repeats of the same call, and each retry burns a model turn.
+    const MAX_CONSECUTIVE_TOOL_ERRORS = 6;
     // Budget of the model answering the current turn (resolved in onTurnStart)
     // and the size of the tool schemas last advertised, charged to it.
     let turnBudget: ModelBudget | undefined;
@@ -1024,6 +1039,7 @@ export class Agent {
         let buffered: string[] | null = verifying || critiquing ? [] : null;
         const makeChatOpts = (): ChatOptions => ({
           stream: true,
+          signal: this.execution.signal,
           tools: opts.tools as ChatOptions["tools"],
           // Window on the wire = the budget the transcript was just compacted
           // against, plus the output reserve. Without this Ollama falls back to
@@ -1158,8 +1174,16 @@ export class Agent {
       // existing emit-based approval UX — same titles, same deny-on-no-
       // listener default, same AUTO_APPROVE bypass — via describeConfirmation.
       resolveConfirmation: async ({ name, args, reason }) => {
+        if (this.approvalMode === "yolo" || (this.approvalMode === "auto-edit" && FILE_EDIT_TOOLS.has(name))) {
+          this.emit("onStatus", `auto-approved (${this.approvalMode}): ${name}`);
+          return true;
+        }
+        const key = actionKey(name, args);
+        if (deniedActions.has(key)) return false;
         const spec = describeConfirmation(name, args, reason);
-        return this.approvals.requestApproval(spec.title, spec.summary);
+        const approved = await this.approvals.requestApproval(spec.title, spec.summary, spec.detail);
+        if (!approved) deniedActions.add(key);
+        return approved;
       },
 
       onToolObserved: async (obs) => {
@@ -1227,14 +1251,28 @@ export class Agent {
           this.emit("onStatus", `escalating to ${escalationHint ?? "the primary model"}: ${record.reason}`);
         }
 
-        if (typeof record.error === "string") {
+        // A shell command that exits non-zero reports exitCode, not error, but is just as much a failure.
+        const failure =
+          typeof record.error === "string"
+            ? record.error
+            : typeof record.exitCode === "number" && record.exitCode !== 0
+              ? `exit ${record.exitCode}`
+              : null;
+        if (failure) {
           previousTurnHadToolError = true;
           consecutiveToolErrors += 1;
-          if (this.loopDetector.record(name, args, record.error)) {
+          if (this.loopDetector.record(name, args, failure)) {
             return {
               abortRun: true,
               terminal: "loop_abort",
               output: `${lastAssistantText}\n[aborted] tool loop detected after repeated: ${name}`,
+            };
+          }
+          if (consecutiveToolErrors >= MAX_CONSECUTIVE_TOOL_ERRORS) {
+            return {
+              abortRun: true,
+              terminal: "loop_abort",
+              output: `${lastAssistantText}\n[aborted] ${consecutiveToolErrors} tool calls failed in a row (last: ${name}, ${failure}).`,
             };
           }
         } else {

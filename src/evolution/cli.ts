@@ -549,12 +549,12 @@ export function resolveGithubDeliveryConfig(env: NodeJS.ProcessEnv = process.env
 
 /** Parses the benchmark CLI's `--json` output into TaskExecutionResults. */
 export function parseBenchmarkJson(stdout: string): TaskExecutionResult[] {
-  const start = stdout.indexOf("[");
-  const end = stdout.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) {
+  // Extract JSON array, ignoring bracketed log messages on stdout like "[Learning]...".
+  const match = stdout.match(/\[\s*\{[\s\S]*\}\s*\]/) ?? stdout.match(/(?:^|\n)\s*\[\s*\]/);
+  if (!match) {
     throw new Error(`benchmark --json produced no results array: ${stdout.slice(0, 400)}`);
   }
-  const results = JSON.parse(stdout.slice(start, end + 1)) as BenchmarkResult[];
+  const results = JSON.parse(match[0].trim()) as BenchmarkResult[];
   return results.map(toTaskExecutionResult);
 }
 

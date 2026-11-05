@@ -94,5 +94,11 @@ export function composeGoal({ goal, context }: Conversation): string {
 
 /** The run Nexum starts for a chat request: non-interactive (nobody can answer a prompt) and Markdown. */
 export function toRunRequest(conversation: Conversation): CreateRunRequest {
-  return { goal: composeGoal(conversation), presentation: { mode: "markdown" }, interactive: false };
+  return {
+    goal: composeGoal(conversation),
+    presentation: { mode: "markdown" },
+    interactive: false,
+    approvalMode: "ask",
+    modelTier: "auto",
+  };
 }

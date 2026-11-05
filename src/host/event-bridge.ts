@@ -20,6 +20,7 @@
 import type { Agent } from "../cli/agent.js";
 import type { NexumRunEvent, ResolveInteractionRequest } from "../protocol/types.js";
 import type { ApprovalRequest, ClarificationRequest } from "../runtime/types.js";
+import { canonicalToolName } from "../core/tools/tool-aliases.js";
 
 export interface ActiveRunSink {
   runId: string;
@@ -29,6 +30,37 @@ export interface ActiveRunSink {
 }
 
 const DEFAULT_INTERACTION_TIMEOUT_MS = 5 * 60_000;
+
+// Model chunks arrive per token; coalescing keeps the event stream to ~16 writes/s instead of one per token.
+const DELTA_FLUSH_MS = 60;
+
+/** Joins streamed text fragments into one `*.delta` event per flush window. */
+class DeltaCoalescer {
+  private parts: string[] = [];
+  private timer: NodeJS.Timeout | null = null;
+
+  constructor(private readonly emit: (text: string) => void) {}
+
+  push(text: string): void {
+    this.parts.push(text);
+    this.timer ??= setTimeout(() => this.flush(), DELTA_FLUSH_MS);
+  }
+
+  flush(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (this.parts.length === 0) return;
+    const text = this.parts.join("");
+    this.parts = [];
+    this.emit(text);
+  }
+
+  discard(): void {
+    this.parts = [];
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+}
 
 // IntentResolver.refinePrompt ignores ids that match no option, so this answers
 // a clarification without changing the user's prompt.
@@ -50,6 +82,8 @@ export class RunEventBridge {
   private toolCallSeq = 0;
   private lastToolCallId = "";
   private readonly pending = new Map<string, PendingInteraction>();
+  private readonly answerDeltas = new DeltaCoalescer((text) => this.writeDelta("answer.delta", text));
+  private readonly thoughtDeltas = new DeltaCoalescer((text) => this.writeDelta("thought.delta", text));
 
   constructor(
     private readonly agent: Agent,
@@ -58,18 +92,26 @@ export class RunEventBridge {
     agent.on("onThinking", (text) => {
       if (!this.active) return;
       this.thinkingBuf.push(text);
+      this.thoughtDeltas.push(text);
+    });
+
+    agent.on("onAssistantText", (text) => {
+      if (this.active) this.answerDeltas.push(text);
     });
 
     agent.on("onToolCall", (name, args) => {
       if (!this.active) return;
       this.flushThinking();
+      // Text streamed before a tool call is narration, not the answer; the client drops its draft here.
+      this.answerDeltas.discard();
       this.toolCallSeq += 1;
       this.lastToolCallId = `call_${this.toolCallSeq}`;
       this.active.write({
         type: "tool.started",
         runId: this.active.runId,
         callId: this.lastToolCallId,
-        name,
+        // Models call tools by aliases (e.g. "bash"); clients only know the catalog ids from /capabilities.
+        name: canonicalToolName(name),
         args,
         ts: Date.now(),
       });
@@ -81,15 +123,22 @@ export class RunEventBridge {
         type: "tool.completed",
         runId: this.active.runId,
         callId: this.lastToolCallId,
-        name,
+        name: canonicalToolName(name),
         result,
         ts: Date.now(),
       });
     });
 
-    agent.on("onModelUsed", (tier, model) => {
+    agent.on("onModelUsed", (tier, model, usage) => {
       if (!this.active) return;
-      this.active.write({ type: "model.used", runId: this.active.runId, tier, model, ts: Date.now() });
+      this.active.write({
+        type: "model.used",
+        runId: this.active.runId,
+        tier,
+        model,
+        ...(usage ? { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens } : {}),
+        ts: Date.now(),
+      });
     });
 
     agent.on("onApprovalRequested", (request) => this.requestApproval(request));
@@ -108,6 +157,7 @@ export class RunEventBridge {
       interactionId: request.id,
       title: request.title,
       summary: request.summary,
+      ...(request.diff ? { detail: request.diff } : {}),
       ts: Date.now(),
     });
   }
@@ -199,8 +249,14 @@ export class RunEventBridge {
     this.toolCallSeq = 0;
   }
 
+  private writeDelta(type: "answer.delta" | "thought.delta", text: string): void {
+    this.active?.write({ type, runId: this.active.runId, text, ts: Date.now() });
+  }
+
   /** Flush any buffered thinking (call before emitting the terminal run event). */
   flushThinking(): void {
+    this.thoughtDeltas.discard();
+    this.answerDeltas.discard();
     if (!this.active || this.thinkingBuf.length === 0) return;
     const text = this.thinkingBuf.join("");
     this.thinkingBuf = [];

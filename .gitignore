@@ -9,3 +9,4 @@ dist/
 .devagent/
 .devagent_history
 __pycache__
+.omc

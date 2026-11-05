@@ -62,7 +62,7 @@ export function presentOutput(content: string, presentation: PresentationRequest
   if (mode === "markdown" || !openui) return { format: "markdown", content };
 
   const program = extractProgram(content);
-  if (program !== null && isValidOpenUi(program, openui)) {
+  if (program !== null && openUiProblemsOf(program, openui).length === 0) {
     return { format: "openui", content: program, schemaVersion: openui.schemaVersion };
   }
   return { format: "markdown", content };
@@ -81,13 +81,34 @@ function extractProgram(content: string): string | null {
   return /^root\s*=/.test(text) ? text : null;
 }
 
-function isValidOpenUi(program: string, offer: OpenUiOffer): boolean {
+/**
+ * Why an answer that set out to be an OpenUI program is not a valid one; null when it is not a program at all
+ * (plain Markdown is a fine answer) or when it is valid.
+ */
+export function openUiProblems(content: string, presentation: PresentationRequest): string[] | null {
+  const { mode, openui } = presentation;
+  if (mode === "markdown" || !openui) return null;
+  const program = extractProgram(content);
+  if (program === null) return null;
+  const problems = openUiProblemsOf(program, openui);
+  return problems.length > 0 ? problems : null;
+}
+
+function openUiProblemsOf(program: string, offer: OpenUiOffer): string[] {
   try {
     const { root, meta } = createParser(offer.schema as LibraryJSONSchema).parse(program);
-    const problems = [meta.errors, meta.unresolved, meta.orphaned];
-    return root !== null && !meta.incomplete && problems.every((list) => list.length === 0);
-  } catch {
+    const problems = [...meta.errors, ...meta.unresolved, ...meta.orphaned].map(describeProblem);
+    if (root === null) problems.push("the program has no root component");
+    if (meta.incomplete) problems.push("the program is incomplete");
+    return problems;
+  } catch (err) {
     // A schema the parser cannot use means nothing can be validated: fall back rather than trust the model.
-    return false;
+    return [`the program could not be parsed: ${err instanceof Error ? err.message : String(err)}`];
   }
+}
+
+function describeProblem(problem: unknown): string {
+  if (typeof problem === "string") return problem;
+  const message = (problem as { message?: unknown })?.message;
+  return typeof message === "string" ? message : JSON.stringify(problem);
 }

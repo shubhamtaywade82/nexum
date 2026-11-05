@@ -10,7 +10,7 @@
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
 import { ToolDefinition } from "../../src/core/tools/tool-contract.js";
-import { DeleteFileRule, DestructiveShellRule, GitPublishRule } from "../../src/core/policy/rules.js";
+import { DeleteFileRule, DestructiveShellRule, FileEditRule, GitPublishRule } from "../../src/core/policy/rules.js";
 import { parityPosture, restrictedPosture, standardPosture } from "../../src/core/policy/postures.js";
 import { ReActStrategy } from "../../src/runtime/strategies/execution-strategy.js";
 import { createExecutionContext } from "../../src/runtime/context/execution-context.js";
@@ -108,6 +108,20 @@ describe("DeleteFileRule", () => {
   });
 });
 
+describe("FileEditRule", () => {
+  const rule = new FileEditRule();
+
+  it("confirms workspace file edits with the path in the reason", () => {
+    const d = rule.evaluate(reqOf(def({ id: "write_file", risk: "medium" }), { path: "notes.md" }));
+    expect(d?.requireConfirmation).toBe(true);
+    expect(d?.reason).toContain("notes.md");
+  });
+
+  it("defers reads to the chain", () => {
+    expect(rule.evaluate(reqOf(def({ id: "read_file" }), { path: "notes.md" }))).toBeNull();
+  });
+});
+
 // ── Postures ────────────────────────────────────────────────────────────────
 
 describe("policy postures", () => {
@@ -133,6 +147,9 @@ describe("policy postures", () => {
     expect(engine.check(reqOf(shell, { command: "rm -rf node_modules" })).requireConfirmation).toBe(true);
     expect(engine.check(reqOf(git, { args: ["push"] })).requireConfirmation).toBe(true);
     expect(engine.check(reqOf(del, { path: "x" })).requireConfirmation).toBe(true);
+    expect(engine.check(reqOf(def({ id: "write_file", risk: "medium" }), { path: "a" })).requireConfirmation).toBe(
+      true,
+    );
     expect(engine.check(reqOf(paperTrade, { action: "buy" })).requireConfirmation).toBe(true);
   });
 
