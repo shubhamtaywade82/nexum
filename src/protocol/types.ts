@@ -177,7 +177,16 @@ export type NexumRunEvent =
       result: Record<string, unknown>;
       ts: number;
     }
-  | { type: "model.used"; runId: string; tier: string; model: string; ts: number }
+  | {
+      type: "model.used";
+      runId: string;
+      tier: string;
+      model: string;
+      /** Token counts for this model call, when the provider reported them. */
+      promptTokens?: number;
+      completionTokens?: number;
+      ts: number;
+    }
   | {
       type: "run.approval.required";
       runId: string;
@@ -291,6 +300,8 @@ export const CreateRunRequestSchema = z.object({
    * still apply, and a server started with --yolo approves everything regardless.
    */
   approvalMode: z.enum(["ask", "auto-edit", "yolo"]).default("ask"),
+  /** "auto" tries the quick (local) model first and escalates when needed; "primary" goes straight to the configured model. */
+  modelTier: z.enum(["auto", "primary"]).default("auto"),
 });
 export type ApprovalMode = CreateRunRequest["approvalMode"];
 export type CreateRunRequest = z.infer<typeof CreateRunRequestSchema>;

@@ -99,5 +99,6 @@ export function toRunRequest(conversation: Conversation): CreateRunRequest {
     presentation: { mode: "markdown" },
     interactive: false,
     approvalMode: "ask",
+    modelTier: "auto",
   };
 }

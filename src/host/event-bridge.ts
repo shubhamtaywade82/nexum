@@ -127,9 +127,16 @@ export class RunEventBridge {
       });
     });
 
-    agent.on("onModelUsed", (tier, model) => {
+    agent.on("onModelUsed", (tier, model, usage) => {
       if (!this.active) return;
-      this.active.write({ type: "model.used", runId: this.active.runId, tier, model, ts: Date.now() });
+      this.active.write({
+        type: "model.used",
+        runId: this.active.runId,
+        tier,
+        model,
+        ...(usage ? { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens } : {}),
+        ts: Date.now(),
+      });
     });
 
     agent.on("onApprovalRequested", (request) => this.requestApproval(request));
