@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   OPENUI_SCHEMA_VERSION,
   isPresentationSupported,
+  openUiProblems,
   presentOutput,
   presentationInstructions,
 } from "../../src/host/presentation.js";
@@ -80,6 +81,19 @@ describe("presentOutput", () => {
     };
 
     expect(presentOutput(VALID, broken)).toEqual({ format: "markdown", content: VALID });
+  });
+});
+
+describe("openUiProblems", () => {
+  it("should explain why a program that tried to be OpenUI is invalid", () => {
+    const problems = openUiProblems('root = Stack("md", [Missing("x")])', request("auto"));
+    expect(problems?.length).toBeGreaterThan(0);
+  });
+
+  it("should have nothing to say about a valid program or a plain answer", () => {
+    expect(openUiProblems(VALID, request("auto"))).toBeNull();
+    expect(openUiProblems("Just text.", request("auto"))).toBeNull();
+    expect(openUiProblems('root = Stack("md", [Missing("x")])', request("markdown"))).toBeNull();
   });
 });
 

@@ -24,6 +24,12 @@ import type { PreparedToolCall, StrategyHooks, StrategyModelCallOptions } from "
 import { CriticService, type CriticSeverity } from "../critic/critic.js";
 import { SelfCorrectionLoop, type SelfCorrectionResult } from "../critic/reflection.js";
 
+// A bare "rejected" reads to small models like a transient error, and they retry with a tweaked path or
+// another tool; spelling out that the decision is final stops the re-asking loop.
+const APPROVAL_REJECTED_MESSAGE =
+  "The user denied this action. This is a decision, not an error: do not retry it, rephrase it, or reach the same " +
+  "result with another tool. Continue without it, or explain what you could not do and ask the user how to proceed.";
+
 export interface ExecutionStrategy {
   readonly name: StrategyName;
   run(request: StrategyRunRequest): Promise<ExecutionResult>;
@@ -320,8 +326,8 @@ export class ReActStrategy implements ExecutionStrategy {
                   })
                 : {
                     ok: false,
-                    data: { error: "ApprovalRejected", message: "The user rejected this action." },
-                    error: { code: "ApprovalRejected", message: "The user rejected this action." },
+                    data: { error: "ApprovalRejected", message: APPROVAL_REJECTED_MESSAGE },
+                    error: { code: "ApprovalRejected", message: APPROVAL_REJECTED_MESSAGE },
                   };
             }
           } catch (e) {

@@ -193,6 +193,8 @@ export type NexumRunEvent =
       interactionId: string;
       title: string;
       summary: string;
+      /** What the action will write (file content or patch), truncated; absent when there is nothing to preview. */
+      detail?: string;
       tool?: string;
       ts: number;
     }

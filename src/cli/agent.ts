@@ -46,7 +46,7 @@ import { DecisionRoutingHintResolver } from "../models/router/decision-routing-h
 import { HeuristicRouter } from "../models/router/heuristic-router.js";
 import { DecisionVerificationGate } from "../runtime/critic/decision-gate.js";
 import { HookEngine } from "../hooks/engine.js";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { BrowserManager } from "../browser/manager.js";
 import { BinanceStreamManager } from "../domains/trading/binance-stream.js";
@@ -921,6 +921,14 @@ export class Agent {
     // model that just keeps retrying with malformed args never trips that path and
     // can flail indefinitely on the quick model. Reset on any successful tool call.
     let consecutiveToolErrors = 0;
+    // Actions the user already denied this turn. Small models re-ask for the same thing with a tweaked path or
+    // wording; a second prompt for something already refused is noise, so it is refused without asking.
+    const deniedActions = new Set<string>();
+    const actionKey = (name: string, args: Record<string, unknown>): string => {
+      const target =
+        typeof args.path === "string" ? resolve(this.workspaceRoot, args.path) : (args.command ?? args.args);
+      return `${name}:${JSON.stringify(target ?? args)}`;
+    };
     const TOOL_FAILURE_ESCALATION_THRESHOLD = 2;
     // Past this many failures in a row the model is flailing (e.g. a broken sandbox), not converging:
     // the loop detector only catches repeats of the same call, and each retry burns a model turn.
@@ -1170,8 +1178,12 @@ export class Agent {
           this.emit("onStatus", `auto-approved (${this.approvalMode}): ${name}`);
           return true;
         }
+        const key = actionKey(name, args);
+        if (deniedActions.has(key)) return false;
         const spec = describeConfirmation(name, args, reason);
-        return this.approvals.requestApproval(spec.title, spec.summary);
+        const approved = await this.approvals.requestApproval(spec.title, spec.summary, spec.detail);
+        if (!approved) deniedActions.add(key);
+        return approved;
       },
 
       onToolObserved: async (obs) => {

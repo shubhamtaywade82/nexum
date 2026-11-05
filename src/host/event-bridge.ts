@@ -20,6 +20,7 @@
 import type { Agent } from "../cli/agent.js";
 import type { NexumRunEvent, ResolveInteractionRequest } from "../protocol/types.js";
 import type { ApprovalRequest, ClarificationRequest } from "../runtime/types.js";
+import { canonicalToolName } from "../core/tools/tool-aliases.js";
 
 export interface ActiveRunSink {
   runId: string;
@@ -109,7 +110,8 @@ export class RunEventBridge {
         type: "tool.started",
         runId: this.active.runId,
         callId: this.lastToolCallId,
-        name,
+        // Models call tools by aliases (e.g. "bash"); clients only know the catalog ids from /capabilities.
+        name: canonicalToolName(name),
         args,
         ts: Date.now(),
       });
@@ -121,7 +123,7 @@ export class RunEventBridge {
         type: "tool.completed",
         runId: this.active.runId,
         callId: this.lastToolCallId,
-        name,
+        name: canonicalToolName(name),
         result,
         ts: Date.now(),
       });
@@ -155,6 +157,7 @@ export class RunEventBridge {
       interactionId: request.id,
       title: request.title,
       summary: request.summary,
+      ...(request.diff ? { detail: request.diff } : {}),
       ts: Date.now(),
     });
   }

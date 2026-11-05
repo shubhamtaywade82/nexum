@@ -10,7 +10,7 @@ import type { CreateRunRequest, NexumRunEvent, NexumRunOutput } from "../protoco
 import type { AgentEntry, HostAgentRegistry } from "./agent-registry.js";
 import type { RunEventBridge } from "./event-bridge.js";
 import { describeError } from "./http.js";
-import { presentationInstructions, presentOutput } from "./presentation.js";
+import { openUiProblems, presentationInstructions, presentOutput } from "./presentation.js";
 
 const LIVE_ONLY_EVENTS: ReadonlySet<string> = new Set(["answer.delta", "thought.delta"]);
 
@@ -66,6 +66,16 @@ export async function startRun(
 }
 
 /** Aborts the run and releases anything it is blocked on, so cancel can't be stranded behind a prompt. */
+/** One repair turn for an invalid OpenUI program; if that fails too, the answer is shown as Markdown. */
+function openUiRepairPrompt(problems: string[]): string {
+  return [
+    "[system] Your last answer was meant to be an OpenUI Lang program but it failed validation:",
+    ...problems.slice(0, 10).map((p) => `- ${p}`),
+    "Rewrite the whole answer as one valid program using only the components and positional arguments from the",
+    "OpenUI specification you were given (no named arguments like `label:`), or answer in plain Markdown instead.",
+  ].join("\n");
+}
+
 export function cancelRun({ agent, bridge }: AgentEntry): boolean {
   const cancelled = agent.cancelExecutionRun();
   bridge.denyPending();
@@ -110,8 +120,12 @@ async function runAgentInBackground(
   agent.approvalMode = approvalMode;
 
   try {
+    // Generated UI is beyond the quick local models: they write invalid programs slowly, so go to the primary.
+    const escalate = modelTier === "primary" || presentation.mode === "openui";
+    const answer = await agent.runUserMessage(goal, undefined, { escalate });
+    const problems = openUiProblems(answer, presentation);
     const output: NexumRunOutput = presentOutput(
-      await agent.runUserMessage(goal, undefined, { escalate: modelTier === "primary" }),
+      problems ? await agent.runUserMessage(openUiRepairPrompt(problems), undefined, { escalate: true }) : answer,
       presentation,
     );
     bridge.flushThinking();
