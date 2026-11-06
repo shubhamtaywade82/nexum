@@ -1,9 +1,4 @@
-import {
-  validateTaskRun,
-  hypothesisHash,
-  normalizeHypothesis,
-  ValidationResult,
-} from "../../../src/evolution/tasks/task-validator.js";
+import { validateTaskRun, hypothesisHash, normalizeHypothesis } from "../../../src/evolution/tasks/task-validator.js";
 import { TaskDefinition } from "../../../src/evolution/tasks/types.js";
 
 function makeTask(mode: TaskDefinition["execution"]["mode"] = "diagnose"): TaskDefinition {

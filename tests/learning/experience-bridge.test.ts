@@ -3,13 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExperienceIngestionBridge } from "../../src/learning/experience-bridge.js";
 import { ExperienceStore } from "../../src/evolution/experience/experience-store.js";
-import { Episode, ToolEvent } from "../../src/learning/types.js";
-
-function ev(name: string, ok: boolean, errorLabel?: string): ToolEvent {
-  const event: ToolEvent = { name, args: {}, ok, durationMs: 10, at: Date.now() };
-  if (errorLabel) event.errorLabel = errorLabel;
-  return event;
-}
+import { Episode } from "../../src/learning/types.js";
 
 function episode(id: string, ok: boolean): Episode {
   return {

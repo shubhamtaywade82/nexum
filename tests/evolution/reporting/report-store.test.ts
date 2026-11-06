@@ -2,25 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReportStore } from "../../../src/evolution/reporting/report-store.js";
-import { Report, TaskDefinition } from "../../../src/evolution/tasks/types.js";
-
-function makeTask(): TaskDefinition {
-  return {
-    id: "EVO-001",
-    title: "Test Task",
-    category: "learning",
-    priority: "P0",
-    schemaVersion: 1,
-    objective: "test",
-    execution: { mode: "diagnose", autonomous: true, allow_code_changes: false },
-    inputs: [],
-    investigation: ["step"],
-    acceptance: ["criterion"],
-    report: { required: ["task_identification", "recommendation", "confidence"] },
-    scoring: { impact: 0.5, potential: 0.5, feasibility: 0.5 },
-    dependsOn: [],
-  };
-}
+import { Report } from "../../../src/evolution/tasks/types.js";
 
 function makeReport(overrides: Partial<Report> = {}): Report {
   return {
