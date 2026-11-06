@@ -37,8 +37,10 @@ import { DefaultAgentRuntime } from "../runtime/agent/agent-runtime.js";
 import { EvolutionVerificationProfile, verificationProfileByName } from "./mutation/verification-profile.js";
 import { GitHubDeliveryAdapter } from "./delivery/github-adapter.js";
 import { ActivationMonitor, OperationalTelemetry } from "./monitoring/activation-monitor.js";
+import { ContinuousMonitorService } from "./monitoring/monitor-service.js";
 import { ManifestRuntimeActivationController } from "./monitoring/manifest-runtime-activation.js";
 import { EvolutionPlan } from "./planner.js";
+import { EvolutionWorker, EvolutionCycleResult } from "./evolution-worker.js";
 import { HarnessRegistry } from "./registry.js";
 import { HarnessComponent, HarnessDiagnosis, HarnessVersion } from "./types.js";
 
@@ -92,8 +94,28 @@ Options:
                          (GitHub delivery + CI passed + review approved), the
                          live runtime is switched onto it by atomically
                          updating nexum.harness.json's activeHarness pointer.
-  -a, --autonomous       Run an autonomous diagnosis and mutation planning cycle
-      --limit <n>        Limit number of episodes analyzed (default: 20)
+  -a, --autonomous       Run the full autonomous cycle: ingest ALL experience,
+                         observe failures AND successful patterns, form the
+                         target, and — with --repo — execute the mutation
+                         cycle (without --repo: observation + planning only)
+      --continuous       With --mutate (or --autonomous --repo): keep evolving
+                         in a policy-gated loop. A cycle only runs when a
+                         capability target with sufficient confidence exists;
+                         the worker never mutates because a schedule fired
+      --interval <ms>    Tick interval for --continuous (default 3600000) and
+                         --monitor --watch (default 60000)
+      --max-cycles <n>   Stop after n mutation cycles in --continuous mode
+      --generalization-policy <p>  "optional" | "required" |
+                         "required-for-production" (default:
+                         required-for-production with --github, else optional)
+      --watch            With --monitor: continuously tail the telemetry file
+                         and re-evaluate on every new sample instead of a
+                         one-shot verdict
+      --experiment <id>  With --monitor --watch: evaluate (and auto-rollback)
+                         this experiment's harness through the closed-loop
+                         engine's ACTIVE → REGRESSED → ROLLBACK path
+      --limit <n>        Limit number of episodes analyzed (default: 20;
+                         experience ingestion always covers every episode)
       --component <name> Target subsystem for candidate evaluation (default: execution)
       --hypothesis <txt> Remediation hypothesis statement for candidate
       --monitor          Evaluate post-activation health against the parent envelope
@@ -127,6 +149,12 @@ const CLI_OPTIONS = {
   rollback: { type: "string" as const, short: "r" },
   benchmark: { type: "boolean" as const, short: "b" },
   autonomous: { type: "boolean" as const, short: "a" },
+  continuous: { type: "boolean" as const },
+  interval: { type: "string" as const },
+  "max-cycles": { type: "string" as const },
+  "generalization-policy": { type: "string" as const },
+  watch: { type: "boolean" as const },
+  experiment: { type: "string" as const },
   limit: { type: "string" as const },
   component: { type: "string" as const },
   hypothesis: { type: "string" as const },
@@ -139,6 +167,28 @@ export function loadRecentEpisodes(root: string, limit = 20): Episode[] {
   const db = new Database(dbPath);
   try {
     const rows = db.prepare("SELECT payload FROM episodes ORDER BY started_at DESC LIMIT ?").all(limit) as Array<{
+      payload: string;
+    }>;
+    return rows.map((r) => JSON.parse(r.payload) as Episode);
+  } catch {
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * v2.4: reads EVERY episode from the workspace lesson database. This is the
+ * experience FEED: ingestion must cover all completed episodes, not just the
+ * recent diagnosis window, so that cross-session evidence accumulates even
+ * when evolution decisions only consult the last `--limit` episodes.
+ */
+export function loadAllEpisodes(root: string): Episode[] {
+  const dbPath = join(workspaceStateDir(root), "lessons.db");
+  if (!existsSync(dbPath)) return [];
+  const db = new Database(dbPath);
+  try {
+    const rows = db.prepare("SELECT payload FROM episodes ORDER BY started_at DESC").all() as Array<{
       payload: string;
     }>;
     return rows.map((r) => JSON.parse(r.payload) as Episode);
@@ -522,6 +572,32 @@ export function buildMutationStrategy(name: string | undefined, cfg: CliConfig):
   );
 }
 
+/** Generalization evidence policies accepted by `nexum evolve --generalization-policy`. */
+export const GENERALIZATION_POLICIES = ["optional", "required", "required-for-production"] as const;
+export type GeneralizationPolicyName = (typeof GENERALIZATION_POLICIES)[number];
+
+/**
+ * v2.4: resolves the generalization evidence policy for `nexum evolve
+ * --mutate`. Production delivery (--github) defaults to
+ * "required-for-production": a PR may only be opened for a candidate with
+ * fixed-executor transfer evidence, so an improvement measured on one model
+ * cannot silently ride a weaker evaluation. Local runs keep "optional".
+ * Explicit `--generalization-policy` always wins. Throws on unknown names so
+ * typos fail loudly instead of silently weakening the gate.
+ */
+export function resolveGeneralizationPolicy(values: Record<string, unknown>): GeneralizationPolicyName {
+  const explicit = values["generalization-policy"] as string | undefined;
+  if (explicit) {
+    if (!(GENERALIZATION_POLICIES as readonly string[]).includes(explicit)) {
+      throw new Error(
+        `Unknown generalization policy "${explicit}" (expected ${GENERALIZATION_POLICIES.map((n) => `"${n}"`).join(", ")}).`,
+      );
+    }
+    return explicit as GeneralizationPolicyName;
+  }
+  return values.github === true ? "required-for-production" : "optional";
+}
+
 export interface GithubDeliveryEnvConfig {
   owner: string;
   repo: string;
@@ -718,6 +794,40 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     );
     return;
   }
+  // v2.4: generalization evidence policy. Production delivery (--github)
+  // defaults to "required-for-production" so a PR can only be opened for a
+  // candidate backed by fixed-executor transfer evidence; local experiments
+  // keep the permissive "optional" default. Explicit flag always wins.
+  let policy: GeneralizationPolicyName;
+  try {
+    policy = resolveGeneralizationPolicy(values);
+  } catch (err) {
+    console.error((err as Error).message);
+    return;
+  }
+  if (policy !== "optional") {
+    console.log(
+      `[Evolution] Generalization policy: ${policy} (fixed-executor transfer evidence is required for eligibility).`,
+    );
+  }
+  // v2.4: continuous-mode knobs, validated BEFORE any store is opened so a
+  // typo cannot leak open SQLite handles.
+  let intervalMs = 60 * 60 * 1000;
+  let maxCycles: number | undefined;
+  if (values.interval !== undefined) {
+    intervalMs = parseInt(values.interval as string, 10);
+    if (Number.isNaN(intervalMs) || intervalMs <= 0) {
+      console.error("--interval must be a positive number of milliseconds.");
+      return;
+    }
+  }
+  if (values["max-cycles"] !== undefined) {
+    maxCycles = parseInt(values["max-cycles"] as string, 10);
+    if (Number.isNaN(maxCycles) || maxCycles < 1) {
+      console.error("--max-cycles must be a positive integer.");
+      return;
+    }
+  }
   const stateDir = workspaceStateDir(root);
   const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
   // v2.3.2: the mutate path PERSISTS experiment provenance. Without a
@@ -726,6 +836,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
   const experimentDir = (values["experiment-dir"] as string | undefined) ?? join(stateDir, "experiments");
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
+  const parentRef = (values.parent as string) || "HEAD";
   // Production actuator wiring: the strategy decides WHO proposes the mutation
   // (heuristic planner vs the engineering agent); the verification profile
   // decides WHAT the candidate must survive; linkNodeModulesFrom makes real
@@ -746,6 +857,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     experimentController: new ExperimentController({ store: experimentStore }),
     ...(registry ? { registry } : {}),
     ...(activationController ? { runtimeActivation: activationController } : {}),
+    generalizationPolicy: policy,
     mutationExecutor: new GitWorktreeMutationExecutor({
       verifyCommands: profile.commands,
       linkNodeModulesFrom: repoRoot,
@@ -765,16 +877,26 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
         }
       : {}),
   });
-  try {
-    const episodes = loadRecentEpisodes(root, limit);
-    // v2.3.3: feed the graded parent-harness episodes into the experience
-    // store BEFORE the cycle runs — accumulation is independent of whether
-    // this particular mutation succeeds.
-    await ingestParentExperience(engine, episodes, repoRoot, (values.parent as string) || "HEAD");
+
+  /**
+   * v2.4: ONE full observe→mutate cycle as a reusable unit. Episode loading
+   * and FULL experience ingestion happen INSIDE the cycle so that (a) every
+   * completed episode feeds the experience store — not just the recent
+   * diagnosis window — and (b) continuous mode picks up episodes recorded
+   * while earlier cycles ran. `skipped` marks a no-target tick (idle, not a
+   * cycle failure).
+   */
+  const runCycle = async (): Promise<EvolutionCycleResult> => {
+    const allEpisodes = loadAllEpisodes(root);
+    await ingestParentExperience(engine, allEpisodes, repoRoot, parentRef);
+    const episodes = allEpisodes.slice(0, limit);
     const observation = engine.observe(episodes);
     if (!observation.target || !observation.mutationScope || observation.diagnoses.length === 0) {
-      console.error("No operationalizable target from recent episodes; refusing to mutate blind.");
-      return;
+      return {
+        ok: false,
+        skipped: true,
+        detail: "no operationalizable target from recent episodes; refusing to mutate blind",
+      };
     }
     const diagnosis = observation.diagnoses[0];
     const categories = observation.plan?.recommendedBenchmarkCategories ?? [];
@@ -795,7 +917,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     const outcome = await engine.runEvolutionCycle({
       experimentId,
       parentHarnessId: "HEAD",
-      parentCommit: (values.parent as string) || "HEAD",
+      parentCommit: parentRef,
       candidateHarnessId: `H${Date.now().toString(36)}`,
       repoRoot,
       target: observation.target,
@@ -835,6 +957,48 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       experimentDir,
       activation,
     });
+    if (outcome.ok) {
+      const record = outcome.outcome.experiment;
+      return {
+        ok: true,
+        detail: `candidate ${record.candidate.harness} → decision=${record.decision.result} state=${record.lifecycle.state}`,
+      };
+    }
+    return { ok: false, detail: `stage ${outcome.stage}: ${outcome.reason}` };
+  };
+
+  try {
+    if (values.continuous) {
+      // v2.4: persistent, policy-controlled evolution. The worker re-observes
+      // the evidence on every tick and only runs a cycle when a capability
+      // target with sufficient confidence exists — it never mutates because
+      // a schedule fired.
+      const worker = new EvolutionWorker({
+        observe: async () => {
+          const allEpisodes = loadAllEpisodes(root);
+          await ingestParentExperience(engine, allEpisodes, repoRoot, parentRef);
+          return { target: engine.observe(allEpisodes.slice(0, limit)).target };
+        },
+        runCycle,
+        intervalMs,
+        ...(maxCycles !== undefined ? { maxCycles } : {}),
+      });
+      const onSigint = () => {
+        console.log("\n[Evolution] Interrupted — finishing the current step, then exiting.");
+        worker.stop();
+      };
+      process.once("SIGINT", onSigint);
+      try {
+        await worker.run();
+      } finally {
+        process.removeListener("SIGINT", onSigint);
+      }
+    } else {
+      const outcome = await runCycle();
+      if (outcome.skipped) {
+        console.error("No operationalizable target from recent episodes; refusing to mutate blind.");
+      }
+    }
   } finally {
     experienceStore.close();
     experimentStore.close();
@@ -909,12 +1073,140 @@ function writeCycleArtifact(
   }
 }
 
+/**
+ * v2.4: --autonomous as a REAL execution mode. The flag was previously
+ * declared in the CLI options and then silently ignored; now it dispatches:
+ *
+ *   with --repo    → the full closed loop (ingest ALL experience → observe
+ *                    failures AND successes → target → mutation →
+ *                    verification → benchmark → delivery → activation),
+ *                    exactly the --mutate path, optionally --continuous;
+ *   without --repo → an observation + planning cycle that still ingests every
+ *                    completed episode and reports the target it WOULD chase,
+ *                    so the next run with --repo starts from formed evidence.
+ */
+async function executeAutonomousCommand(root: string, values: Record<string, unknown>): Promise<void> {
+  if (typeof values.repo === "string") {
+    await executeMutationCommand(root, values);
+    return;
+  }
+  if (values.continuous) {
+    console.error("--continuous requires --repo (the mutation loop needs a harness repository to mutate).");
+    return;
+  }
+  const stateDir = workspaceStateDir(root);
+  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
+  const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
+  const engine = new ClosedLoopEngine({
+    experienceStore,
+    experimentController: new ExperimentController({ store: experimentStore }),
+  });
+  const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
+
+  try {
+    // v2.4: the experience feed covers EVERY completed episode, not just the
+    // diagnosis window — accumulation is independent of mutation success.
+    const allEpisodes = loadAllEpisodes(root);
+    await ingestParentExperience(engine, allEpisodes, root, "HEAD");
+    const episodes = allEpisodes.slice(0, limit);
+    const observation = engine.observe(episodes);
+    const successDriven = observation.diagnoses.filter(
+      (d) => d.failureClass === "efficiency_opportunity" || d.failureClass === "success_pattern",
+    );
+
+    console.log("=== Autonomous Cycle (v2.4) ===");
+    console.log(
+      `[Evolution] Episodes: ${allEpisodes.length} total · ${episodes.length} in diagnosis window · experience records: ${experienceStore.count()}`,
+    );
+    console.log(formatDiagnosesText(observation.diagnoses, observation.plan));
+    if (successDriven.length > 0) {
+      console.log(
+        `\n[Evolution] Success-driven signals: ${successDriven.length} diagnosis(esis) from SUCCESSFUL episodes (efficiency opportunities + comparative patterns).`,
+      );
+    }
+    console.log("");
+    console.log(formatTargetText(observation));
+    if (observation.target) {
+      console.log(
+        "\n[Evolution] Target formed. Re-run with --repo <path> (plus --strategy/--benchmark as needed) to execute the mutation cycle.",
+      );
+    } else {
+      console.log(
+        "\n[Evolution] No operationalizable target yet — keep accumulating episodes; the loop refuses to mutate blind.",
+      );
+    }
+    console.log("");
+    console.log(formatExperienceText(engine.digestExperience()));
+  } finally {
+    experienceStore.close();
+    experimentStore.close();
+  }
+}
+
 async function executeMonitorCommand(root: string, values: Record<string, unknown>): Promise<void> {
   void root;
   const telemetryPath = values.telemetry as string | undefined;
   const harnessId = values.harness as string | undefined;
-  if (!telemetryPath || !harnessId) {
-    console.error("--monitor requires --telemetry <file.jsonl> and --harness <id>.");
+  const experimentId = values.experiment as string | undefined;
+  if (!telemetryPath || (!harnessId && !experimentId)) {
+    console.error(
+      "--monitor requires --telemetry <file.jsonl> and --harness <id> (or --experiment <id> with --watch).",
+    );
+    return;
+  }
+
+  if (values.watch) {
+    // v2.4 continuous monitoring: tail the telemetry file and evaluate on
+    // every new sample. With --experiment, evaluation runs through the
+    // closed-loop engine, which drives ACTIVE → REGRESSED → ROLLBACK
+    // automatically; with only --harness it is reporting-only.
+    const stateDir = workspaceStateDir(findWorkspaceRoot(process.cwd()));
+    const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
+    const monitor = new ActivationMonitor();
+    let engine: ClosedLoopEngine | null = null;
+    if (experimentId) {
+      const controller = new ExperimentController({ store: experimentStore });
+      engine = new ClosedLoopEngine({ experimentController: controller, monitor });
+      const hydrated = controller.hydrate(experimentId);
+      if (!hydrated) {
+        console.error(
+          `[Monitor] Unknown experiment "${experimentId}" in ${join(stateDir, "experiments.db")} — run "nexum evolve --experiments" to list ids.`,
+        );
+        experimentStore.close();
+        return;
+      }
+      console.log(
+        `[Monitor] Monitoring experiment ${experimentId} (harness ${hydrated.candidate.harness}, state ${hydrated.lifecycle.state}) with automatic rollback on regression.`,
+      );
+    }
+    let intervalMs = 60_000;
+    if (values.interval !== undefined) {
+      intervalMs = parseInt(values.interval as string, 10);
+      if (Number.isNaN(intervalMs) || intervalMs <= 0) {
+        console.error("--interval must be a positive number of milliseconds.");
+        experimentStore.close();
+        return;
+      }
+    }
+    const service = new ContinuousMonitorService({
+      telemetryPath,
+      monitor,
+      evaluate: (m) => (engine ? engine.evaluateActivationLive(experimentId!) : m.evaluate(harnessId!)),
+      intervalMs,
+    });
+    const onSigint = () => service.stop();
+    process.once("SIGINT", onSigint);
+    try {
+      await service.start();
+    } finally {
+      process.removeListener("SIGINT", onSigint);
+      experimentStore.close();
+    }
+    return;
+  }
+
+  if (!harnessId) {
+    console.error("--monitor (one-shot) requires --harness <id>.");
     return;
   }
   const monitor = new ActivationMonitor();
@@ -970,6 +1262,14 @@ export async function runEvolutionCli(args: string[]): Promise<void> {
   }
   const root = findWorkspaceRoot(process.cwd());
 
+  // v2.4: --autonomous is dispatched for real (previously the flag was
+  // accepted and silently ignored). With --repo it runs the full mutation
+  // cycle; without it, an observation + planning cycle over ALL accumulated
+  // experience.
+  if (values.autonomous) {
+    await executeAutonomousCommand(root, values);
+    return;
+  }
   if (values.mutate) {
     await executeMutationCommand(root, values);
     return;

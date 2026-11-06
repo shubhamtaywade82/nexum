@@ -22,7 +22,11 @@ export type FailureClass =
   | "checkpoint_failure"
   | "verification_gap"
   | "routing_failure"
-  | "unknown";
+  | "unknown"
+  /** Success-driven evolution: a successful episode that succeeded wastefully. */
+  | "efficiency_opportunity"
+  /** Success-driven evolution: an efficient pattern observed across successful episodes. */
+  | "success_pattern";
 
 export interface Evidence {
   type: string;
