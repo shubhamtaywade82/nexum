@@ -59,3 +59,16 @@ export * from "./experiments/provenance.js";
 
 export * from "./acceptance/acceptance-controller.js";
 export * from "./engine-v2.js";
+
+// ── v2.5 task catalogue ──
+// Permanent, registry-driven backlog of engineering improvement objectives.
+// See docs/evolution/architecture.md.
+export * from "./tasks/types.js";
+export * from "./tasks/task-loader.js";
+export * from "./tasks/task-registry.js";
+export * from "./tasks/task-validator.js";
+export * from "./tasks/task-prioritizer.js";
+export * from "./tasks/backlog-tracker.js";
+export * from "./tasks/task-runner.js";
+export * from "./reporting/report-generator.js";
+export * from "./reporting/report-store.js";

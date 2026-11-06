@@ -41,6 +41,7 @@ import { ManifestRuntimeActivationController } from "./monitoring/manifest-runti
 import { EvolutionPlan } from "./planner.js";
 import { HarnessRegistry } from "./registry.js";
 import { HarnessComponent, HarnessDiagnosis, HarnessVersion } from "./types.js";
+import { isTaskCliInvocation, runTaskCli } from "./tasks/cli.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -99,6 +100,15 @@ Options:
       --monitor          Evaluate post-activation health against the parent envelope
       --telemetry <file> JSONL file of OperationalTelemetry samples for --monitor
       --harness <id>     Harness id to evaluate with --monitor
+      --task-catalog      List all tasks in the evolution task catalogue
+      --task-validate     Validate the catalogue YAML against the schema
+      --task-show <id>    Show one task definition from the catalogue
+      --task-backlog      Show backlog state for all catalogue tasks
+      --task-prioritize   Rank pending tasks using the policies.yml weights
+      --task-run <id>     Run a catalogue task (diagnose mode only in this PR;
+                         experiment/implement require the closed-loop engine)
+      --task-category <n> Filter --task-catalog/--task-prioritize by category
+      --task-priority <p> Filter --task-catalog/--task-prioritize by P0/P1/P2
   -h, --help             Show this help message
 `;
 
@@ -130,6 +140,14 @@ const CLI_OPTIONS = {
   limit: { type: "string" as const },
   component: { type: "string" as const },
   hypothesis: { type: "string" as const },
+  "task-catalog": { type: "boolean" as const },
+  "task-validate": { type: "boolean" as const },
+  "task-show": { type: "string" as const },
+  "task-backlog": { type: "boolean" as const },
+  "task-prioritize": { type: "boolean" as const },
+  "task-run": { type: "string" as const },
+  "task-category": { type: "string" as const },
+  "task-priority": { type: "string" as const },
 };
 
 /** Reads recent episodes from the workspace lesson database. */
@@ -968,6 +986,24 @@ export async function runEvolutionCli(args: string[]): Promise<void> {
     console.log(HELP_TEXT);
     return;
   }
+
+  // Task catalogue commands are dispatched before the rest so they do not
+  // require a workspace state directory.
+  const taskCliOpts = {
+    taskCatalog: values["task-catalog"] as boolean | undefined,
+    taskValidate: values["task-validate"] as boolean | undefined,
+    taskShow: values["task-show"] as string | undefined,
+    taskBacklog: values["task-backlog"] as boolean | undefined,
+    taskPrioritize: values["task-prioritize"] as boolean | undefined,
+    taskRun: values["task-run"] as string | undefined,
+    taskCategory: values["task-category"] as string | undefined,
+    taskPriority: values["task-priority"] as string | undefined,
+  };
+  if (isTaskCliInvocation(taskCliOpts)) {
+    const code = await runTaskCli(taskCliOpts);
+    process.exit(code);
+  }
+
   const root = findWorkspaceRoot(process.cwd());
 
   if (values.mutate) {
