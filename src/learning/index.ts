@@ -1,5 +1,6 @@
 export * from "./engine.js";
 export * from "./episode-recorder.js";
+export * from "./experience-bridge.js";
 export * from "./grader.js";
 export * from "./lesson-store.js";
 export * from "./reflector.js";
