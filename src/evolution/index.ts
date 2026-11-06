@@ -34,6 +34,7 @@ export * from "./experience/types.js";
 export * from "./experience/experience-store.js";
 export * from "./experience/trajectory-analyzer.js";
 export * from "./experience/evidence-aggregator.js";
+export * from "./experience/success-pattern-analyzer.js";
 export * from "./experience/transfer-analyzer.js";
 
 export * from "./comparison/two-stage-selector.js";
