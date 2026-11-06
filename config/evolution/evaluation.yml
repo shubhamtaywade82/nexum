@@ -1,0 +1,190 @@
+# Nexum Evolution Evaluation Contract
+#
+# Normative reference: docs/evolution/evolution-policy.md §6 Report contract
+#
+# Defines the standard report sections and the minimum content each section
+# must contain. ReportGenerator validates against this file at write time.
+
+version: 1
+
+# ── Report sections ────────────────────────────────────────────────────────
+sections:
+  task_identification:
+    required: true
+    fields:
+      - name: task_id
+        type: string
+        description: "Catalogue id, e.g. EVO-003"
+      - name: title
+        type: string
+      - name: evaluation_date
+        type: iso8601
+      - name: evaluated_commit
+        type: git_sha
+      - name: schema_version
+        type: integer
+        description: "schema_version of the task definition at evaluation time"
+
+  current_implementation:
+    required: true
+    fields:
+      - name: files
+        type: array_of_strings
+        description: "file paths inspected, with line ranges"
+      - name: classes
+        type: array_of_strings
+      - name: methods
+        type: array_of_strings
+      - name: entry_points
+        type: array_of_strings
+
+  current_behavior:
+    required: true
+    fields:
+      - name: summary
+        type: string
+      - name: observed_paths
+        type: array_of_strings
+
+  identified_gaps:
+    required: true
+    fields:
+      - name: gaps
+        type: array
+        item_schema:
+          - name: description
+            type: string
+          - name: evidence
+            type: array_of_strings
+            description: "episode ids, file:line citations, metric values"
+          - name: severity
+            type: enum
+            values: [low, medium, high, critical]
+
+  root_cause_analysis:
+    required: true
+    fields:
+      - name: root_causes
+        type: array
+        item_schema:
+          - name: gap_ref
+            type: string
+          - name: cause
+            type: string
+          - name: confidence
+            type: number_in_[0,1]
+
+  improvement_proposals:
+    required: true
+    fields:
+      - name: proposals
+        type: array
+        item_schema:
+          - name: title
+            type: string
+          - name: description
+            type: string
+          - name: root_cause_refs
+            type: array_of_strings
+          - name: estimated_complexity
+            type: enum
+            values: [small, medium, large]
+
+  expected_impact:
+    required: true
+    fields:
+      - name: capability_delta
+        type: number
+        description: "expected change in capability metric, e.g. +0.05"
+      - name: reliability_delta
+        type: number
+      - name: cost_delta
+        type: number
+        description: "expected change in token cost (negative = savings)"
+      - name: measurement_basis
+        type: string
+        description: "how the deltas were estimated"
+
+  risk_assessment:
+    required: true
+    fields:
+      - name: regression_risks
+        type: array_of_strings
+      - name: security_risks
+        type: array_of_strings
+      - name: mitigation_notes
+        type: array_of_strings
+
+  implementation_plan:
+    required: true
+    fields:
+      - name: files_likely_to_change
+        type: array_of_strings
+      - name: components_likely_to_change
+        type: array_of_strings
+      - name: estimated_loc
+        type: integer
+
+  verification_plan:
+    required: true
+    fields:
+      - name: tests_required
+        type: array_of_strings
+      - name: benchmarks_required
+        type: array_of_strings
+      - name: held_out_evaluation
+        type: enum
+        values: [required, optional, not_applicable]
+
+  recommendation:
+    required: true
+    fields:
+      - name: decision
+        type: enum
+        values:
+          - implement
+          - defer
+          - investigate_further
+          - no_change
+        description: >
+          no_change is a successful report. The system rewards accurate
+          negative findings because they prevent wasted experiment budget.
+      - name: rationale
+        type: string
+
+  confidence:
+    required: true
+    fields:
+      - name: overall
+        type: number_in_[0,1]
+      - name: independent_samples
+        type: integer
+        description: "de-duplicated episode count"
+      - name: evidence_window
+        type: object
+        fields:
+          - name: from
+            type: iso8601
+          - name: to
+            type: iso8601
+      - name: limitations
+        type: array_of_strings
+
+# ── Validation rules ───────────────────────────────────────────────────────
+validation:
+  # Every section declared `required: true` above must be present in the report.
+  require_all_required_sections: true
+
+  # identified_gaps must cite evidence; bare assertions are rejected.
+  require_evidence_per_gap: true
+
+  # Confidence overall must be ≤ (independent_samples / 10), capped at 1.0.
+  # This prevents high-confidence reports on thin evidence.
+  confidence_ceiling_by_samples: true
+
+  # A report with recommendation.decision == "implement" must include at least
+  # one improvement_proposal with a root_cause_ref that matches a gap.
+  require_proposal_chain_for_implement: true
+
+  # A report may always conclude no_change; this is not a validation error.
+  allow_no_change: true
