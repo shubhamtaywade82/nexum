@@ -37,6 +37,7 @@ import {
 } from "./generalization/generalization-gate.js";
 import { HELD_OUT_SPLIT_VERSION } from "./heldout-split.js";
 import { EvidenceAggregator } from "./experience/evidence-aggregator.js";
+import { SuccessPatternAnalyzer } from "./experience/success-analyzer.js";
 import { ExperienceRecord } from "./experience/types.js";
 import { ExperienceStore } from "./experience/experience-store.js";
 import { TrajectoryAnalyzer } from "./experience/trajectory-analyzer.js";
@@ -89,6 +90,8 @@ export interface ClosedLoopEngineOptions {
   registry?: HarnessRegistry;
   experienceStore?: ExperienceStore;
   diagnoser?: HarnessDiagnoser;
+  /** Success-driven evolution: analyzes successful episodes (v2.4). */
+  successAnalyzer?: SuccessPatternAnalyzer;
   planner?: EvolutionPlanner;
   targetEngine?: TargetEngine;
   twoStageSelector?: TwoStageSelector;
@@ -218,6 +221,7 @@ function transferGainOf(
  */
 export class ClosedLoopEngine {
   readonly diagnoser: HarnessDiagnoser;
+  readonly successAnalyzer: SuccessPatternAnalyzer;
   readonly planner: EvolutionPlanner;
   readonly targetEngine: TargetEngine;
   readonly twoStage: TwoStageSelector;
@@ -240,6 +244,7 @@ export class ClosedLoopEngine {
 
   constructor(opts: ClosedLoopEngineOptions = {}) {
     this.diagnoser = opts.diagnoser ?? new HarnessDiagnoser();
+    this.successAnalyzer = opts.successAnalyzer ?? new SuccessPatternAnalyzer();
     this.planner = opts.planner ?? new EvolutionPlanner();
     this.targetEngine = opts.targetEngine ?? new TargetEngine();
     this.twoStage = opts.twoStageSelector ?? new TwoStageSelector();
@@ -309,6 +314,13 @@ export class ClosedLoopEngine {
    * Full observation pipeline: episodes → diagnoses → TARGET FORMATION →
    * plan + mutation scope. This is where "what capability is actually
    * failing?" is answered before "which file should I change?".
+   *
+   * v2.4: BOTH failure and success episodes produce diagnoses — failures
+   * through the HarnessDiagnoser, clean successes through the
+   * SuccessPatternAnalyzer (efficiency opportunities + comparative
+   * patterns). A workspace whose episodes all succeeded can now still form
+   * an improvement target; a uniformly clean one still cannot (no evidence,
+   * no target — success frequency alone is not a hypothesis).
    */
   observe(episodes: Episode[]): ClosedLoopDiagnosis {
     const diagnoses: HarnessDiagnosis[] = [];
@@ -316,6 +328,7 @@ export class ClosedLoopEngine {
       const diag = this.diagnoser.diagnoseEpisode(ep);
       if (diag) diagnoses.push(diag);
     }
+    diagnoses.push(...this.successAnalyzer.analyzeEpisodes(episodes));
 
     const target = this.targetEngine.formTarget(diagnoses);
     const plan = this.planner.createPlan(diagnoses);
@@ -807,6 +820,9 @@ export class ClosedLoopEngine {
     machine.transition("ACCEPTED", "Review approved");
     machine.transition("ACTIVE", "Candidate is the active harness");
     record.lifecycle = { state: "ACTIVE", enteredAt: Date.now() };
+    // v2.4: persist the ACCEPTED → ACTIVE walk — otherwise a fresh process
+    // hydrating this experiment would see it still at APPROVED.
+    this.experiments.persistNow(experimentId);
     if (this.registry) {
       this.registry.promoteVersion(record.candidate.harness);
     }

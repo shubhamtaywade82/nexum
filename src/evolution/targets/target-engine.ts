@@ -85,6 +85,12 @@ export function capabilityAreaFor(failureClass: string): CapabilityArea {
       return "state_continuity";
     case "routing_failure":
       return "routing_efficiency";
+    // Success-driven evolution (v2.4): wasteful successes and comparative
+    // success patterns feed the same capability-level target formation.
+    case "efficiency_opportunity":
+      return "tool_utilization";
+    case "success_pattern":
+      return "execution_stability";
     default:
       return "task_completion";
   }
