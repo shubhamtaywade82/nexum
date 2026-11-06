@@ -670,6 +670,17 @@ export class Agent {
   }
 
   async stopHost(): Promise<void> {
+    // EVO-002 / GAP-1d: flush the in-flight learning pipeline (grading,
+    // lesson absorption, and now experience ingestion) BEFORE tearing down
+    // the rest of the host. Without this, episodes whose async `process()`
+    // hasn't resolved by shutdown are silently lost — including their
+    // experience records, which starves the evolution layer.
+    try {
+      await this.flushLearning();
+    } catch {
+      // best-effort; never block shutdown on a flush error
+    }
+    this.learning.closeExperienceBridge();
     this.controlPlane.drain();
     await this.agentRunWorkerInstance?.stop();
     await this.jobs.stopAll();

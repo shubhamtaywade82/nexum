@@ -1,0 +1,167 @@
+# Nexum Evolution Policies
+#
+# Normative reference: docs/evolution/evolution-policy.md
+# When this file and the doc disagree, this file is the source of truth that
+# the code enforces.
+#
+# Editing rules:
+#   - Changes require a PR (no direct pushes to main).
+#   - Changes to this file MUST NOT be in the same commit as a change to the
+#     evaluator, the held-out split, or the acceptance controller.
+#   - This file is on the forbidden-paths list for the mutation executor: no
+#     implement-mode task may edit it.
+
+version: 1
+
+# ── Execution modes ────────────────────────────────────────────────────────
+modes:
+  diagnose:
+    permissions: read-only
+    may_mount_mutation_executor: false
+    may_push: false
+    may_activate_runtime: false
+  experiment:
+    permissions: isolated-workspace
+    may_mount_mutation_executor: true
+    may_push: false
+    may_activate_runtime: false
+  implement:
+    permissions: isolated-branch
+    may_mount_mutation_executor: true
+    may_push: true # only via --github delivery adapter
+    may_activate_runtime: false # activation is a separate state transition
+
+# ── Acceptance gates ───────────────────────────────────────────────────────
+acceptance:
+  stage_a_experimental_validity:
+    min_candidate_runs: 3
+    min_verification_coverage: 0.5
+    require_independent_verification_evidence: true
+    max_catastrophic_regression: 0.15
+  stage_b_improvement_verification:
+    min_capability_gain: 0.03 # OR
+    min_reliability_gain: 0.04 # OR
+    max_token_overhead: 0.25
+  held_out:
+    may_invalidate_acceptance: true
+    max_relative_drop_vs_parent: 0.02
+    used_for_selection: false # hard rule: never used to choose between candidates
+  ci: required
+  human_review: required
+
+# ── Ranking weights ────────────────────────────────────────────────────────
+ranking:
+  weights:
+    impact: 0.25
+    frequency: 0.20
+    evidence_confidence: 0.20
+    potential: 0.15
+    dependency_importance: 0.10
+    feasibility: 0.10
+  min_confidence_to_act: 0.4
+  # Tasks below this confidence are routed to investigate-further, not executed,
+  # regardless of weighted rank.
+
+# ── Anti-rules (hard prohibitions) ─────────────────────────────────────────
+anti_rules:
+  - id: no_re诊断_without_new_evidence
+    description: >
+      Do not regenerate the same report when there is no new evidence or code
+      change. BacklogTracker blocks re-diagnosis unless last_evaluated_commit
+      is older than current HEAD OR the evidence window has advanced past
+      next_evaluation_condition.
+    enforced_by: backlog_tracker
+
+  - id: no_duplicate_experiments_per_hypothesis
+    description: >
+      Do not create multiple experiments for the same hypothesis. Each
+      (task_id, hypothesis_sha256) pair maps to at most one experiment.
+      Re-formulating the hypothesis text to dodge this check is itself a
+      validation error.
+    enforced_by: task_validator
+
+  - id: no_duplicate_episodes_as_independent
+    description: >
+      Do not count duplicated episodes as independent evidence. Episode ids
+      are de-duplicated before independentSamples is computed.
+    enforced_by: report_generator
+
+  - id: no_tests_pass_as_success
+    description: >
+      Do not mark an improvement successful just because tests pass. Acceptance
+      requires the two-stage selector AND held-out generalization, not a green
+      CI run alone.
+    enforced_by: acceptance_controller
+
+  - id: no_self_evaluation
+    description: >
+      Do not allow the implementation agent to be the only evaluator. The
+      evaluator is FixedExecutor + TwoStageSelector on a separate code path
+      from the proposing agent.
+    enforced_by: task_runner
+
+  - id: no_activation_without_acceptance
+    description: >
+      Do not activate a candidate without passing the applicable acceptance
+      gates. Activation is a separate state transition
+      (ELIGIBLE -> DELIVERED -> CI_PENDING -> CI_PASSED -> REVIEW_PENDING ->
+      APPROVED -> ACCEPTED -> ACTIVE), not a side-effect of implement finishing.
+    enforced_by: manifest_runtime_activation
+
+# ── Permission policy ──────────────────────────────────────────────────────
+permissions:
+  # Paths that an implement-mode candidate may modify. Anything outside this
+  # list is rejected by the executor before any write.
+  allowed_paths:
+    - "src/**"
+    - "tests/**"
+    - "docs/guide/**"
+    - "examples/**"
+    - "scripts/**"
+
+  # Paths that no catalogue task may touch, regardless of mode.
+  forbidden_paths:
+    # The evaluator and acceptance controller: a candidate must not redefine
+    # its own grader.
+    - "src/evolution/evaluator.ts"
+    - "src/evolution/comparator.ts"
+    - "src/evolution/comparison/**"
+    - "src/evolution/evaluation/fixed-executor.ts"
+    - "src/evolution/generalization/**"
+    - "src/evolution/acceptance/**"
+    - "src/evolution/heldout-split.ts"
+    # The catalogue itself: a task must not edit the catalogue to add a task
+    # that would auto-accept its own changes.
+    - "config/evolution/**"
+    - "docs/evolution/**"
+    # The mutation executor and path scope: a candidate must not weaken its
+    # own isolation.
+    - "src/evolution/mutation/mutation-executor.ts"
+    - "src/evolution/mutation/mutation-scope.ts"
+    - "src/evolution/mutation/path-scope.ts"
+    # The runtime activation controller: a candidate must not activate itself.
+    - "src/evolution/monitoring/manifest-runtime-activation.ts"
+    - "src/evolution/monitoring/runtime-activation.ts"
+
+  # Commands that may be run during verification.
+  allowed_commands:
+    - "npm run format:check"
+    - "npm run lint"
+    - "npm run build"
+    - "npm test"
+    - "tsc"
+    - "prettier"
+    - "eslint"
+
+  # Commands that are blocked, full-stop. No catalogue task may run these.
+  forbidden_commands:
+    - pattern: "npm install*"
+      reason: "dependency changes require a separate PR"
+    - pattern: "npm publish*"
+      reason: "publishing is not part of evolution"
+    - pattern: "git push*"
+      reason: "push happens only via the GitHub delivery adapter"
+    - pattern: "curl *"
+      reason: "network egress is not part of verification"
+    - pattern: "wget *"
+      reason: "network egress is not part of verification"

@@ -37,7 +37,12 @@ import {
 } from "./generalization/generalization-gate.js";
 import { HELD_OUT_SPLIT_VERSION } from "./heldout-split.js";
 import { EvidenceAggregator } from "./experience/evidence-aggregator.js";
-import { SuccessPatternAnalyzer } from "./experience/success-analyzer.js";
+// v2.4 success-driven analyzer (efficiency opportunities + comparative success
+// patterns). Aliased to avoid a name clash with the EVO-003 success-pattern
+// discovery analyzer below — both classes are independently named
+// `SuccessPatternAnalyzer` in their own modules.
+import { SuccessPatternAnalyzer as SuccessAnalyzer } from "./experience/success-analyzer.js";
+import { SuccessPatternAnalyzer, SuccessPatternAnalysisResult } from "./experience/success-pattern-analyzer.js";
 import { ExperienceRecord } from "./experience/types.js";
 import { ExperienceStore } from "./experience/experience-store.js";
 import { TrajectoryAnalyzer } from "./experience/trajectory-analyzer.js";
@@ -89,9 +94,11 @@ export type GeneralizationPolicy = "optional" | "required" | "required-for-produ
 export interface ClosedLoopEngineOptions {
   registry?: HarnessRegistry;
   experienceStore?: ExperienceStore;
+  /** EVO-003: success-pattern analyzer. Defaults to a new SuccessPatternAnalyzer(). */
+  successPatternAnalyzer?: SuccessPatternAnalyzer;
   diagnoser?: HarnessDiagnoser;
   /** Success-driven evolution: analyzes successful episodes (v2.4). */
-  successAnalyzer?: SuccessPatternAnalyzer;
+  successAnalyzer?: SuccessAnalyzer;
   planner?: EvolutionPlanner;
   targetEngine?: TargetEngine;
   twoStageSelector?: TwoStageSelector;
@@ -144,6 +151,14 @@ export interface ClosedLoopDiagnosis {
   plan: ReturnType<EvolutionPlanner["createPlan"]>;
   /** Decided mutation scope (single-component by default; compound on escalation). */
   mutationScope: MutationScope | null;
+  /**
+   * EVO-003: success-driven patterns discovered from the experience store.
+   * Null when no experience store is wired; empty `patterns` when the store
+   * has data but no repeatable success patterns met the min-samples threshold.
+   * These patterns are NOT failure diagnoses — they surface repeatable
+   * successes that could become skills (EVO-007) or runtime defaults.
+   */
+  successPatterns: SuccessPatternAnalysisResult | null;
 }
 
 export interface ExperimentOutcome {
@@ -221,7 +236,7 @@ function transferGainOf(
  */
 export class ClosedLoopEngine {
   readonly diagnoser: HarnessDiagnoser;
-  readonly successAnalyzer: SuccessPatternAnalyzer;
+  readonly successAnalyzer: SuccessAnalyzer;
   readonly planner: EvolutionPlanner;
   readonly targetEngine: TargetEngine;
   readonly twoStage: TwoStageSelector;
@@ -233,6 +248,8 @@ export class ClosedLoopEngine {
   readonly metrics: EvolutionMetricsTracker;
   readonly registry?: HarnessRegistry;
   readonly experienceStore?: ExperienceStore;
+  /** EVO-003: success-pattern discovery, fed by experienceStore. */
+  readonly successPatternAnalyzer: SuccessPatternAnalyzer;
   readonly mutationExecutor?: HarnessMutationExecutor;
   readonly agentRuntime?: EngineeringAgentRuntime;
   readonly agentVerifyCommands: string[][];
@@ -244,7 +261,7 @@ export class ClosedLoopEngine {
 
   constructor(opts: ClosedLoopEngineOptions = {}) {
     this.diagnoser = opts.diagnoser ?? new HarnessDiagnoser();
-    this.successAnalyzer = opts.successAnalyzer ?? new SuccessPatternAnalyzer();
+    this.successAnalyzer = opts.successAnalyzer ?? new SuccessAnalyzer();
     this.planner = opts.planner ?? new EvolutionPlanner();
     this.targetEngine = opts.targetEngine ?? new TargetEngine();
     this.twoStage = opts.twoStageSelector ?? new TwoStageSelector();
@@ -256,6 +273,7 @@ export class ClosedLoopEngine {
     this.metrics = opts.metricsTracker ?? new EvolutionMetricsTracker();
     this.registry = opts.registry;
     this.experienceStore = opts.experienceStore;
+    this.successPatternAnalyzer = opts.successPatternAnalyzer ?? new SuccessPatternAnalyzer();
     this.mutationExecutor = opts.mutationExecutor;
     this.agentRuntime = opts.agentRuntime;
     this.agentVerifyCommands = opts.agentVerifyCommands ?? [["node", "--version"]];
@@ -338,7 +356,20 @@ export class ClosedLoopEngine {
       mutationScope = this.scopePolicy.decideScope(target, plan.targetComponent);
     }
 
-    return { diagnoses, target, plan, mutationScope };
+    // EVO-003: success-driven discovery. The analyzer reads from the
+    // experience store (populated automatically since EVO-002 by the
+    // ExperienceIngestionBridge). When no store is wired, successPatterns is
+    // null (the caller can distinguish "not analyzed" from "analyzed, none
+    // found"). The known-skill-shapes set is empty here; a future wiring
+    // will pass the SkillsRegistry's canonical shapes so the analyzer can
+    // flag already-captured patterns.
+    let successPatterns: SuccessPatternAnalysisResult | null = null;
+    if (this.experienceStore) {
+      const records = this.experienceStore.listAll();
+      successPatterns = this.successPatternAnalyzer.analyze(records, new Set());
+    }
+
+    return { diagnoses, target, plan, mutationScope, successPatterns };
   }
 
   // ── Experiment execution ────────────────────────────────────────────────
