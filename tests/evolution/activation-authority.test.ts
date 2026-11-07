@@ -37,7 +37,7 @@ class PinnedRuntime implements RuntimeActivationController {
 
 function completeEvidence(over: Partial<ActivationEvidence> = {}): ActivationEvidence {
   return {
-    explicitOptIn: true,
+    activationEnabled: true,
     githubDelivery: true,
     candidateCommit: CANDIDATE,
     review: { headSha: CANDIDATE, approved: true },
@@ -200,7 +200,7 @@ describe("activation authority (engine)", () => {
   });
 
   it.each([
-    ["no explicit opt-in", { explicitOptIn: false }],
+    ["activation explicitly disabled", { activationEnabled: false }],
     ["no GitHub delivery", { githubDelivery: false }],
     ["review approved for a stale commit", { review: { headSha: OTHER, approved: true } }],
     ["CI still pending", { ci: { headSha: CANDIDATE, passed: null } }],
@@ -241,8 +241,8 @@ describe("activation authority (engine)", () => {
 });
 
 describe("delivery policy defaults", () => {
-  it("never merges automatically unless explicitly enabled", () => {
-    expect(resolveDeliveryPolicy({})).toEqual({ autoAccept: true, mergeOnAccept: false });
+  it("merges automatically after the independent approval and CI gates pass", () => {
+    expect(resolveDeliveryPolicy({})).toEqual({ autoAccept: true, mergeOnAccept: true });
     expect(resolveDeliveryPolicy({ mergeOnAccept: true }).mergeOnAccept).toBe(true);
   });
 });
