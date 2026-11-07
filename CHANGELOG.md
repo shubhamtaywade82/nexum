@@ -5,7 +5,7 @@
 ### Default-on capabilities and verified evolution delivery
 
 - Model-side capabilities, the local verifier, self-consistency, automatic multi-step planning, and auto-approval are enabled by default. Auto-approval bypasses prompts for confirmation-required and destructive workspace actions; keep the sandbox enabled and use a trusted, bounded workspace.
-- The Docker daemon tool and container egress remain opt-in. The shell sandbox remains enabled by default and independently configurable.
+- The Docker daemon tool and container egress are enabled by default in trusted workspaces. Untrusted workspaces keep them off unless the operator explicitly enables them. Docker daemon access remains root-equivalent; the shell sandbox remains enabled by default and independently configurable.
 - GitHub evolution delivery runs automatically when `NEXUM_GITHUB_OWNER` and `NEXUM_GITHUB_REPO` are configured; `--no-github` keeps a run local. The production verification profile and production generalization policy apply to configured delivery.
 - An approved candidate is merged automatically only after CI passes and a human approves the exact candidate head SHA. Runtime activation is enabled by default, but fails closed unless GitHub confirms the merge and read-back verifies the merge commit and candidate content. `--no-activate-runtime` disables the final runtime switch for a run.
 - A missing GitHub destination means local mutation only; no runtime activation. Reviewer/CI/merge evidence is never inferred from missing data.
