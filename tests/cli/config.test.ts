@@ -315,12 +315,12 @@ describe("commented config file (config.example.jsonc)", () => {
     // these are unset unless the example's values were read
     expect(cfg.shellTimeoutSec).toBe(30);
     expect(cfg.maxActiveTools).toBe(8);
-    expect(cfg.autoApprove).toBe(false);
+    expect(cfg.autoApprove).toBe(true);
     expect(cfg.sandbox).toBe(true);
   });
 });
 
-describe("enableVerifier default (graduated from experimental)", () => {
+describe("enableVerifier default (always active)", () => {
   const originalEnv = { ...process.env };
   let workspaceRoot: string;
   let trustStore: ReturnType<typeof WorkspaceTrustStore.inMemory>;
@@ -342,8 +342,8 @@ describe("enableVerifier default (graduated from experimental)", () => {
     process.env = { ...originalEnv };
   });
 
-  it("stays off by default when no quickModel is configured (backwards compatible)", () => {
-    expect(loadConfig({ trustStore }).enableVerifier).toBe(false);
+  it("stays on by default when no quickModel is configured", () => {
+    expect(loadConfig({ trustStore }).enableVerifier).toBe(true);
   });
 
   it("turns on by default when a quickModel is configured", () => {
@@ -353,13 +353,13 @@ describe("enableVerifier default (graduated from experimental)", () => {
     expect(cfg.enableVerifier).toBe(true);
   });
 
-  it("NEXUM_VERIFIER=false wins over the quickModel-conditional default", () => {
+  it("NEXUM_VERIFIER=false remains an emergency opt-out", () => {
     process.env.NEXUM_QUICK_MODEL = "minicpm5";
     process.env.NEXUM_VERIFIER = "false";
     expect(loadConfig({ trustStore }).enableVerifier).toBe(false);
   });
 
-  it("an explicit enableVerifier in the config file wins over the conditional default", async () => {
+  it("an explicit enableVerifier in the config file wins over the default", async () => {
     writeFileSync(
       join(workspaceRoot, ".nexum", "config.json"),
       JSON.stringify({ quickModel: "minicpm5", enableVerifier: false }),
