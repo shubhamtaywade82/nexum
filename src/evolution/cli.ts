@@ -323,9 +323,23 @@ export function formatHistory(versions: HarnessVersion[], active: HarnessVersion
   return `${header}\n${rows.join("\n")}\n\n* = currently active harness version`;
 }
 
-/** Formats diagnoses and the recommended evolution plan into a readable report. */
-export function formatDiagnosesText(diagnoses: HarnessDiagnosis[], plan: EvolutionPlan | null): string {
-  if (diagnoses.length === 0) return "No harness weaknesses detected across evaluated episodes.";
+/**
+ * Formats diagnoses and the recommended evolution plan into a readable report.
+ * `episodeCount` is the number of episodes that were diagnosed. Zero episodes means
+ * nothing was evaluated, which must not read as a clean bill of health.
+ */
+export function formatDiagnosesText(
+  diagnoses: HarnessDiagnosis[],
+  plan: EvolutionPlan | null,
+  episodeCount?: number,
+): string {
+  if (diagnoses.length === 0) {
+    if (episodeCount === 0) {
+      return "No episodes recorded yet (lessons.db is empty or missing), so nothing was diagnosed. This is not evidence that the harness is healthy.";
+    }
+    const scope = episodeCount === undefined ? "evaluated episodes" : `${episodeCount} evaluated episode(s)`;
+    return `No harness weaknesses detected across ${scope}.`;
+  }
   const lines: string[] = [`=== Harness Diagnoses (${diagnoses.length} issue(s) detected) ===`];
   diagnoses.forEach((d, idx) => {
     lines.push(`\n${idx + 1}. [${d.component}] ${d.failureClass} (confidence: ${(d.confidence * 100).toFixed(0)}%)`);
@@ -482,7 +496,7 @@ async function executeCommand(engine: EvolutionEngine, values: Record<string, un
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
   const episodes = loadRecentEpisodes(root, limit);
   const { diagnoses, plan } = engine.diagnoseEpisodes(episodes);
-  console.log(formatDiagnosesText(diagnoses, plan));
+  console.log(formatDiagnosesText(diagnoses, plan, episodes.length));
 }
 
 /** Formats a mutation actuator result for CLI display. */
@@ -1140,7 +1154,7 @@ async function executeAutonomousCommand(root: string, values: Record<string, unk
     console.log(
       `[Evolution] Episodes: ${allEpisodes.length} total · ${episodes.length} in diagnosis window · experience records: ${experienceStore.count()}`,
     );
-    console.log(formatDiagnosesText(observation.diagnoses, observation.plan));
+    console.log(formatDiagnosesText(observation.diagnoses, observation.plan, episodes.length));
     if (successDriven.length > 0) {
       console.log(
         `\n[Evolution] Success-driven signals: ${successDriven.length} diagnosis(esis) from SUCCESSFUL episodes (efficiency opportunities + comparative patterns).`,
@@ -1266,7 +1280,7 @@ async function executeClosedLoopCommand(root: string, values: Record<string, unk
     if (values.target) {
       console.log(formatTargetText(observation));
     } else {
-      console.log(formatDiagnosesText(observation.diagnoses, observation.plan));
+      console.log(formatDiagnosesText(observation.diagnoses, observation.plan, episodes.length));
       console.log("");
       console.log(formatTargetText(observation));
     }
