@@ -71,11 +71,11 @@ describe("default activation", () => {
     expect(loadConfig({ workspaceRoot: workspace }).sandbox).toBe(false);
   });
 
-  it("keeps Docker daemon access and container egress disabled by default", () => {
+  it("enables Docker daemon access and container egress by default in an empty workspace", () => {
     const cfg = loadConfig({ workspaceRoot: workspace });
 
-    expect(cfg.dockerTool).toBe(false);
-    expect(cfg.dockerEgress).toBe(false);
+    expect(cfg.dockerTool).toBe(true);
+    expect(cfg.dockerEgress).toBe(true);
   });
 
   it("keeps the critic pass active with or without a separately configured quick model", () => {
