@@ -148,7 +148,15 @@ function makeFakes(options: {
     // Read-back: GitHub reports the pull as merged only when the merge succeeded.
     if (path.endsWith("/pulls/42") && init?.method !== "PUT") {
       const merged = (options.mergeStatus ?? 200) === 200;
-      return { status: 200, json: { merged, merge_commit_sha: merged ? MERGE_SHA : null, head: { sha: headSha } } };
+      return {
+        status: 200,
+        json: {
+          user: { login: "pr-author" },
+          merged,
+          merge_commit_sha: merged ? MERGE_SHA : null,
+          head: { sha: headSha },
+        },
+      };
     }
     if (/\/commits\/[0-9a-f]{40}$/.test(path)) {
       return {
@@ -216,10 +224,12 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
     return obs;
   }
 
-  it("by default an approved candidate is ACCEPTED but never merged or ACTIVE: a human merges", async () => {
+  it("by default an independently reviewed candidate is merged and activated", async () => {
     const fakes = makeFakes({
       checkRuns: [{ name: "build", status: "completed", conclusion: "success" }],
-      reviews: [{ state: "APPROVED", user: { login: "maintainer" }, submitted_at: "2026-01-01T00:00:00Z" }],
+      reviews: [
+        { state: "APPROVED", user: { login: "maintainer", type: "User" }, submitted_at: "2026-01-01T00:00:00Z" },
+      ],
     });
     const engine = makeEngine(fakes);
     const obs = observation(engine);
@@ -241,17 +251,21 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
     if (!res.ok) return;
 
     expect(res.github!.accepted).toBe(true);
-    expect(res.github!.merge).toBeNull();
-    expect(res.github!.merged).toBe(false);
-    expect(fakes.calls.some((c) => c.method === "PUT" && c.path.endsWith("/merge"))).toBe(false);
-    expect(engine.experiments.machine("exp-gh-1").current()).toBe("ACCEPTED");
-    expect(engine.experiments.record("exp-gh-1").mergeCommitSha).toBeUndefined();
+    expect(res.github!.review?.state).toBe("approved");
+    expect(res.github!.review?.reviewer).toBe("maintainer");
+    expect(res.github!.merge).toEqual({ status: "merged", mergeCommitSha: MERGE_SHA });
+    expect(res.github!.merged).toBe(true);
+    expect(fakes.calls.some((c) => c.method === "PUT" && c.path.endsWith("/merge"))).toBe(true);
+    expect(engine.experiments.machine("exp-gh-1").current()).toBe("ACTIVE");
+    expect(engine.experiments.record("exp-gh-1").mergeCommitSha).toBe(MERGE_SHA);
   });
 
   it("walks the FULL canonical path: mutation → PR → CI green → approved → ACTIVE → merged", async () => {
     const fakes = makeFakes({
       checkRuns: [{ name: "build", status: "completed", conclusion: "success" }],
-      reviews: [{ state: "APPROVED", user: { login: "maintainer" }, submitted_at: "2026-01-01T00:00:00Z" }],
+      reviews: [
+        { state: "APPROVED", user: { login: "maintainer", type: "User" }, submitted_at: "2026-01-01T00:00:00Z" },
+      ],
     });
     const engine = makeEngine(fakes);
     const obs = observation(engine);
