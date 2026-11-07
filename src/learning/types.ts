@@ -30,6 +30,8 @@ export interface Episode {
   finalAssistantText: string;
   /** Populated by the grader, not the recorder. */
   grade?: Grade;
+  /** Optional parent episode ID for tracing multi-step plan missions. */
+  parentEpisodeId?: string;
 }
 
 export interface Grade {

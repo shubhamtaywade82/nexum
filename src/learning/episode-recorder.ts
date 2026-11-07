@@ -8,9 +8,9 @@ import { Episode, ToolEvent } from "./types.js";
  */
 export class EpisodeRecorder {
   private current: Episode | null = null;
-  private pendingCall: { name: string; args: Record<string, unknown>; at: number } | null = null;
+  private readonly pendingCalls = new Map<string, { args: Record<string, unknown>; at: number }>();
 
-  begin(goal: string, activatedSkillIds: string[]): void {
+  begin(goal: string, activatedSkillIds: string[], parentEpisodeId?: string): void {
     this.current = {
       id: randomUUID(),
       goal: goal.slice(0, 2000),
@@ -20,41 +20,46 @@ export class EpisodeRecorder {
       activatedSkillIds,
       terminal: "answered",
       finalAssistantText: "",
+      ...(parentEpisodeId ? { parentEpisodeId } : {}),
     };
-    this.pendingCall = null;
+    this.pendingCalls.clear();
   }
 
   onToolCall(name: string, args: Record<string, unknown>): void {
-    this.pendingCall = { name, args: this.compactArgs(args), at: Date.now() };
+    this.pendingCalls.set(name, { args: this.compactArgs(args), at: Date.now() });
   }
 
   onToolResult(name: string, result: Record<string, unknown>): void {
     if (!this.current) return;
-    const started = this.pendingCall?.name === name ? this.pendingCall.at : Date.now();
+    const pending = this.pendingCalls.get(name);
+    const started = pending ? pending.at : Date.now();
     const errorLabel = this.errorLabel(result);
     const event: ToolEvent = {
       name,
-      args: this.pendingCall?.name === name ? this.pendingCall.args : {},
+      args: pending ? pending.args : {},
       ok: errorLabel === undefined,
       durationMs: Date.now() - started,
       at: started,
     };
     if (errorLabel !== undefined) event.errorLabel = errorLabel.slice(0, 200);
     this.current.toolEvents.push(event);
-    this.pendingCall = null;
+    this.pendingCalls.delete(name);
   }
 
-  onError(err: Error): void {
-    if (!this.current || !this.pendingCall) return;
+  onError(err: Error, toolName?: string): void {
+    if (!this.current) return;
+    const name = toolName ?? this.pendingCalls.keys().next().value;
+    if (!name) return;
+    const pending = this.pendingCalls.get(name);
     this.current.toolEvents.push({
-      name: this.pendingCall.name,
-      args: this.pendingCall.args,
+      name,
+      args: pending ? pending.args : {},
       ok: false,
       errorLabel: `${err.constructor.name}: ${err.message}`.slice(0, 200),
-      durationMs: Date.now() - this.pendingCall.at,
-      at: this.pendingCall.at,
+      durationMs: pending ? Date.now() - pending.at : 0,
+      at: pending ? pending.at : Date.now(),
     });
-    this.pendingCall = null;
+    this.pendingCalls.delete(name);
   }
 
   end(terminal: Episode["terminal"], finalAssistantText: string): Episode | null {
@@ -64,7 +69,7 @@ export class EpisodeRecorder {
     episode.terminal = terminal;
     episode.finalAssistantText = finalAssistantText.slice(0, 4000);
     this.current = null;
-    this.pendingCall = null;
+    this.pendingCalls.clear();
     return episode;
   }
 

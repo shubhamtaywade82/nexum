@@ -5,15 +5,15 @@
  * the H0 -> Hn evolutionary lineage, running benchmarks, and rolling back mutations.
  */
 
-import Database from "better-sqlite3";
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { promisify } from "node:util";
 import { BenchmarkResult } from "../benchmark/types.js";
 import { loadConfig, CliConfig } from "../cli/config.js";
 import { Episode } from "../learning/types.js";
+import { LessonStore } from "../learning/lesson-store.js";
 import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
 import { Provider } from "../models/adapters/provider.js";
 import { runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
@@ -118,6 +118,7 @@ Options:
                          engine's ACTIVE → REGRESSED → ROLLBACK path
       --limit <n>        Limit number of episodes analyzed (default: 20;
                          experience ingestion always covers every episode)
+      --max-turns <n>    Max turns for the engineering agent (default: 24, env: NEXUM_MUTATION_MAX_TURNS)
       --component <name> Target subsystem for candidate evaluation (default: execution)
       --hypothesis <txt> Remediation hypothesis statement for candidate
       --monitor          Evaluate post-activation health against the parent envelope
@@ -172,6 +173,7 @@ const CLI_OPTIONS = {
   watch: { type: "boolean" as const },
   experiment: { type: "string" as const },
   limit: { type: "string" as const },
+  "max-turns": { type: "string" as const },
   component: { type: "string" as const },
   hypothesis: { type: "string" as const },
   "task-catalog": { type: "boolean" as const },
@@ -189,16 +191,11 @@ const CLI_OPTIONS = {
 export function loadRecentEpisodes(root: string, limit = 20): Episode[] {
   const dbPath = join(workspaceStateDir(root), "lessons.db");
   if (!existsSync(dbPath)) return [];
-  const db = new Database(dbPath);
+  const store = new LessonStore(dbPath);
   try {
-    const rows = db.prepare("SELECT payload FROM episodes ORDER BY started_at DESC LIMIT ?").all(limit) as Array<{
-      payload: string;
-    }>;
-    return rows.map((r) => JSON.parse(r.payload) as Episode);
-  } catch {
-    return [];
+    return store.listEpisodes(limit);
   } finally {
-    db.close();
+    store.close();
   }
 }
 
@@ -211,16 +208,11 @@ export function loadRecentEpisodes(root: string, limit = 20): Episode[] {
 export function loadAllEpisodes(root: string): Episode[] {
   const dbPath = join(workspaceStateDir(root), "lessons.db");
   if (!existsSync(dbPath)) return [];
-  const db = new Database(dbPath);
+  const store = new LessonStore(dbPath);
   try {
-    const rows = db.prepare("SELECT payload FROM episodes ORDER BY started_at DESC").all() as Array<{
-      payload: string;
-    }>;
-    return rows.map((r) => JSON.parse(r.payload) as Episode);
-  } catch {
-    return [];
+    return store.allEpisodes();
   } finally {
-    db.close();
+    store.close();
   }
 }
 
@@ -592,7 +584,11 @@ export const MUTATION_STRATEGIES = ["heuristic", "agent", "agent-legacy"] as con
  * Throws for unknown names so typos fail loudly instead of silently
  * downgrading to the heuristic planner.
  */
-export function buildMutationStrategy(name: string | undefined, cfg: CliConfig): MutationStrategy | null {
+export function buildMutationStrategy(
+  name: string | undefined,
+  cfg: CliConfig,
+  opts: { maxTurns?: number } = {},
+): MutationStrategy | null {
   if (!name || name === "heuristic") return null;
   const chat = () => chatClientFromProvider(providerFromConfig(cfg));
   if (name === "agent") {
@@ -600,6 +596,7 @@ export function buildMutationStrategy(name: string | undefined, cfg: CliConfig):
       runtime: new KernelEvolutionAgentRuntime({
         runtime: new DefaultAgentRuntime(),
         modelGateway: modelGatewayFromChatClient(chat()),
+        ...(opts.maxTurns ? { maxTurns: opts.maxTurns } : {}),
       }),
     });
   }
@@ -702,16 +699,27 @@ export async function runBenchmarkInDir(
   dir: string,
   categories: string[],
 ): Promise<TaskExecutionResult[]> {
-  const tsxEntry = join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
+  const absRepoRoot = resolve(repoRoot);
+  const tsxEntry = resolve(absRepoRoot, "node_modules", "tsx", "dist", "cli.mjs");
   if (!existsSync(tsxEntry)) {
     throw new Error(`tsx entry not found at ${tsxEntry} — install dependencies in the harness repository first.`);
   }
-  if (dir !== repoRoot && !existsSync(join(dir, "node_modules"))) {
-    // Worktrees share the repo's history but not its node_modules; link the
-    // host's so the subprocess resolves the same toolchain. (The mutation
-    // executor links it too when linkNodeModulesFrom is set — this is the
-    // fallback for workspaces prepared without it.)
-    symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "junction");
+  const targetNm = join(dir, "node_modules");
+  // lstat, not exists: a dangling symlink still counts as present.
+  const nmExists = ((): boolean => {
+    try {
+      lstatSync(targetNm);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  if (resolve(dir) !== absRepoRoot && !nmExists) {
+    try {
+      symlinkSync(resolve(absRepoRoot, "node_modules"), targetNm, "junction");
+    } catch {
+      /* ignore if already linked concurrently */
+    }
   }
   // The agent driver runs each case through the worktree's own Agent, so a mutation to the
   // runtime, prompts, routing or tool selection can move the score. The model driver could not.
@@ -829,11 +837,12 @@ export async function activateRuntimeIfNeeded(
 }
 
 async function executeMutationCommand(root: string, values: Record<string, unknown>): Promise<void> {
-  const repoRoot = values.repo as string | undefined;
-  if (!repoRoot) {
+  const rawRepo = values.repo as string | undefined;
+  if (!rawRepo) {
     console.error("--mutate requires --repo <path> (the harness repository to mutate).");
     return;
   }
+  const repoRoot = resolve(root, rawRepo);
   const cfg = loadConfig();
   // --agent is an alias for --strategy agent; an explicit --strategy wins.
   const strategyName = (values.strategy as string | undefined) ?? (values.agent ? "agent" : undefined);
@@ -916,7 +925,8 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   // decides WHAT the candidate must survive; linkNodeModulesFrom makes real
   // gates executable inside the worktree. Explicit executor always wins over
   // the engine's agentRuntime auto-wiring, keeping gate control in one place.
-  const strategy = buildMutationStrategy(strategyName, cfg);
+  const maxTurns = values["max-turns"] ? parseInt(values["max-turns"] as string, 10) : undefined;
+  const strategy = buildMutationStrategy(strategyName, cfg, { maxTurns });
   // v2.3.3: runtime activation is on by default. It wires the manifest-file
   // RuntimeActivationController plus the harness registry so the acceptance path
   // records real H0→Hn lineage. --no-activate-runtime keeps this run local.

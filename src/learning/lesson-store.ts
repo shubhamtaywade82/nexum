@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { Lesson, ReflectionResult } from "./types.js";
+import { existsSync, renameSync } from "node:fs";
+import { Episode, Lesson, ReflectionResult } from "./types.js";
 
 /**
  * Persistent lesson ledger. Dedupe uses a normalized token hash so repeated
@@ -48,11 +49,47 @@ function rowToLesson(row: LessonRow): Lesson {
 }
 
 export class LessonStore {
-  private readonly db: Database.Database;
+  private db!: Database.Database;
+  private readonly dbPath: string;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
+    this.dbPath = dbPath;
+    this.initDatabase();
+  }
+
+  private initDatabase(): void {
+    try {
+      this.db = new Database(this.dbPath);
+      this.db.pragma("journal_mode = WAL");
+      this.ensureSchema();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/malformed|corrupt|not a database/i.test(msg)) {
+        this.quarantineAndReopen();
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  private quarantineAndReopen(): void {
+    try {
+      this.db?.close();
+    } catch {
+      /* ignore close failure on corrupt handle */
+    }
+    const backup = `${this.dbPath}.corrupt.${Date.now()}`;
+    try {
+      if (existsSync(this.dbPath)) renameSync(this.dbPath, backup);
+    } catch {
+      /* ignore rename errors to attempt fresh reopen */
+    }
+    this.db = new Database(this.dbPath);
     this.db.pragma("journal_mode = WAL");
+    this.ensureSchema();
+  }
+
+  private ensureSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS lessons (
         id TEXT PRIMARY KEY,
@@ -79,6 +116,38 @@ export class LessonStore {
         payload TEXT NOT NULL
       );
     `);
+  }
+
+  getEpisode(id: string): Episode | null {
+    try {
+      const row = this.db.prepare("SELECT payload FROM episodes WHERE id = ?").get(id) as
+        { payload: string } | undefined;
+      return row ? (JSON.parse(row.payload) as Episode) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  listEpisodes(limit = 20): Episode[] {
+    try {
+      const rows = this.db
+        .prepare("SELECT payload FROM episodes ORDER BY started_at DESC LIMIT ?")
+        .all(limit) as Array<{ payload: string }>;
+      return rows.map((r) => JSON.parse(r.payload) as Episode);
+    } catch {
+      return [];
+    }
+  }
+
+  allEpisodes(): Episode[] {
+    try {
+      const rows = this.db.prepare("SELECT payload FROM episodes ORDER BY started_at DESC").all() as Array<{
+        payload: string;
+      }>;
+      return rows.map((r) => JSON.parse(r.payload) as Episode);
+    } catch {
+      return [];
+    }
   }
 
   recordEpisode(episode: {
