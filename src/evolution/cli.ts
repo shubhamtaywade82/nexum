@@ -109,7 +109,7 @@ Options:
       --max-cycles <n>   Stop after n mutation cycles in --continuous mode
       --generalization-policy <p>  "optional" | "required" |
                          "required-for-production" (default:
-                         required-for-production with --github, else optional)
+                         required-for-production when GitHub delivery is configured)
       --watch            With --monitor: continuously tail the telemetry file
                          and re-evaluate on every new sample instead of a
                          one-shot verdict
@@ -617,7 +617,7 @@ export type GeneralizationPolicyName = (typeof GENERALIZATION_POLICIES)[number];
 
 /**
  * v2.4: resolves the generalization evidence policy for `nexum evolve
- * --mutate`. Production delivery (--github) defaults to
+ * --mutate`. Configured GitHub delivery defaults to
  * "required-for-production": a PR may only be opened for a candidate with
  * fixed-executor transfer evidence, so an improvement measured on one model
  * cannot silently ride a weaker evaluation. Local runs keep "optional".
@@ -651,7 +651,7 @@ export interface GithubDeliveryEnvConfig {
  * Resolves the GitHub delivery adapter configuration from the environment:
  * NEXUM_GITHUB_OWNER + NEXUM_GITHUB_REPO are required; NEXUM_GITHUB_TOKEN and
  * NEXUM_GITHUB_BASE_BRANCH (default "main") are optional. Returns null when
- * the required pair is absent so `--github` can report a precise error.
+ * the required pair is absent so an explicit `--github` can report a precise error.
  */
 export function resolveGithubDeliveryConfig(env: NodeJS.ProcessEnv = process.env): GithubDeliveryEnvConfig | null {
   const owner = env.NEXUM_GITHUB_OWNER?.trim();
@@ -849,8 +849,8 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   }
   // Verification profile: the gates the candidate must survive INSIDE the
   // worktree before it becomes a candidate commit. Default "fast" (format +
-  // lint + typecheck); delivery runs (--github) default to "full" so a PR is
-  // only opened for a candidate that passes the CI-equivalent gate.
+  // lint + typecheck); GitHub delivery defaults to "full" so a PR is only
+  // opened for a candidate that passes the CI-equivalent gate.
   const githubCfg = resolveGithubDeliveryConfig();
   if (values.github && !githubCfg) {
     console.error(
@@ -917,9 +917,9 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   // gates executable inside the worktree. Explicit executor always wins over
   // the engine's agentRuntime auto-wiring, keeping gate control in one place.
   const strategy = buildMutationStrategy(strategyName, cfg);
-  // v2.3.3: runtime activation is an explicit opt-in (--activate-runtime). It wires the
-  // manifest-file RuntimeActivationController plus the harness registry so the acceptance
-  // path records real H0→Hn lineage. Without the flag the mutate path never touches the runtime.
+  // v2.3.3: runtime activation is on by default. It wires the manifest-file
+  // RuntimeActivationController plus the harness registry so the acceptance path
+  // records real H0→Hn lineage. --no-activate-runtime keeps this run local.
   const activationRequested = resolveRuntimeActivationEnabled(values);
   const registry = activationRequested ? new HarnessRegistry(join(stateDir, "evolution.db")) : undefined;
   const activationController = activationRequested
@@ -1010,7 +1010,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       ...(githubEnabled && githubCfg ? { github: {} } : {}),
     });
     console.log(formatMutationResult(outcome));
-    // v2.3.3: the runtime half of acceptance, behind the explicit opt-in. The gate refuses without verified evidence.
+    // Runtime activation is enabled by default; the gate refuses without verified evidence.
     const activation = activationController
       ? await activateRuntimeIfNeeded(engine, activationController, experimentId, outcome, activationRequested)
       : null;
