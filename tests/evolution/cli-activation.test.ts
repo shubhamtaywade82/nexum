@@ -69,7 +69,7 @@ describe("activateRuntimeIfNeeded (CLI composition)", () => {
     consoleError.mockRestore();
   });
 
-  it("never asks the engine to activate without the explicit opt-in", async () => {
+  it("respects the explicit per-run activation opt-out", async () => {
     const activateOnRuntime = jest.fn(async () => ({ ok: true as const, commitSha: MERGE }));
     const result = await activateRuntimeIfNeeded(
       { activateOnRuntime },
@@ -80,7 +80,7 @@ describe("activateRuntimeIfNeeded (CLI composition)", () => {
     );
     expect(activateOnRuntime).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/not requested/);
+    expect(result.error).toMatch(/disabled/);
   });
 
   it("without --github, passes githubDelivery:false and no facts, so the gate refuses", async () => {
@@ -97,7 +97,7 @@ describe("activateRuntimeIfNeeded (CLI composition)", () => {
       true,
     );
     expect(seen).toMatchObject({
-      explicitOptIn: true,
+      activationEnabled: true,
       githubDelivery: false,
       candidateCommit: CANDIDATE,
       review: null,
@@ -123,7 +123,7 @@ describe("activateRuntimeIfNeeded (CLI composition)", () => {
       true,
     );
     expect(seen).toMatchObject({
-      explicitOptIn: true,
+      activationEnabled: true,
       githubDelivery: true,
       candidateCommit: CANDIDATE,
       review: { headSha: CANDIDATE, approved: true },
