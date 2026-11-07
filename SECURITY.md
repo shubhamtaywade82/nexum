@@ -117,10 +117,12 @@ interactive shell confirmation boundary. Do not use this combination on a
 workspace or machine you cannot afford to lose. Restore prompts with
 `NEXUM_AUTO_APPROVE=false`, or keep the sandbox enabled (the default).
 
-## 4. `docker` tool (opt-in)
+## 4. `docker` tool (enabled by default in trusted workspaces)
 
-Access to the Docker daemon is root-equivalent on the host, so the tool is
-**not mounted** unless `dockerTool: true` / `NEXUM_DOCKER_TOOL=1`. When on:
+Access to the Docker daemon is root-equivalent on the host. The tool is mounted
+by default in trusted workspaces; untrusted workspaces keep it off unless an
+operator-level config or explicit environment setting enables it. Set
+`dockerTool: false` / `NEXUM_DOCKER_TOOL=0` to disable it. When on:
 
 - **Ownership:** everything it creates carries `nexum.agent=true`;
   `stop`/`rm`/`logs`/`inspect`/`exec` accept only labelled targets;
@@ -132,9 +134,10 @@ Access to the Docker daemon is root-equivalent on the host, so the tool is
 - **Egress:** containers join `nexum-agent`, an `--internal` network the
   tool creates (agent containers reach each other by name; nothing reaches
   out); an existing non-internal network of that name is refused. Builds
-  run with `--network=none`. `-p` is unavailable. `dockerEgress: true` /
-  `NEXUM_DOCKER_EGRESS=1` opts back into bridge networking with
-  loopback-only `-p`.
+  run with `--network=none`. In trusted workspaces, `dockerEgress` defaults
+  to true and opts into bridge networking with loopback-only `-p`; set
+  `dockerEgress: false` / `NEXUM_DOCKER_EGRESS=0` for internal-only networking.
+  Host and container network modes remain blocked.
 - **build:** one local context inside the workspace containing no secrets
   or secret aliases; Dockerfile inside the workspace; no `-o`, `--secret`,
   `--ssh`, `--iidfile`, cache import/export; `--build-arg NAME=VALUE` only.
