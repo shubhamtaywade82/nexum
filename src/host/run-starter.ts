@@ -112,6 +112,24 @@ async function runAgentInBackground(
       });
   };
 
+  /**
+   * Terminal ordering. Earlier events are persisted first, then the terminal event is
+   * appended, then the run's status is written, then the event goes live. A client that
+   * sees the terminal event can read the terminal status, and a replay that sees the
+   * status also sees the terminal event. Throws when a write fails, so the caller's
+   * failure path runs.
+   */
+  const finish = async (
+    event: NexumRunEvent,
+    status: "completed" | "failed" | "cancelled",
+    fields: { output?: NexumRunOutput; error?: string },
+  ): Promise<void> => {
+    await publishChain;
+    const seq = await ctx.repos.events.append(event);
+    await ctx.repos.runs.complete(ctx.runId, status, fields);
+    await ctx.eventBus.publish(channel, { seq, ...event });
+  };
+
   bridge.begin({ runId: ctx.runId, write: publish, interactive });
   publish({ type: "run.started", runId: ctx.runId, sessionId: ctx.sessionId, goal, ts: Date.now() });
 
@@ -129,20 +147,18 @@ async function runAgentInBackground(
       presentation,
     );
     bridge.flushThinking();
-    publish({ type: "run.completed", runId: ctx.runId, output, ts: Date.now() });
-    await publishChain;
-    await ctx.repos.runs.complete(ctx.runId, "completed", { output });
+    await finish({ type: "run.completed", runId: ctx.runId, output, ts: Date.now() }, "completed", { output });
   } catch (err) {
     bridge.flushThinking();
     const cancelled = agent.execution.signal?.aborted ?? false;
     const message = describeError(err);
-    publish(
+    await finish(
       cancelled
         ? { type: "run.cancelled", runId: ctx.runId, ts: Date.now() }
         : { type: "run.failed", runId: ctx.runId, error: message, ts: Date.now() },
+      cancelled ? "cancelled" : "failed",
+      { error: message },
     );
-    await publishChain;
-    await ctx.repos.runs.complete(ctx.runId, cancelled ? "cancelled" : "failed", { error: message });
   } finally {
     agent.conversation.presentationInstructions = "";
     bridge.end();
