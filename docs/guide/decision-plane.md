@@ -275,7 +275,7 @@ The primary generation `model` (e.g. `qwen3.5:4b`) and the `decisionModel` (e.g.
 
 | Variable               | Description                                                             | Default |
 | :--------------------- | :---------------------------------------------------------------------- | :------ |
-| `NEXUM_DECISION`       | Enable the bounded Decision Plane (System One). `true` / `false`.       | `false` |
+| `NEXUM_DECISION`       | Bounded Decision Plane (System One). `true` / `false`.                  | `true`  |
 | `NEXUM_DECISION_MODEL` | Dedicated decision model (independent of the primary generation model). | `tev1`  |
 
 ### Workspace / global config (`.nexum/config.json` or `~/.nexum/config.json`)
@@ -289,7 +289,7 @@ The primary generation `model` (e.g. `qwen3.5:4b`) and the `decisionModel` (e.g.
 
 ### Defaults and notes
 
-- The Decision Plane is **off by default**. System One is an optimization / decision aid, never a mandatory runtime dependency.
+- The Decision Plane is **on by default** in the local tier. System One is an optimization / decision aid, never a mandatory runtime dependency: a failed call falls back to the deterministic path.
 - The default `decisionModel` is `tev1` — the 4B System One model from Together AI, published at <https://ollama.com/library/tev1>. `tev1:0.8b` is the smaller-memory alternative for tight VRAM (see "Tuning for tev1" below). It is **not** claimed to be universally best; the value is tunable, and the Wave 7 evaluation harness is the place where alternatives are measured.
 - In a `tier: cloud` configuration, `enableDecision=true` is silently ignored — no gateway is built. The local-only contract is enforced at both the config layer and the gateway itself.
 - Setting `NEXUM_DECISION=false` from the environment overrides a config-file `true` (consistent with every other `NEXUM_*` flag).
@@ -354,7 +354,6 @@ Any of the following disables the Decision Plane:
 - `NEXUM_DECISION=false`
 - `enableDecision: false` in `.nexum/config.json` or `~/.nexum/config.json`
 - `tier: "cloud"` (auto-disabled — System One is local-only)
-- Omit `enableDecision` entirely (default off)
 
 When disabled, `ModelStack.decisionGateway` is `undefined`. Decision consumers (`DecisionToolSelector`, `DecisionRoutingHintResolver`, `DecisionVerificationGate`) accept an optional gateway — `undefined` makes them fall through to the deterministic heuristic / `unknown` / escalate-by-default path. The existing heuristic / llm / hybrid tool selection modes, the existing `HeuristicRouter`, and the existing `Verifier` / `CriticService` / `SelfCorrectionLoop` keep working unchanged.
 

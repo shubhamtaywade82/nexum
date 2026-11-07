@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,8 @@ function mockChatFetch(turns: Array<{ content?: string; tool_calls?: unknown[] }
     return { ok: true, status: 200, json: async () => ({ message, done: true }), body: { getReader: () => reader } };
   });
 }
+
+isolateModelSubsystems();
 
 describe("Agent approval gate", () => {
   let tempDir: string;

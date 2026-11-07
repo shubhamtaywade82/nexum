@@ -496,7 +496,7 @@ production implementation.
   `harnessHealth()` is real external reality (git cat-file), so the runtime
   rollback orchestrator's post-switch verification checks the repository,
   not self-report. A successful switch clears the freeze marker.
-- **CLI**: `--activate-runtime` (explicit opt-in, default OFF) wires the
+- **CLI**: `--activate-runtime` (on by default; it switches the runtime only for an ACTIVE experiment, which requires `--github` delivery with CI passed and review approved) wires the
   controller plus the harness registry into the mutate path. After a cycle
   whose candidate was ACCEPTED (GitHub delivery, CI passed, review approved),
   the live runtime is switched onto the candidate via

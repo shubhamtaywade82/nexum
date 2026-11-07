@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,6 +59,8 @@ function routeShow(fetchMock: jest.Mock): jest.Mock {
     return fetchMock(url, init);
   });
 }
+
+isolateModelSubsystems();
 
 describe("Agent wiring — model budget", () => {
   afterEach(() => jest.restoreAllMocks());

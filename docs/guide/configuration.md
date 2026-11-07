@@ -38,7 +38,7 @@ The interactive UI asks the first time it meets an untrusted workspace; other co
 | `NEXUM_TIMEOUT_MS`                  | Per-request timeout in milliseconds (cloud tier only — local never times out mid-generation)                               | unset (60s on cloud)                          |
 | `NEXUM_TOOL_SELECTION_MODE`         | Dynamic tool pruning mode (`heuristic`, `llm`, `hybrid`)                                                                   | `hybrid`                                      |
 | `NEXUM_AUTO_PLAN`                   | Route multi-step requests to the plan orchestrator (`ask`, `always`, `off`)                                                | `ask`                                         |
-| `NEXUM_DECISION`                    | Enable the bounded Decision Plane (System One). `true` / `false`. Auto-disabled in a cloud tier.                           | `false`                                       |
+| `NEXUM_DECISION`                    | Bounded Decision Plane (System One). On by default; `false` disables it. Auto-disabled in a cloud tier.                    | `true`                                        |
 | `NEXUM_DECISION_MODEL`              | Dedicated decision model (independent of the primary generation model).                                                    | `tev1`                                        |
 | `NEXUM_PROFILE`                     | Plugin/settings profile mounted on the agent host (`nexum-cli`, `nexum-server`, `nexum-crypto-bot`, or a user profile id). | `nexum-cli`                                   |
 | `NEXUM_TOKEN_BUDGET`                | Session token budget (prompt + completion). Each run is capped at the remainder; `0` = unlimited.                          | `0`                                           |
@@ -57,7 +57,7 @@ Created automatically in your project root via `/init`:
   "model": "qwen2.5-coder:32b",
   "tier": "local",
   "host": "http://localhost:11434",
-  "enableDecision": false,
+  "enableDecision": true,
   "decisionModel": "tev1",
   "mcpServers": [
     {
@@ -71,7 +71,7 @@ Created automatically in your project root via `/init`:
 
 The annotated template with every key, its default and its trust requirement is `config.example.jsonc` at the repo root.
 
-The Decision Plane is **off by default**; setting `enableDecision: true` enables the bounded System One subsystem (local-only — auto-disabled in a cloud tier). The `decisionModel` is independent of the primary generation `model`. See `docs/guide/decision-plane.md` for the full guide.
+The Decision Plane is **on by default** in the local tier; setting `enableDecision: false` (or `NEXUM_DECISION=false`) disables the bounded System One subsystem. It is local-only and auto-disabled in a cloud tier. The `decisionModel` is independent of the primary generation `model`. See `docs/guide/decision-plane.md` for the full guide.
 
 ---
 

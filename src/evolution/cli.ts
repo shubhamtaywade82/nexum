@@ -90,8 +90,8 @@ Options:
                          optional NEXUM_GITHUB_TOKEN, NEXUM_GITHUB_BASE_BRANCH.
       --experiment-dir <path>  Directory for the immutable per-cycle experiment
                          artifact JSON (default: <workspace>/state/experiments).
-      --activate-runtime With --mutate: wire the manifest-file runtime
-                         activation controller. After an ACCEPTED candidate
+      --activate-runtime With --mutate (on by default): wire the manifest-file
+                         runtime activation controller. After an ACCEPTED candidate
                          (GitHub delivery + CI passed + review approved), the
                          live runtime is switched onto it by atomically
                          updating nexum.harness.json's activeHarness pointer.
@@ -879,11 +879,12 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   // gates executable inside the worktree. Explicit executor always wins over
   // the engine's agentRuntime auto-wiring, keeping gate control in one place.
   const strategy = buildMutationStrategy(strategyName, cfg);
-  // v2.3.3: runtime activation (--activate-runtime) wires the manifest-file
-  // RuntimeActivationController plus the harness registry so the engine's
-  // acceptance path records real H0→Hn lineage. Default OFF keeps the
-  // pre-activation mutate path byte-identical.
-  const activationRequested = values["activate-runtime"] === true;
+  // v2.3.3: runtime activation wires the manifest-file RuntimeActivationController
+  // plus the harness registry so the engine's acceptance path records real H0→Hn
+  // lineage. On by default. It only switches the runtime for an ACTIVE experiment,
+  // which requires --github delivery with CI passed and review approved; without
+  // that the activation step records an honest skip.
+  const activationRequested = values["activate-runtime"] !== false;
   const registry = activationRequested ? new HarnessRegistry(join(stateDir, "evolution.db")) : undefined;
   const activationController = activationRequested
     ? new ManifestRuntimeActivationController({ repoRoot, registry })
@@ -973,7 +974,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       ...(values.github && githubCfg ? { github: {} } : {}),
     });
     console.log(formatMutationResult(outcome));
-    // v2.3.3: the runtime half of acceptance — explicit opt-in only.
+    // v2.3.3: the runtime half of acceptance. Runs by default; a non-ACTIVE experiment is a recorded skip.
     const activation = activationController
       ? await activateRuntimeIfNeeded(engine, activationController, experimentId, outcome)
       : null;

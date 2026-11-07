@@ -64,7 +64,7 @@ export interface CliConfig {
    * false otherwise. Enable/disable with NEXUM_VERIFIER=true/false. */
   enableVerifier?: boolean;
   /** For 'unknown' heuristic decisions, draw N samples and check agreement.
-   * Off by default. Enable with NEXUM_SELF_CONSISTENCY=true. */
+   * On by default. Disable with NEXUM_SELF_CONSISTENCY=false. */
   enableSelfConsistency?: boolean;
   /** Number of self-consistency samples. Default 3. */
   selfConsistencyN?: number;
@@ -111,9 +111,10 @@ export interface CliConfig {
   };
 
   // ── Decision Plane (System One) ───────────────────────────────────────────
-  /** Enable the bounded Decision Plane (System One). Off by default — System
-   * One is an optimization/decision aid, never a mandatory runtime
-   * dependency. Enable with NEXUM_DECISION=true. When the runtime tier is
+  /** Enable the bounded Decision Plane (System One). On by default in the local
+   * tier. System One is an optimization/decision aid, never a mandatory runtime
+   * dependency: a failed call falls back to the deterministic path. Disable with
+   * NEXUM_DECISION=false. When the runtime tier is
    * `cloud`, the decision plane stays disabled automatically (System One is
    * local-only — see contracts/overlays/systemone.yaml in the upstream SDK). */
   enableDecision?: boolean;
@@ -526,7 +527,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     // quickModel the verifier would critique the PRIMARY model's drafts and
     // re-run them at full cost, so it stays off there.
     enableVerifier: readEnvFlag("VERIFIER", file.enableVerifier ?? Boolean(quickModel)),
-    enableSelfConsistency: readEnvFlag("SELF_CONSISTENCY", file.enableSelfConsistency ?? false),
+    enableSelfConsistency: readEnvFlag("SELF_CONSISTENCY", file.enableSelfConsistency ?? true),
     selfConsistencyN,
     selfConsistencyThreshold,
     availabilityCheckTtlMs,
@@ -536,10 +537,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
     mcpServers: file.mcpServers,
-    // Decision Plane (System One): off by default; auto-disabled in a cloud
-    // tier (System One is local-only — the gateway itself enforces this
+    // Decision Plane (System One): on by default in the local tier; auto-disabled
+    // in a cloud tier (System One is local-only — the gateway itself enforces this
     // too, but disabling at config time means no adapter is even built).
-    enableDecision: readEnvFlag("DECISION", file.enableDecision ?? false),
+    enableDecision: readEnvFlag("DECISION", file.enableDecision ?? true),
     profile: readEnv("PROFILE") || file.profile || "nexum-cli",
     decisionModel: readEnv("DECISION_MODEL") || file.decisionModel || "tev1",
     workspaceTrust: {
