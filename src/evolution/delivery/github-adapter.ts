@@ -321,23 +321,35 @@ export class GitHubDeliveryAdapter {
   }
 
   /**
-   * Fetches the latest human review state for a PR.
-   * Only CHANGES_REQUESTED / APPROVED reviews advance the lifecycle; no
-   * reviews yet → "pending".
+   * Fetches the latest independent human review state for a PR.
+   * Only reviews of the exact current head from a non-author GitHub User count.
+   * Bot reviews, self-approvals, missing author identity and API failures fail closed.
    */
   async getLatestReview(prNumber: number, headSha: string): Promise<ReviewVerdict> {
-    const res = await this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}/reviews?per_page=100`);
-    const reviews = (res.json ?? []) as Array<{
+    const [pullRes, reviewRes] = await Promise.all([
+      this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}`),
+      this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}/reviews?per_page=100`),
+    ]);
+    if (pullRes.status !== 200 || reviewRes.status !== 200) return { state: "pending" };
+
+    const pull = pullRes.json as { user?: { login?: string } } | null;
+    const authorLogin = pull?.user?.login?.trim().toLowerCase();
+    if (!authorLogin || !Array.isArray(reviewRes.json)) return { state: "pending" };
+
+    const reviews = reviewRes.json as Array<{
       state: string;
       commit_id?: string;
-      user?: { login?: string };
+      user?: { login?: string; type?: string };
       html_url?: string;
       submitted_at?: string;
     }>;
-    // A review of an earlier commit does not cover the code that would merge, so only reviews of headSha count.
+    // A review of an earlier commit does not cover the code that would merge. GitHub
+    // Bot accounts and the PR author cannot independently approve their own candidate.
     const submitted = reviews
       .filter((r) => r.state === "APPROVED" || r.state === "CHANGES_REQUESTED")
       .filter((r) => r.commit_id === headSha)
+      .filter((r) => r.user?.type === "User" && !!r.user.login)
+      .filter((r) => r.user!.login!.trim().toLowerCase() !== authorLogin)
       .sort((a, b) => (a.submitted_at ?? "").localeCompare(b.submitted_at ?? ""));
     const latest = submitted[submitted.length - 1];
     if (!latest) return { state: "pending" };
