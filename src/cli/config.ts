@@ -377,6 +377,8 @@ export function applyEnvFiles(opts: LoadConfigOptions = {}): void {
 export interface LoadConfigOptions {
   /** Where workspace trust is recorded (default: ~/.nexum/trusted-workspaces.json). */
   trustStore?: WorkspaceTrustStore;
+  /** Explicit workspace root (default: findWorkspaceRoot(process.cwd())). */
+  workspaceRoot?: string;
 }
 
 /** "ask" | "always" | "off"; the older NEXUM_PLAN_HINT=0 still means "off". Unknown values fall back to "ask". */
@@ -388,7 +390,7 @@ export function parseAutoPlan(value: string | undefined, legacyHint?: string): "
 }
 
 export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
-  const workspaceRoot = findWorkspaceRoot(process.cwd());
+  const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(process.cwd());
   const trust = workspaceTrustState(workspaceRoot, opts.trustStore ?? WorkspaceTrustStore.global());
   const skippedEnvFiles = loadEnvFiles(workspaceRoot, trust.trusted);
   const globalFile = loadGlobalConfig();

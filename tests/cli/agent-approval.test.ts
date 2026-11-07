@@ -31,6 +31,7 @@ function mockChatFetch(turns: Array<{ content?: string; tool_calls?: unknown[] }
         delivered = true;
         return { done: false, value: encoder.encode(line) };
       },
+      releaseLock: () => {},
     };
     return { ok: true, status: 200, json: async () => ({ message, done: true }), body: { getReader: () => reader } };
   });

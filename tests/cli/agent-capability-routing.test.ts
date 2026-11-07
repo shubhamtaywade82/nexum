@@ -17,6 +17,7 @@ function chatResponse(content: string) {
       delivered = true;
       return { done: false, value: encoder.encode(line) };
     },
+    releaseLock: () => {},
   };
   return {
     ok: true,
@@ -37,6 +38,7 @@ function toolCallResponse(name: string, args: Record<string, unknown>) {
       delivered = true;
       return { done: false, value: encoder.encode(line) };
     },
+    releaseLock: () => {},
   };
   return { ok: true, status: 200, json: async () => ({ message, done: true }), body: { getReader: () => reader } };
 }
@@ -85,6 +87,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
                 delivered = true;
                 return { done: false, value: encoder.encode(JSON.stringify(final) + "\n") };
               },
+              releaseLock: () => {},
             }),
           },
         };

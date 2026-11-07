@@ -15,6 +15,7 @@
 import { EventEmitter } from "node:events";
 import { render as inkRender } from "@nemesis-oss/termina-core";
 import type { ReactElement } from "react";
+import { sanitizeText } from "../../src/runtime/store.js";
 
 class WideStdout extends EventEmitter {
   columns: number;
@@ -25,8 +26,9 @@ class WideStdout extends EventEmitter {
     this.columns = columns;
   }
   write = (frame: string): void => {
-    this.frames.push(frame);
-    this._lastFrame = frame;
+    const clean = sanitizeText(frame);
+    this.frames.push(clean);
+    this._lastFrame = clean;
   };
   lastFrame = (): string | undefined => this._lastFrame;
 }
@@ -35,8 +37,9 @@ class Stderr extends EventEmitter {
   frames: string[] = [];
   private _lastFrame?: string;
   write = (frame: string): void => {
-    this.frames.push(frame);
-    this._lastFrame = frame;
+    const clean = sanitizeText(frame);
+    this.frames.push(clean);
+    this._lastFrame = clean;
   };
   lastFrame = (): string | undefined => this._lastFrame;
 }

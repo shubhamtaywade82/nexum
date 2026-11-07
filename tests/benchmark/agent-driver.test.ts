@@ -31,6 +31,7 @@ function mockOllama(turns: Array<{ content?: string; tool_calls?: unknown[] }>):
         delivered = true;
         return { done: false, value: encoder.encode(line) };
       },
+      releaseLock: () => {},
     };
     return { ok: true, status: 200, json: async () => body, body: { getReader: () => reader } };
   });
@@ -76,7 +77,14 @@ describe("agent-driven benchmark", () => {
   function realAgentDriver(seen: { tools?: string[] } = {}) {
     return createAgentDriver(({ workspaceRoot, target: t, events }) => {
       const agent = new Agent({
-        config: { workspaceRoot, tier: t.tier, model: t.model, quickModel: t.model, toolSelectionMode: "heuristic" },
+        config: {
+          workspaceRoot,
+          tier: t.tier,
+          model: t.model,
+          quickModel: t.model,
+          toolSelectionMode: "heuristic",
+          enableVerifier: false,
+        },
         events,
       });
       const replace = agent.tools.replaceAllTools.bind(agent.tools);

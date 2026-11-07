@@ -143,6 +143,7 @@ describe("Agent quick-model delegation picks the first catalog candidate", () =>
           delivered = true;
           return { done: false, value: encoder.encode(line) };
         },
+        releaseLock: () => {},
       };
       return {
         ok: true,
@@ -193,6 +194,7 @@ describe("Agent quick-model delegation picks the first catalog candidate", () =>
           delivered = true;
           return { done: false, value: encoder.encode(line) };
         },
+        releaseLock: () => {},
       };
       return {
         ok: true,

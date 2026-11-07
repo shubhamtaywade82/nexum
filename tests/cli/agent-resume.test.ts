@@ -24,6 +24,7 @@ describe("Agent plan checkpoint/resume", () => {
           delivered = true;
           return { done: false, value: encoder.encode(line) };
         },
+        releaseLock: () => {},
       };
       return {
         ok: true,
@@ -111,6 +112,7 @@ describe("Agent conversation session resume", () => {
           delivered = true;
           return { done: false, value: encoder.encode(line) };
         },
+        releaseLock: () => {},
       };
       return {
         ok: true,

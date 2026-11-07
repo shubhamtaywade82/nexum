@@ -18,6 +18,7 @@ function chatResponse(content: string) {
           delivered = true;
           return { done: false, value: encoder.encode(JSON.stringify(body) + "\n") };
         },
+        releaseLock: () => {},
       }),
     },
   };
@@ -192,6 +193,7 @@ describe("Agent wiring — hooks", () => {
             delivered = true;
             return { done: false, value: encoder.encode(JSON.stringify(body) + "\n") };
           },
+          releaseLock: () => {},
         }),
       },
     };

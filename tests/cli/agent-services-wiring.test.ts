@@ -23,6 +23,7 @@ function chatResponse(content: string) {
           delivered = true;
           return { done: false, value: encoder.encode(JSON.stringify(body) + "\n") };
         },
+        releaseLock: () => {},
       }),
     },
   };
@@ -196,6 +197,7 @@ describe("Agent wiring — telemetry and artifacts", () => {
                 sent
                   ? { done: true, value: undefined }
                   : ((sent = true), { done: false, value: encoder.encode(JSON.stringify(body) + "\n") }),
+              releaseLock: () => {},
             }),
           },
         };
@@ -236,6 +238,7 @@ describe("Agent wiring — NEXUM_TOKEN_BUDGET", () => {
               sent
                 ? { done: true, value: undefined }
                 : ((sent = true), { done: false, value: encoder.encode(JSON.stringify(body) + "\n") }),
+            releaseLock: () => {},
           }),
         },
       };

@@ -100,8 +100,9 @@ describe("LspClient — real process spawn + JSON-RPC framing", () => {
     // "text_document/publish_diagnostics".
     client.on("text_document/publish_diagnostics", transformed);
 
+    const received = new Promise<void>((resolve) => client.once("notification", () => resolve()));
     client.sendNotification("triggerNotification", {});
-    await new Promise((r) => setTimeout(r, 200));
+    await received;
 
     expect(raw).toHaveBeenCalledWith("textDocument/publishDiagnostics", { token: "t1", value: { kind: "begin" } });
     expect(transformed).toHaveBeenCalledWith({ token: "t1", value: { kind: "begin" } });

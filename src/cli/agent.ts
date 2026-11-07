@@ -283,7 +283,10 @@ export class Agent {
   }
 
   constructor(opts: AgentOptions = {}) {
-    const cfg = { ...loadConfig(), ...(opts.config ?? {}) };
+    const cfg = {
+      ...loadConfig(opts.config?.workspaceRoot ? { workspaceRoot: opts.config.workspaceRoot } : {}),
+      ...(opts.config ?? {}),
+    };
     this.workspaceRoot = cfg.workspaceRoot;
     this.mcpServerConfigs = cfg.mcpServers ?? [];
     this.capabilityConfig = {

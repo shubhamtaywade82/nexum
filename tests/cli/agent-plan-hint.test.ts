@@ -22,6 +22,7 @@ function mockOllama(firstReply?: string) {
         delivered = true;
         return { done: false, value: encoder.encode(line) };
       },
+      releaseLock: () => {},
     };
     return {
       ok: true,

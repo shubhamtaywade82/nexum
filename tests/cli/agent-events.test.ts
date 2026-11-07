@@ -62,6 +62,7 @@ function mockChatSequence(chunks: Array<Record<string, unknown>>): void {
         delivered = true;
         return { done: false, value: encoder.encode(JSON.stringify(chunk) + "\n") };
       },
+      releaseLock: () => {},
     };
     return {
       ok: true,
@@ -83,6 +84,7 @@ function mockChatOnce(content: string) {
       delivered = true;
       return { done: false, value: encoded };
     },
+    releaseLock: () => {},
   };
   (globalThis as any).fetch = jest.fn().mockResolvedValue({
     ok: true,

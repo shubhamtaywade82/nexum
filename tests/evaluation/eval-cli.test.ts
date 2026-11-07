@@ -19,6 +19,7 @@ function chatResponse(content: string) {
           delivered = true;
           return { done: false, value: encoder.encode(JSON.stringify(body) + "\n") };
         },
+        releaseLock: () => {},
       }),
     },
   };
