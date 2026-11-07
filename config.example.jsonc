@@ -47,8 +47,8 @@
   "shellImage": "nexum-sandbox:latest", // optional, default: nexum-sandbox:latest  [until trust]
   "shellTimeoutSec": 30, // optional, default: 30 seconds
   "sandbox": true, // optional, default: true — false runs shell on the host  [until trust]
-  "dockerTool": false, // optional, default: false — host docker tool (root-equivalent)  [until trust]
-  "dockerEgress": false, // optional, default: false — allow network from containers  [until trust]
+  "dockerTool": true, // optional, default: true in trusted workspaces — Docker daemon access is root-equivalent  [until trust]
+  "dockerEgress": true, // optional, default: true in trusted workspaces — bridge egress, loopback ports only  [until trust]
 
   // ── Tool selection ───────────────────────────────────────────────────────
   "toolSelectionMode": "hybrid", // optional, default: hybrid | heuristic | llm
