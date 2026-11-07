@@ -8,6 +8,9 @@ import { WorkspaceManager } from "../platform/workspace.js";
 import { BRAND } from "../platform/brand.js";
 import { discoverWorkspace } from "../domains/rails/index.js";
 import { collectCapabilities, formatCapability } from "./capabilities.js";
+import { Provider } from "../models/adapters/provider.js";
+import { ModelCatalog } from "../models/catalog.js";
+import { DEFAULT_CURATED_PREFERENCES } from "../models/catalog-data.js";
 
 export type DoctorReport = {
   ok: boolean;
@@ -86,6 +89,45 @@ async function checkCapabilities(lines: string[], config: ReturnType<typeof load
   }
 }
 
+/**
+ * quickModel diagnostic. A hardcoded default would be wrong — it would
+ * demand a model download the user never asked for, and a missing model
+ * means a failed round-trip before every fallback. Instead, doctor makes
+ * the hybrid fast path DISCOVERABLE: when a curated quick model is already
+ * installed locally, it names it and the one-line config that activates it
+ * (which, since the verifier graduation, also turns the critic pass on).
+ */
+async function checkQuickModel(lines: string[], config: ReturnType<typeof loadConfig>): Promise<void> {
+  if (config.quickModel) {
+    lines.push(`quickModel: ${config.quickModel} (verifier: ${config.enableVerifier ? "on" : "off"})`);
+    return;
+  }
+  try {
+    const local = new Provider({
+      tier: "local",
+      model: config.model,
+      host: config.tier === "local" ? config.host : undefined,
+    });
+    const catalog = new ModelCatalog(local, undefined);
+    const installed = await catalog.refresh();
+    const quickPrefs = DEFAULT_CURATED_PREFERENCES.quick ?? [];
+    const found = quickPrefs
+      .map((pref) => installed.find((m) => m.tier === "local" && m.name.toLowerCase().includes(pref.toLowerCase())))
+      .find(Boolean);
+    if (found) {
+      lines.push(
+        `quickModel: unset — ${found.name} is installed; set quickModel (or NEXUM_QUICK_MODEL) to "${found.name}" to activate the hybrid fast path and the verifier default`,
+      );
+    } else {
+      lines.push(
+        `quickModel: unset (hybrid fast path falls back to ${config.model}; pull a small model, e.g. \`ollama pull ${quickPrefs[0]}\`, then set quickModel to enable it)`,
+      );
+    }
+  } catch {
+    lines.push(`quickModel: unset (local catalog unreachable — hybrid fast path falls back to ${config.model})`);
+  }
+}
+
 export async function runDoctor(): Promise<DoctorReport> {
   const lines: string[] = [];
   const config = loadConfig();
@@ -95,6 +137,7 @@ export async function runDoctor(): Promise<DoctorReport> {
   lines.push(`model: ${config.model} (tier: ${config.tier})`);
   lines.push(`host: ${config.host ?? "http://localhost:11434"}`);
   lines.push(`apiKeysCount: ${(config.apiKeys || []).length}`);
+  await checkQuickModel(lines, config);
 
   const ws = new WorkspaceManager(config.workspaceRoot);
   const detection = ws.detect();
