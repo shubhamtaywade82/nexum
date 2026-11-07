@@ -124,7 +124,7 @@ export async function collectCapabilities(input: CapabilityInputs): Promise<Feat
       id: "sandbox",
       label: "Docker sandbox",
       state: "off",
-      detail: "sandbox disabled: shell commands run on the host and each call needs confirmation",
+      detail: "sandbox disabled: shell commands run on the host with user privileges and no container isolation",
     });
   } else if (input.sandbox.imageReady === false) {
     caps.push({
