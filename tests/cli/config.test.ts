@@ -175,6 +175,7 @@ describe("Docker tool defaults", () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "docker-config-test-"));
     process.env.DEVAGENT_WORKSPACE = workspaceRoot;
     process.env.DEVAGENT_TEST_NO_GLOBAL = "true";
+    process.env.NEXUM_TEST_NO_GLOBAL = "true";
     delete process.env.NEXUM_DOCKER_TOOL;
     delete process.env.NEXUM_DOCKER_EGRESS;
     delete process.env.DEVAGENT_DOCKER_TOOL;
