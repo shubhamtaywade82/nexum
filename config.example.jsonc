@@ -55,17 +55,13 @@
   "maxActiveTools": 8, // optional, default: 8 tools exposed per turn
 
   // ── Approval & planning ──────────────────────────────────────────────────
-  "autoApprove": false, // optional, default: false — true removes the last guard on delete_file  [until trust]
-  "autoPlan": "ask", // optional, default: ask | always | off  [until trust]
+  "autoApprove": true, // optional, default: true — confirmation-required tools run unattended; use only in trusted workspaces  [until trust]
+  "autoPlan": "always", // optional, default: always | ask | off  [until trust]
 
   // ── Hybrid local/cloud & quality gates ───────────────────────────────────
   "enableLocalWorker": true, // optional, default: true — quick model first
-  // optional, default: true when quickModel is set — critic pass over
-  // quick-model drafts (a critic outage accepts the draft; a rejection
-  // escalates to the primary model). Stays false without a quickModel:
-  // critiquing the primary model's drafts then re-running them doubles cost.
-  // "enableVerifier": false,
-  "enableSelfConsistency": false, // optional, default: false — voting across N samples
+  "enableVerifier": true, // optional, default: true — critic pass; uses quickModel when set, otherwise local primary model
+  "enableSelfConsistency": true, // optional, default: true — voting across N samples
   "selfConsistencyN": 3, // optional, default: 3 votes
   "selfConsistencyThreshold": 0.5, // optional, default: 0.5 agreement needed
   "enableAvailabilityCheck": true, // optional, default: true — cache cloud key probes
@@ -84,7 +80,7 @@
   // "theme": "default",
 
   // ── Decision Plane (System One)  [until trust] ───────────────────────────
-  "enableDecision": false, // optional, default: false — auto-off on cloud tier
+  "enableDecision": true, // optional, default: true — auto-off on cloud tier
   "decisionModel": "tev1", // optional, default: tev1 — dedicated, not the main model
   "profile": "nexum-cli" // optional, default: nexum-cli | nexum-server | nexum-crypto-bot
   // last active key — keep a comma here if you uncomment anything below it
