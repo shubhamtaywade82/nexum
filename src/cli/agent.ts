@@ -424,6 +424,7 @@ export class Agent {
       memory: this.memory,
       skillsHomeDir: opts.skillsHomeDir,
       projectLanguage,
+      executorModel: cfg.model ?? this.stack.provider.currentModel,
     });
 
     const dynamicSelector = new DynamicToolSelector({
@@ -769,7 +770,7 @@ export class Agent {
   async runUserMessage(
     userMessage: string,
     _priority?: PlanStep["priority"],
-    opts: { escalate?: boolean } = {},
+    opts: { escalate?: boolean; parentEpisodeId?: string } = {},
   ): Promise<string> {
     const submitted = await this.hooks.runUserPromptSubmit(userMessage);
     if (!submitted.allow) {
@@ -833,6 +834,7 @@ export class Agent {
     this.learning.learning.recorder.begin(
       userMessage,
       activatedSkills.map((skill) => skill.id),
+      opts.parentEpisodeId,
     );
 
     this.conversation.pushUserMessage(userMessage);
@@ -1365,7 +1367,10 @@ export class Agent {
       return finish(terminal as Parameters<typeof finish>[0], output);
     } catch (e) {
       success = false;
-      finish("error", lastAssistantText);
+      const isCancel =
+        (e instanceof Error && (e.name === "AbortError" || e.message === "run cancelled")) ||
+        this.execution.signal?.aborted === true;
+      finish(isCancel ? "user_cancel" : "error", lastAssistantText);
       throw e;
     } finally {
       for (const skill of activatedSkills) this.learning.recordSkillUse(skill.id, success);

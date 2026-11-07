@@ -72,6 +72,22 @@ describe("TargetEngine", () => {
     expect(target.capability).toBe("context_quality");
   });
 
+  it("does not let sub-threshold low-confidence diagnoses drown out eligible high-confidence targets", () => {
+    // 20 diagnoses with mean confidence 0.30 (score 0.3 * sqrt(20) = 1.34) for "unknown"
+    const manyWeak = Array.from({ length: 20 }, () =>
+      diagnosis({ failureClass: "unknown", component: "orchestration", confidence: 0.3 }),
+    );
+    // 2 high-confidence diagnoses for tool_selection (score 0.85 * sqrt(2) = 1.20)
+    const twoStrong = [
+      diagnosis({ failureClass: "tool_selection", component: "tools", confidence: 0.85 }),
+      diagnosis({ failureClass: "tool_selection", component: "tools", confidence: 0.85 }),
+    ];
+    const target = engine.formTarget([...manyWeak, ...twoStrong]);
+    expect(target).not.toBeNull();
+    expect(target!.capability).toBe("tool_utilization");
+    expect(target!.confidence).toBe(0.85);
+  });
+
   it("capabilityAreaFor maps the full failure taxonomy", () => {
     expect(capabilityAreaFor("loop_failure")).toBe("execution_stability");
     expect(capabilityAreaFor("state_loss")).toBe("state_continuity");

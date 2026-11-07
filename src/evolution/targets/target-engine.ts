@@ -191,6 +191,7 @@ export class TargetEngine {
     let bestConfidence = 0;
     for (const [area, list] of byCapability.entries()) {
       const mean = list.reduce((acc, d) => acc + d.confidence, 0) / list.length;
+      if (mean < this.minConfidence) continue;
       const score = mean * Math.sqrt(list.length);
       if (list.length >= this.minCorroboratingDiagnoses && score > bestScore) {
         bestScore = score;

@@ -487,6 +487,9 @@ export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
     } catch {
       // Status unavailable — the diff above is the best-effort audit.
     }
+    if (this.linkNodeModulesFrom) {
+      paths.delete("node_modules");
+    }
     return [...paths].sort();
   }
 

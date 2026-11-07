@@ -161,7 +161,10 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
     this.runtime = opts.runtime;
     this.agentId = opts.agentId ?? EVOLUTION_AGENT_ID;
     this.modelGateway = opts.modelGateway;
-    this.maxTurns = opts.maxTurns ?? 24;
+    const envTurns = process.env.NEXUM_MUTATION_MAX_TURNS
+      ? parseInt(process.env.NEXUM_MUTATION_MAX_TURNS, 10)
+      : undefined;
+    this.maxTurns = opts.maxTurns ?? (Number.isFinite(envTurns) && envTurns! > 0 ? envTurns! : 24);
     this.maxProposals = opts.maxProposals ?? 25;
     this.maxEditBytes = opts.maxEditBytes ?? 512 * 1024;
     this.systemPromptExtras = opts.systemPromptExtras;
@@ -322,6 +325,12 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
           this.onTurn?.(info.turn - 1, turnInvocations);
           turnInvocations = [];
         }
+        const remaining = this.maxTurns - info.turn;
+        if (this.maxTurns > 4 && remaining <= 4 && remaining > 0) {
+          conversation.pushSystem(
+            `[Notice] You have ${remaining} turn(s) remaining before turn budget is exhausted. You must call propose_edit to queue your edits and finish() to complete the mutation, or decline() if no safe mutation exists.`,
+          );
+        }
       },
       // With onToolObserved installed, the hook OWNS the observation push.
       onToolObserved: (obs) => {
@@ -420,7 +429,7 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       "- Proposing outside them is rejected; repeated violations abort the cycle.",
       "- Read before proposing: understand the existing implementation first.",
       "- Prefer the smallest in-scope change with a clear causal path to the target.",
-      "- End with finish (edits queued) or decline (no safe mutation exists).",
+      `- You have a budget of up to ${this.maxTurns} turns. Conclude with finish (edits queued) or decline (no safe mutation exists).`,
       "",
       `Scope components: ${request.scope.components.join(", ")}.`,
       `Worktree parent commit: ${request.worktree.parentCommit}.`,
