@@ -74,7 +74,7 @@ import { ExperimentController } from "./experiments/experiment-controller.js";
 import { ExperimentRecord } from "./experiments/experiment-schema.js";
 import { HarnessRegistry } from "./registry.js";
 import { TargetEngine, ImprovementTarget } from "./targets/target-engine.js";
-import { ComparisonResult, Evidence, EvaluationMetrics, HarnessDiagnosis, HarnessHypothesis } from "./types.js";
+import { ComparisonResult, EvaluationMetrics, HarnessDiagnosis, HarnessHypothesis } from "./types.js";
 
 /**
  * How strictly the fixed-executor generalization gate is enforced before a
