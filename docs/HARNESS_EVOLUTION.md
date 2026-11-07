@@ -86,10 +86,11 @@ nexum evolve --benchmark
 # target → isolated worktree → edits → verification profile → candidate
 nexum evolve --mutate --repo .
 
-# Full production run: engineering agent + subprocess benchmark (parent
-# baseline first) + canonical GitHub delivery (PR → CI → review; a human merges)
+# Full production run: engineering agent + subprocess benchmark + automatic
+# GitHub delivery, merge after independent human review, verified activation.
+# NEXUM_GITHUB_OWNER / NEXUM_GITHUB_REPO configure the delivery destination.
 NEXUM_GITHUB_OWNER=<owner> NEXUM_GITHUB_REPO=<repo> nexum evolve \
-  --mutate --repo . --strategy agent --benchmark --github
+  --mutate --repo . --strategy agent --benchmark
 
 # Evaluate and benchmark a candidate harness mutation live
 nexum evolve --candidate H1 --component execution --hypothesis "Tighten loop detector threshold"
