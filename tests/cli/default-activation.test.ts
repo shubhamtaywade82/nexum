@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { loadConfig } from "../../src/cli/config.js";
 
 /**
- * Every feature is on by default and needs no env or flag to run. The exceptions
- * are the Docker sandbox family and the switches that bypass a human check, which
- * stay off. These tests pin both halves so a regression in either direction shows up.
+ * Functional capabilities are on by default and need no enabling env or flag.
+ * The Docker sandbox family remains independently configurable. These tests pin
+ * both halves so a regression in either direction shows up.
  */
 
 const CONFIG_ENV = [
@@ -56,10 +56,12 @@ describe("default activation", () => {
 
     expect(cfg.enableDecision).toBe(true);
     expect(cfg.enableSelfConsistency).toBe(true);
+    expect(cfg.enableVerifier).toBe(true);
+    expect(cfg.autoApprove).toBe(true);
     expect(cfg.enableLocalWorker).toBe(true);
     expect(cfg.enableHeuristicGate).toBe(true);
     expect(cfg.enableAvailabilityCheck).toBe(true);
-    expect(cfg.autoPlan).toBe("ask");
+    expect(cfg.autoPlan).toBe("always");
   });
 
   it("keeps the sandbox optional: on by default, switched off only by its own env", () => {
@@ -69,16 +71,15 @@ describe("default activation", () => {
     expect(loadConfig({ workspaceRoot: workspace }).sandbox).toBe(false);
   });
 
-  it("keeps the Docker tool, its egress and the confirmation bypass off by default", () => {
+  it("keeps Docker daemon access and container egress disabled by default", () => {
     const cfg = loadConfig({ workspaceRoot: workspace });
 
     expect(cfg.dockerTool).toBe(false);
     expect(cfg.dockerEgress).toBe(false);
-    expect(cfg.autoApprove).toBe(false);
   });
 
-  it("keeps the critic pass conditional on a quick model, so it does not double every answer's cost", () => {
-    expect(loadConfig({ workspaceRoot: workspace }).enableVerifier).toBe(false);
+  it("keeps the critic pass active with or without a separately configured quick model", () => {
+    expect(loadConfig({ workspaceRoot: workspace }).enableVerifier).toBe(true);
 
     process.env.NEXUM_QUICK_MODEL = "quick-model";
     expect(loadConfig({ workspaceRoot: workspace }).enableVerifier).toBe(true);
@@ -91,5 +92,11 @@ describe("default activation", () => {
 
     expect(cfg.enableDecision).toBe(false);
     expect(cfg.enableSelfConsistency).toBe(false);
+
+    process.env.NEXUM_AUTO_APPROVE = "false";
+    process.env.NEXUM_AUTO_PLAN = "ask";
+    const overridden = loadConfig({ workspaceRoot: workspace });
+    expect(overridden.autoApprove).toBe(false);
+    expect(overridden.autoPlan).toBe("ask");
   });
 });
