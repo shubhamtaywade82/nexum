@@ -658,7 +658,8 @@ export class ClosedLoopEngine {
     /**
      * Run the CANONICAL production path after eligibility: push the mutation
      * branch, open the PR, poll CI and review, auto-accept on approval, and
-     * merge. Requires ClosedLoopEngineOptions.githubDelivery.
+     * merge after the exact candidate head is human-approved. Requires
+     * ClosedLoopEngineOptions.githubDelivery.
      */
     github?: {
       checksTimeoutMs?: number;
