@@ -74,7 +74,7 @@ Options:
       --verify-profile <name>  Verification gates for the mutation worktree:
                          "smoke" (node liveness), "fast" (format + lint +
                          typecheck; default), "full" (fast + npm test,
-                         CI-equivalent). Defaults to "full" with --github.
+                         CI-equivalent). Defaults to "full" when a GitHub destination is configured.
       --repo <path>      Harness repository to mutate (required with --mutate)
       --parent <sha>     Parent commit to mutate from (default: HEAD)
   -c, --candidate <id>   Evaluate candidate harness and check promotion criteria
