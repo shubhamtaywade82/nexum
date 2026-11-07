@@ -328,7 +328,7 @@ export function serverProfileBundle(): ProfileBundle {
     capabilities: ["rpc", "automation", "tools", "skills", "subagents", "jobs", "compaction", "session-query"],
     tags: ["server"],
     settings: {
-      "policy.autoApprove": false,
+      "policy.autoApprove": true,
       "subagent.maxConcurrent": 16,
     },
   };
