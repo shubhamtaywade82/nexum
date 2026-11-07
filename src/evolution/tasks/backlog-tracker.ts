@@ -103,6 +103,47 @@ export class BacklogTracker {
   }
 
   /**
+   * Updates an entry's fields WITHOUT a state change. For re-diagnosis: a
+   * task that is already `investigated` and gains new evidence gets a fresh
+   * report and refreshed window — the state itself has not transitioned, so
+   * the state machine must not be asked to bless an investigated →
+   * investigated "transition".
+   */
+  refresh(taskId: string, patch: Partial<Omit<BacklogEntry, "taskId" | "state">>): BacklogEntry {
+    const current = this.get(taskId);
+    if (!current) {
+      this.ensurePending(taskId);
+      return this.refresh(taskId, patch);
+    }
+    const next: BacklogEntry = {
+      ...current,
+      ...patch,
+      taskId,
+      updatedAt: Date.now(),
+    };
+    this.db
+      .prepare(
+        `UPDATE task_backlog
+         SET state = ?, last_evaluated_commit = ?, last_report_id = ?,
+             related_experiment_id = ?, evidence_window_from = ?,
+             evidence_window_to = ?, next_evaluation_condition = ?, updated_at = ?
+         WHERE task_id = ?`,
+      )
+      .run(
+        next.state,
+        next.lastEvaluatedCommit,
+        next.lastReportId,
+        next.relatedExperimentId,
+        next.evidenceWindowFrom,
+        next.evidenceWindowTo,
+        next.nextEvaluationCondition,
+        next.updatedAt,
+        next.taskId,
+      );
+    return next;
+  }
+
+  /**
    * Transitions a task to a new state. Throws if the transition is not allowed
    * by the state machine.
    */

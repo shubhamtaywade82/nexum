@@ -7,8 +7,9 @@
  *   nexum evolve --task-show <id>           show one task definition
  *   nexum evolve --task-backlog             show backlog state for all tasks
  *   nexum evolve --task-prioritize          rank pending tasks
- *   nexum evolve --task-run <id>            run a task (diagnose mode only in this PR;
- *                                            experiment/implement require the closed-loop engine)
+ *   nexum evolve --task-run <id>            run a task end-to-end (diagnose mode;
+ *                                            experiment/implement stay on the
+ *                                            --mutate path)
  *
  * Architecture: docs/evolution/architecture.md
  */
@@ -22,6 +23,7 @@ import { TaskPrioritizer } from "./task-prioritizer.js";
 import { BacklogTracker } from "./backlog-tracker.js";
 import { ReportStore } from "../reporting/report-store.js";
 import { TaskDefinition } from "./types.js";
+import { buildEngineWiring } from "./engine-wiring.js";
 
 export interface TaskCliOptions {
   taskCatalog?: boolean;
@@ -43,7 +45,7 @@ Usage:
   nexum evolve --task-show <id>                show one task definition
   nexum evolve --task-backlog                  show backlog state for all tasks
   nexum evolve --task-prioritize               rank pending tasks
-  nexum evolve --task-run <id>                 run a task (diagnose mode only in this PR)
+  nexum evolve --task-run <id>                 run a task end-to-end (diagnose mode)
 
 Filters (apply to --task-catalog and --task-prioritize):
   --task-category <name>                       learning|evolution_safety|agent_execution|
@@ -285,7 +287,7 @@ function runPrioritize(category: string | undefined, priority: string | undefine
   }
 }
 
-function runRun(taskId: string): number {
+async function runRun(taskId: string): Promise<number> {
   const result = loadCatalog();
   const registry = new TaskRegistry(result.catalog.tasks);
   const task = registry.get(taskId);
@@ -295,18 +297,36 @@ function runRun(taskId: string): number {
   }
   if (task.execution.mode !== "diagnose") {
     console.error(
-      `Task ${taskId} is in ${task.execution.mode} mode. Only diagnose is runnable via this CLI in this PR; experiment/implement require the closed-loop engine (ClosedLoopEngine) to be wired.`,
+      `Task ${taskId} is in ${task.execution.mode} mode. Only diagnose runs from the catalogue CLI; ` +
+        `experiment/implement deliver through the closed-loop mutation path — use ` +
+        `"nexum evolve --mutate --repo <path>" (add --github for delivery) until task-level dispatch lands.`,
     );
     return 1;
   }
-  console.error(
-    `Task ${taskId} (${task.title}) is ready to run in diagnose mode, but the diagnostician wiring depends on the closed-loop engine (ClosedLoopEngine) which is under active development. This CLI surface will execute the task end-to-end once the engine's observe/diagnose/target loop lands in PR #<TBD>.`,
-  );
-  console.error("");
-  console.error("In the meantime, the catalogue, registry, prioritizer, validator, and backlog");
-  console.error("tracker are all usable from TypeScript via src/evolution/tasks/* and");
-  console.error("src/evolution/reporting/*.");
-  return 0;
+  const root = findWorkspaceRoot(process.cwd());
+  const wiring = buildEngineWiring({ workspaceRoot: root });
+  try {
+    const outcome = await wiring.runner.runOne({ taskId });
+    console.log(`[${taskId}] ${outcome.summary}`);
+    if (outcome.reportRef) {
+      const ref = outcome.reportRef;
+      console.log(
+        `  report ${ref.id} (commit ${ref.evaluatedCommit.slice(0, 12)}) → decision=${ref.decision}, confidence=${ref.confidence.toFixed(2)}, independent samples=${ref.independentSamples}`,
+      );
+      console.log(`  backlog: ${task.id} is now investigated; next re-run requires new evidence.`);
+    }
+    if (!outcome.validated) {
+      // Anti-rule blocks are legitimate outcomes, not errors: exit 2 mirrors
+      // --task-validate's convention for "contract not satisfied".
+      return 2;
+    }
+    return 0;
+  } catch (err) {
+    console.error(`Task ${taskId} run failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  } finally {
+    wiring.close();
+  }
 }
 
 // Re-export so callers (the closed-loop engine) can construct the same stores.

@@ -195,12 +195,21 @@ export class TaskRunner {
     }
     const report = this.deps.reportGenerator.finalize(task, result.partial, currentCommit);
     this.deps.reportStore.save(report);
-    this.deps.backlog.transition(task.id, "investigated", {
+    // Re-diagnosis (already investigated + new evidence) REFRESHES the entry;
+    // a first diagnosis TRANSITIONS pending → investigated. The state machine
+    // forbids investigated → investigated, and rightly so.
+    const entry = this.deps.backlog.get(task.id);
+    const patch = {
       lastEvaluatedCommit: currentCommit,
       lastReportId: report.id,
       evidenceWindowFrom: Date.parse(report.confidence.evidence_window.from) || null,
       evidenceWindowTo: Date.parse(report.confidence.evidence_window.to) || null,
-    });
+    };
+    if (entry?.state === "investigated") {
+      this.deps.backlog.refresh(task.id, patch);
+    } else {
+      this.deps.backlog.transition(task.id, "investigated", patch);
+    }
     return {
       task,
       mode: "diagnose",

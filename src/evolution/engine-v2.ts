@@ -74,7 +74,7 @@ import { ExperimentController } from "./experiments/experiment-controller.js";
 import { ExperimentRecord } from "./experiments/experiment-schema.js";
 import { HarnessRegistry } from "./registry.js";
 import { TargetEngine, ImprovementTarget } from "./targets/target-engine.js";
-import { ComparisonResult, EvaluationMetrics, HarnessDiagnosis, HarnessHypothesis } from "./types.js";
+import { ComparisonResult, Evidence, EvaluationMetrics, HarnessDiagnosis, HarnessHypothesis } from "./types.js";
 
 /**
  * How strictly the fixed-executor generalization gate is enforced before a
@@ -344,7 +344,19 @@ export class ClosedLoopEngine {
     const diagnoses: HarnessDiagnosis[] = [];
     for (const ep of episodes) {
       const diag = this.diagnoser.diagnoseEpisode(ep);
-      if (diag) diagnoses.push(diag);
+      if (diag) {
+        // Episode provenance: the failure diagnoser produces one diagnosis per
+        // episode but does not record WHICH episode. Consumers that need to
+        // attribute evidence (the task-catalogue report contract de-duplicates
+        // episode ids for independent_samples) read detail.episodeId — the
+        // same convention the success analyzer already uses.
+        diag.evidence.push({
+          type: "episode",
+          summary: `Diagnosed from episode ${ep.id} (${ep.goal.slice(0, 80)})`,
+          detail: { episodeId: ep.id },
+        });
+        diagnoses.push(diag);
+      }
     }
     diagnoses.push(...this.successAnalyzer.analyzeEpisodes(episodes));
 
