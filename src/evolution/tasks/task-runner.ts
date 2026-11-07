@@ -195,12 +195,21 @@ export class TaskRunner {
     }
     const report = this.deps.reportGenerator.finalize(task, result.partial, currentCommit);
     this.deps.reportStore.save(report);
-    this.deps.backlog.transition(task.id, "investigated", {
+    // Re-diagnosis (already investigated + new evidence) REFRESHES the entry;
+    // a first diagnosis TRANSITIONS pending → investigated. The state machine
+    // forbids investigated → investigated, and rightly so.
+    const entry = this.deps.backlog.get(task.id);
+    const patch = {
       lastEvaluatedCommit: currentCommit,
       lastReportId: report.id,
       evidenceWindowFrom: Date.parse(report.confidence.evidence_window.from) || null,
       evidenceWindowTo: Date.parse(report.confidence.evidence_window.to) || null,
-    });
+    };
+    if (entry?.state === "investigated") {
+      this.deps.backlog.refresh(task.id, patch);
+    } else {
+      this.deps.backlog.transition(task.id, "investigated", patch);
+    }
     return {
       task,
       mode: "diagnose",
@@ -243,13 +252,14 @@ export class TaskRunner {
   }
 
   /**
-   * Ranks all pending tasks and returns the top candidate. Tasks already in
-   * in_progress or completed are excluded. Tasks in rejected_deferred are
-   * excluded unless their next_evaluation_condition is satisfied (the caller
-   * is responsible for evaluating that condition).
+   * Ranks all pending tasks and returns the full ranked list (see
+   * pickNext for the eligibility and mode rules). The catalogue sweep walks
+   * this list so a cadence-deferred task cannot wedge the queue: it simply
+   * proceeds to the next rank.
    */
-  async pickNext(): Promise<PrioritizationOutput | null> {
+  async pickRanked(opts: { mode?: TaskDefinition["execution"]["mode"] } = {}): Promise<PrioritizationOutput[]> {
     const eligible = this.deps.registry.all().filter((t) => {
+      if (opts.mode && t.execution.mode !== opts.mode) return false;
       const e = this.deps.backlog.get(t.id);
       if (!e) return true;
       if (e.state === "in_progress" || e.state === "completed") return false;
@@ -257,7 +267,7 @@ export class TaskRunner {
       return true;
     });
 
-    if (eligible.length === 0) return null;
+    if (eligible.length === 0) return [];
 
     const inputs: PrioritizationInput[] = eligible.map((task) => ({
       task,
@@ -266,7 +276,17 @@ export class TaskRunner {
     }));
 
     const prioritizer = new TaskPrioritizer(this.deps.policies, this.deps.registry);
-    const ranked = prioritizer.rank(inputs);
+    return prioritizer.rank(inputs);
+  }
+
+  /**
+   * Ranks all pending tasks and returns the top candidate (the first entry
+   * of pickRanked). Tasks already in in_progress or completed are excluded;
+   * tasks in rejected_deferred are excluded until their
+   * next_evaluation_condition is satisfied (the caller evaluates that).
+   */
+  async pickNext(opts: { mode?: TaskDefinition["execution"]["mode"] } = {}): Promise<PrioritizationOutput | null> {
+    const ranked = await this.pickRanked(opts);
     return ranked[0] ?? null;
   }
 

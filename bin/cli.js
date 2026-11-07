@@ -63,6 +63,7 @@ Usage:
   nexum trust [status|revoke]   Review and trust this workspace's settings and .env
   nexum asl [validate|graph]    Architecture definition commands
   nexum eval <dataset.json>     Score real agent runs against an evaluation dataset
+  nexum benchmark [options]    Benchmark discovered models across built-in cases
   nexum evolve [options]        Harness evolution and self-development commands
   nexum plugins sandbox <file>  Trial-run a plugin in the worker sandbox
   nexum plugins verify [id…]    Re-verify installed marketplace plugins
@@ -119,6 +120,11 @@ if (command === "doctor") {
 if (command === "eval") {
   const { runEvalCommand } = await import("../dist/evaluation/cli.js");
   process.exit(await runEvalCommand(process.argv.slice(3)));
+}
+
+if (command === "benchmark") {
+  const { runBenchmarkCli } = await import("../dist/benchmark/cli.js");
+  process.exit(await runBenchmarkCli(process.argv.slice(3)));
 }
 
 if (command === "evolve") {

@@ -14,7 +14,9 @@ import { workspaceStateDir } from "../../platform/paths.js";
 import { saveWorkspaceConfig } from "../../cli/config.js";
 import { EvolutionEngine } from "../../evolution/engine.js";
 import { HarnessRegistry } from "../../evolution/registry.js";
-import { formatDiagnosesText, formatHistory, loadRecentEpisodes } from "../../evolution/cli.js";
+import { ClosedLoopEngine } from "../../evolution/engine-v2.js";
+import { ExperienceStore } from "../../evolution/experience/experience-store.js";
+import { formatDiagnosesText, formatHistory, formatTargetText, loadAllEpisodes } from "../../evolution/cli.js";
 import type { AgentMode } from "../../runtime/types.js";
 import { THEME_ORDER } from "../../runtime/types.js";
 import type { ShellAgent } from "../App.js";
@@ -401,15 +403,18 @@ async function handleEvolveEffect(
   const root = workspaceRoot ?? process.cwd();
   const stateDir = workspaceStateDir(root);
   mkdirSync(stateDir, { recursive: true });
-  const registry = new HarnessRegistry(join(stateDir, "evolution.db"));
-  const engine = new EvolutionEngine({ registry });
-  try {
-    if (action === "history") {
-      const text = formatHistory(engine.listVersions(), engine.getActiveVersion());
-      bus.publish({ type: "conversation.message", role: "assistant", text: "```\n" + text + "\n```" });
-      return;
-    }
-    if (action === "rollback") {
+
+  // history/rollback are registry operations (unchanged in v2.4) — they run
+  // through the v1 engine, which owns the HarnessRegistry API.
+  if (action === "history" || action === "rollback") {
+    const registry = new HarnessRegistry(join(stateDir, "evolution.db"));
+    const engine = new EvolutionEngine({ registry });
+    try {
+      if (action === "history") {
+        const text = formatHistory(engine.listVersions(), engine.getActiveVersion());
+        bus.publish({ type: "conversation.message", role: "assistant", text: "```\n" + text + "\n```" });
+        return;
+      }
       if (!target) return;
       engine.rollback(target);
       bus.publish({ type: "notification", kind: "success", text: `Active harness rolled back to ${target}` });
@@ -419,11 +424,21 @@ async function handleEvolveEffect(
         text: `Active harness rolled back to **${target}**.`,
       });
       return;
+    } finally {
+      registry.close();
     }
-    const episodes = loadRecentEpisodes(root, 20);
-    const { diagnoses, plan } = engine.diagnoseEpisodes(episodes);
+  }
+
+  // diagnose/benchmark run the v2.4 closed-loop pipeline: failure diagnoser
+  // AND success analyzer over the full episode feed, then Aspire target
+  // formation — not just the v1 failure-only diagnosis.
+  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
+  const engine = new ClosedLoopEngine({ experienceStore });
+  try {
+    const episodes = loadAllEpisodes(root).slice(0, 20);
+    const observation = engine.observe(episodes);
     if (action === "benchmark") {
-      const suites = plan?.recommendedBenchmarkCategories ?? ["execution", "agentic-looping"];
+      const suites = observation.plan?.recommendedBenchmarkCategories ?? ["execution", "agentic-looping"];
       bus.publish({
         type: "conversation.message",
         role: "assistant",
@@ -431,9 +446,19 @@ async function handleEvolveEffect(
       });
       return;
     }
-    bus.publish({ type: "conversation.message", role: "assistant", text: formatDiagnosesText(diagnoses, plan) });
+    const successDriven = observation.diagnoses.filter(
+      (d) => d.failureClass === "efficiency_opportunity" || d.failureClass === "success_pattern",
+    ).length;
+    const text =
+      formatDiagnosesText(observation.diagnoses, observation.plan) +
+      (successDriven > 0
+        ? `\n\n[Evolution] Success-driven signals: ${successDriven} diagnosis(esis) from SUCCESSFUL episodes.`
+        : "") +
+      "\n\n" +
+      formatTargetText(observation);
+    bus.publish({ type: "conversation.message", role: "assistant", text });
   } finally {
-    registry.close();
+    experienceStore.close();
   }
 }
 

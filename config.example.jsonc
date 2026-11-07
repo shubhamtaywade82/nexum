@@ -60,7 +60,11 @@
 
   // ── Hybrid local/cloud & quality gates ───────────────────────────────────
   "enableLocalWorker": true, // optional, default: true — quick model first
-  "enableVerifier": false, // optional, default: false — critic pass (experimental)
+  // optional, default: true when quickModel is set — critic pass over
+  // quick-model drafts (a critic outage accepts the draft; a rejection
+  // escalates to the primary model). Stays false without a quickModel:
+  // critiquing the primary model's drafts then re-running them doubles cost.
+  // "enableVerifier": false,
   "enableSelfConsistency": false, // optional, default: false — voting across N samples
   "selfConsistencyN": 3, // optional, default: 3 votes
   "selfConsistencyThreshold": 0.5, // optional, default: 0.5 agreement needed
