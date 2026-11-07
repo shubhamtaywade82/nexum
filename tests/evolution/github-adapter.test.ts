@@ -180,7 +180,12 @@ describe("GitHubDeliveryAdapter", () => {
               user: { login: "r1", type: "User" },
               submitted_at: "2026-01-01T00:00:00Z",
             },
-            { state: "APPROVED", commit_id: "sha", user: { login: "r2", type: "User" }, submitted_at: "2026-01-02T00:00:00Z" },
+            {
+              state: "APPROVED",
+              commit_id: "sha",
+              user: { login: "r2", type: "User" },
+              submitted_at: "2026-01-02T00:00:00Z",
+            },
           ],
         };
       }
@@ -239,7 +244,12 @@ describe("GitHubDeliveryAdapter", () => {
         return {
           status: 200,
           json: [
-            { state: "APPROVED", commit_id: "sha", user: { login: "author", type: "User" }, submitted_at: "2026-01-02T00:00:00Z" },
+            {
+              state: "APPROVED",
+              commit_id: "sha",
+              user: { login: "author", type: "User" },
+              submitted_at: "2026-01-02T00:00:00Z",
+            },
           ],
         };
       }
@@ -266,7 +276,12 @@ describe("GitHubDeliveryAdapter", () => {
         return {
           status: 200,
           json: [
-            { state: "APPROVED", commit_id: "sha", user: { login: "automation[bot]", type: "Bot" }, submitted_at: "2026-01-02T00:00:00Z" },
+            {
+              state: "APPROVED",
+              commit_id: "sha",
+              user: { login: "automation[bot]", type: "Bot" },
+              submitted_at: "2026-01-02T00:00:00Z",
+            },
           ],
         };
       }
