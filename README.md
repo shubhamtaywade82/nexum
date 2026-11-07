@@ -309,10 +309,10 @@ Canonical product variables are `NEXUM_*`. Legacy `DEVAGENT_*` names still work
 | `NEXUM_SHELL_IMAGE`                                                                              | `nexum-sandbox:latest`   | Docker image for sandbox                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `NEXUM_SHELL_TIMEOUT_SEC`                                                                        | `30`                     | Shell command timeout in seconds                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `NEXUM_TOOL_SELECTION_MODE`                                                                      | `hybrid`                 | `heuristic` \| `llm` \| `hybrid` — how `DynamicToolSelector` prunes exposed tools                                                                                                                                                                                                                                                                                                                                                                                     |
-| `NEXUM_AUTO_PLAN`                                                                                | `ask`                    | `ask` \| `always` \| `off` — whether a multi-step request is offered to the plan orchestrator (`ask` needs approval)                                                                                                                                                                                                                                                                                                                                                  |
+| `NEXUM_AUTO_PLAN`                                                                                | `always`                 | `always` \| `ask` \| `off` — multi-step requests use the checkpointed plan orchestrator by default                                                                                                                                                                                                                                                                                                                                                  |
 | `NEXUM_MAX_ACTIVE_TOOLS`                                                                         | —                        | Cap on tools exposed per turn                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `NEXUM_MAX_LOGS` / `NEXUM_MAX_CONVERSATION` / `NEXUM_MAX_TOOL_CALLS` / `NEXUM_MAX_NOTIFICATIONS` | 500/500/200/20           | Bounded buffer sizes (`src/runtime/config.ts`)                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `NEXUM_AUTO_APPROVE`                                                                             | `false`                  | Approve every destructive tool call without prompting — see [Configuration files](#configuration-files)                                                                                                                                                                                                                                                                                                                                                               |
+| `NEXUM_AUTO_APPROVE`                                                                             | `true`                   | Approve confirmation-required tool calls without prompting; includes destructive workspace operations — see [Configuration files](#configuration-files)                                                                                                                                                                                                                                                                                                                                                               |
 | `NEXUM_NO_DEPRECATION_WARNINGS`                                                                  | —                        | Set to `1` to silence `DEVAGENT_*` deprecation warnings (CI)                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Configuration files
@@ -350,7 +350,7 @@ directions.
   "quickModel": "minicpm5-1b",
   "toolSelectionMode": "hybrid",
   "maxActiveTools": 8,
-  "autoApprove": false,
+  "autoApprove": true,
   "mcpServers": [{ "name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] }],
 }
 ```
@@ -365,15 +365,14 @@ the TUI. Three ways to answer them:
 | --------------------- | ----------------------------------------------------------------------------------------------- |
 | Interactive (default) | The TUI's approval overlay.                                                                     |
 | Programmatic          | Register a handler: `agent.on("onApprovalRequested", (r) => agent.resolveApproval(r.id, true))` |
-| Auto-approve          | `"autoApprove": true` in a config file, or `NEXUM_AUTO_APPROVE=true`                            |
+| Auto-approve          | Enabled by default; set `"autoApprove": false` or `NEXUM_AUTO_APPROVE=false` to restore prompts  |
 
-With no handler registered and `autoApprove` off, destructive calls are **denied**
-rather than left hanging — relevant when embedding `Agent` as a library.
-
-**Auto-approve removes the only confirmation on irreversible actions.** `run_shell`
-still executes inside the Docker sandbox rooted at the workspace, but `delete_file`
-does not — it deletes real files with no prompt and no undo. Use it in CI, benchmark
-runs, and throwaway containers; prefer the workspace-level `.nexum/config.json`
+**Auto-approve removes the confirmation step for confirmation-required tool calls.**
+With the default enabled, destructive shell operations and file deletions can run
+without an interactive prompt. The shell sandbox still constrains command execution,
+but file tools modify the real workspace and deletion has no undo. Keep the sandbox
+enabled, set a narrow `writeScope`, and use only trusted workspaces. Set
+`NEXUM_AUTO_APPROVE=false` to restore the approval prompt when needed.
 over `~/.nexum/config.json` so it can't follow you into another project.
 
 ## Migration from DevAgent TS
