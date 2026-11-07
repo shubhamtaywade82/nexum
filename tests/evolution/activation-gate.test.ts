@@ -1,5 +1,6 @@
 import {
   decideActivation,
+  resolveDeliveryPolicy,
   type ActivationEvidence,
   type MergeVerification,
 } from "../../src/evolution/delivery/activation-gate.js";
@@ -26,7 +27,7 @@ function verified(over: Partial<MergeVerification> = {}): MergeVerification {
 
 function complete(over: Partial<ActivationEvidence> = {}): ActivationEvidence {
   return {
-    explicitOptIn: true,
+    activationEnabled: true,
     githubDelivery: true,
     candidateCommit: CANDIDATE,
     review: { headSha: CANDIDATE, approved: true },
@@ -37,6 +38,19 @@ function complete(over: Partial<ActivationEvidence> = {}): ActivationEvidence {
   };
 }
 
+describe("default delivery policy", () => {
+  it("auto-accepts an approved candidate and merges it after all delivery gates pass", () => {
+    expect(resolveDeliveryPolicy({})).toEqual({ autoAccept: true, mergeOnAccept: true });
+  });
+
+  it("allows an explicit emergency opt-out without weakening the default", () => {
+    expect(resolveDeliveryPolicy({ autoAccept: false, mergeOnAccept: false })).toEqual({
+      autoAccept: false,
+      mergeOnAccept: false,
+    });
+  });
+});
+
 describe("decideActivation: the complete chain", () => {
   it("activates the merge commit when every link is proven for the candidate commit", () => {
     expect(decideActivation(complete())).toEqual({ ok: true, mergeCommitSha: MERGE });
@@ -45,7 +59,7 @@ describe("decideActivation: the complete chain", () => {
 
 describe("decideActivation fails closed on every broken link", () => {
   const cases: Array<[string, Partial<ActivationEvidence>, RegExp]> = [
-    ["no explicit opt-in", { explicitOptIn: false }, /explicitly requested/],
+    ["runtime activation explicitly disabled", { activationEnabled: false }, /disabled/],
     ["no GitHub delivery (--mutate without --github)", { githubDelivery: false }, /no GitHub delivery/],
     ["candidate commit is not a full sha", { candidateCommit: "main" }, /full commit sha/],
     ["review never read", { review: null }, /no review verdict/],
