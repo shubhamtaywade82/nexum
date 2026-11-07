@@ -698,6 +698,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
         tier: "cloud",
         apiKey: "k",
         model: "gemma4:31b",
+        enableHeuristicGate: false,
       },
       events: { onModelUsed },
     });
