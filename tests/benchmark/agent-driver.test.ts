@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { Agent } from "../../src/cli/agent.js";
 import { createAgentDriver, caseRequest } from "../../src/benchmark/agent-driver.js";
 import { runBenchmark, type BenchmarkTarget, type CaseRunOutcome } from "../../src/benchmark/runner.js";
@@ -66,6 +67,8 @@ const target = (): BenchmarkTarget => ({
   tier: "local",
   provider: new Provider({ tier: "local", model: "bench-model" }),
 });
+
+isolateModelSubsystems();
 
 describe("agent-driven benchmark", () => {
   const originalFetch = globalThis.fetch;

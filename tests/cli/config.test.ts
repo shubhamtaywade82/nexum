@@ -167,6 +167,62 @@ describe("workspace root resolution (git-root, like most editor tooling)", () =>
   });
 });
 
+describe("Docker tool defaults", () => {
+  const originalEnv = { ...process.env };
+  let workspaceRoot: string;
+
+  beforeEach(async () => {
+    workspaceRoot = await mkdtemp(join(tmpdir(), "docker-config-test-"));
+    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
+    process.env.DEVAGENT_TEST_NO_GLOBAL = "true";
+    process.env.NEXUM_TEST_NO_GLOBAL = "true";
+    delete process.env.NEXUM_DOCKER_TOOL;
+    delete process.env.NEXUM_DOCKER_EGRESS;
+    delete process.env.DEVAGENT_DOCKER_TOOL;
+    delete process.env.DEVAGENT_DOCKER_EGRESS;
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("enables Docker tooling and container egress by default in a trusted workspace", () => {
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+
+    const config = loadConfig({ trustStore });
+
+    expect(config.dockerTool).toBe(true);
+    expect(config.dockerEgress).toBe(true);
+    expect(config.sandbox).toBe(true);
+  });
+
+  it("does not inherit repository-controlled Docker privileges in an untrusted workspace", () => {
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      JSON.stringify({ dockerTool: true, dockerEgress: true }),
+    );
+    const config = loadConfig({ workspaceRoot, trustStore: WorkspaceTrustStore.inMemory() });
+
+    expect(config.dockerTool).toBe(false);
+    expect(config.dockerEgress).toBe(false);
+    expect(config.sandbox).toBe(true);
+  });
+
+  it("allows the operator to turn off Docker access and egress explicitly", () => {
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    process.env.NEXUM_DOCKER_TOOL = "false";
+    process.env.NEXUM_DOCKER_EGRESS = "false";
+
+    const config = loadConfig({ trustStore });
+
+    expect(config.dockerTool).toBe(false);
+    expect(config.dockerEgress).toBe(false);
+  });
+});
+
 describe("enableHeuristicGate flag", () => {
   const originalEnv = { ...process.env };
   let workspaceRoot: string;
@@ -247,14 +303,14 @@ describe("loadConfig host/tier interaction", () => {
 });
 
 describe("parseAutoPlan", () => {
-  it("accepts the three modes, honours the legacy hint switch, and defaults to ask", async () => {
+  it("accepts the three modes, honours the legacy hint switch, and defaults to always", async () => {
     const { parseAutoPlan } = await import("../../src/cli/config.js");
     expect(parseAutoPlan("always")).toBe("always");
     expect(parseAutoPlan(" OFF ")).toBe("off");
     expect(parseAutoPlan("ask")).toBe("ask");
     expect(parseAutoPlan(undefined, "0")).toBe("off");
-    expect(parseAutoPlan("nonsense")).toBe("ask");
-    expect(parseAutoPlan(undefined)).toBe("ask");
+    expect(parseAutoPlan("nonsense")).toBe("always");
+    expect(parseAutoPlan(undefined)).toBe("always");
   });
 });
 
@@ -315,12 +371,12 @@ describe("commented config file (config.example.jsonc)", () => {
     // these are unset unless the example's values were read
     expect(cfg.shellTimeoutSec).toBe(30);
     expect(cfg.maxActiveTools).toBe(8);
-    expect(cfg.autoApprove).toBe(false);
+    expect(cfg.autoApprove).toBe(true);
     expect(cfg.sandbox).toBe(true);
   });
 });
 
-describe("enableVerifier default (graduated from experimental)", () => {
+describe("enableVerifier default (always active)", () => {
   const originalEnv = { ...process.env };
   let workspaceRoot: string;
   let trustStore: ReturnType<typeof WorkspaceTrustStore.inMemory>;
@@ -342,8 +398,8 @@ describe("enableVerifier default (graduated from experimental)", () => {
     process.env = { ...originalEnv };
   });
 
-  it("stays off by default when no quickModel is configured (backwards compatible)", () => {
-    expect(loadConfig({ trustStore }).enableVerifier).toBe(false);
+  it("stays on by default when no quickModel is configured", () => {
+    expect(loadConfig({ trustStore }).enableVerifier).toBe(true);
   });
 
   it("turns on by default when a quickModel is configured", () => {
@@ -353,13 +409,13 @@ describe("enableVerifier default (graduated from experimental)", () => {
     expect(cfg.enableVerifier).toBe(true);
   });
 
-  it("NEXUM_VERIFIER=false wins over the quickModel-conditional default", () => {
+  it("NEXUM_VERIFIER=false remains an emergency opt-out", () => {
     process.env.NEXUM_QUICK_MODEL = "minicpm5";
     process.env.NEXUM_VERIFIER = "false";
     expect(loadConfig({ trustStore }).enableVerifier).toBe(false);
   });
 
-  it("an explicit enableVerifier in the config file wins over the conditional default", async () => {
+  it("an explicit enableVerifier in the config file wins over the default", async () => {
     writeFileSync(
       join(workspaceRoot, ".nexum", "config.json"),
       JSON.stringify({ quickModel: "minicpm5", enableVerifier: false }),

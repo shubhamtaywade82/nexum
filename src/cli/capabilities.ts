@@ -124,7 +124,7 @@ export async function collectCapabilities(input: CapabilityInputs): Promise<Feat
       id: "sandbox",
       label: "Docker sandbox",
       state: "off",
-      detail: "sandbox disabled: shell commands run on the host and each call needs confirmation",
+      detail: "sandbox disabled: shell commands run on the host with user privileges and no container isolation",
     });
   } else if (input.sandbox.imageReady === false) {
     caps.push({
@@ -224,7 +224,7 @@ export async function collectCapabilities(input: CapabilityInputs): Promise<Feat
     state: input.dockerToolEnabled ? "active" : "off",
     detail: input.dockerToolEnabled
       ? "enabled (root-equivalent host access)"
-      : "opt-in: dockerTool / NEXUM_DOCKER_TOOL=1",
+      : "off in untrusted workspaces by default; enable via trusted workspace or operator setting",
   });
 
   return caps;

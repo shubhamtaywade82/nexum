@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,6 +59,8 @@ function routeShow(fetchMock: jest.Mock): jest.Mock {
     return fetchMock(url, init);
   });
 }
+
+isolateModelSubsystems();
 
 describe("Agent wiring — model budget", () => {
   afterEach(() => jest.restoreAllMocks());
@@ -150,7 +153,13 @@ describe("Agent wiring — decision plane", () => {
     });
     const onStatus = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableDecision: true },
+      config: {
+        workspaceRoot: dir,
+        tier: "local",
+        model: "test-model",
+        enableDecision: true,
+        enableHeuristicGate: false,
+      },
       decisionGateway: gateway,
       events: { onStatus },
     });
@@ -165,7 +174,13 @@ describe("Agent wiring — decision plane", () => {
     mockFetch((b) => (b.model === "minicpm5-1b" ? "quick" : "primary"));
     const { DecisionTransportError } = await import("../../src/models/decision/index.js");
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableDecision: true },
+      config: {
+        workspaceRoot: dir,
+        tier: "local",
+        model: "test-model",
+        enableDecision: true,
+        enableHeuristicGate: false,
+      },
       decisionGateway: new FakeDecisionGateway({ decisions: {}, failWith: new DecisionTransportError("down") }),
     });
     expect(await agent.runUserMessage("hmm, thoughts on this?")).toBe("quick");

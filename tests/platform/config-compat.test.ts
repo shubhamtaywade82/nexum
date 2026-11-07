@@ -109,6 +109,6 @@ describe("loadConfig — DevAgent → Nexum compatibility matrix", () => {
     const cfg = loadConfig();
     expect(cfg.model).toBe("qwen3.5:4b");
     expect(cfg.tier).toBe("local");
-    expect(cfg.autoApprove).toBe(false);
+    expect(cfg.autoApprove).toBe(true);
   });
 });

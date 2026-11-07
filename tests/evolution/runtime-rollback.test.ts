@@ -231,12 +231,13 @@ describe("ClosedLoopEngine runtime activation rollback", () => {
     expect(engine.experiments.record("exp-rt-1").lifecycle.state).toBe("ACTIVE");
   });
 
-  it("activateOnRuntime switches the live runtime onto the accepted candidate", async () => {
-    setupActiveExperiment();
+  it("activateOnRuntime refuses a locally finalized candidate without verified merge evidence", async () => {
+    setupActiveExperiment(); // ACTIVE by local finalization: no merge was ever confirmed
     runtime.active = "H0"; // simulate the runtime still being on the parent
-    const result = await engine.activateOnRuntime("exp-rt-1");
-    expect(result).toBe(true);
-    expect(runtime.active).toBe("H1");
+    const result = await engine.activateOnRuntime("exp-rt-1", undefined as never);
+    expect(result.ok).toBe(false);
+    expect(runtime.active).toBe("H0");
+    expect(runtime.switchedTo).toEqual([]);
   });
 
   it("without a runtime controller, evaluateActivationLive falls back to logical rollback", async () => {

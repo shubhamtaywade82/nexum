@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,6 +65,8 @@ function routeShow(fetchMock: jest.Mock): jest.Mock {
   });
 }
 
+isolateModelSubsystems();
+
 describe("Agent capability routing — quick-first with self-escalation", () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -95,7 +98,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     );
     const onModelUsed = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
       events: { onModelUsed },
     });
 
@@ -207,7 +210,13 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
+      config: {
+        workspaceRoot: dir,
+        tier: "local",
+        model: "test-model",
+        enableHeuristicGate: false,
+        enableVerifier: false,
+      },
       events: { onModelUsed },
     });
 
@@ -234,7 +243,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
       events: { onModelUsed },
     });
 
@@ -260,7 +269,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
       events: { onModelUsed },
     });
 
@@ -695,6 +704,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
         tier: "cloud",
         apiKey: "k",
         model: "gemma4:31b",
+        enableHeuristicGate: false,
       },
       events: { onModelUsed },
     });

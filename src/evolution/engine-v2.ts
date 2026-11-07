@@ -67,6 +67,18 @@ import {
   RuntimeRollbackReport,
 } from "./monitoring/runtime-activation.js";
 import { ChecksVerdict, DeliveryHandle, GitHubDeliveryAdapter, ReviewVerdict } from "./delivery/github-adapter.js";
+import {
+  ActivationEvidence,
+  decideActivation,
+  DeliveryFacts,
+  isCommitSha,
+  MergeOutcome,
+  MergeVerification,
+  resolveDeliveryPolicy,
+} from "./delivery/activation-gate.js";
+
+/** Result of an activation attempt: a verified commit, or the first reason it was refused. */
+export type ActivationResult = { ok: true; commitSha: string } | { ok: false; reason: string };
 import { formulateHypothesis } from "./hypothesis.js";
 import { EvolutionPlanner } from "./planner.js";
 import { provenanceYamlCodeBlock } from "./experiments/provenance.js";
@@ -646,13 +658,18 @@ export class ClosedLoopEngine {
     /**
      * Run the CANONICAL production path after eligibility: push the mutation
      * branch, open the PR, poll CI and review, auto-accept on approval, and
-     * merge. Requires ClosedLoopEngineOptions.githubDelivery.
+     * merge after the exact candidate head is human-approved. Requires
+     * ClosedLoopEngineOptions.githubDelivery.
      */
     github?: {
       checksTimeoutMs?: number;
-      /** Accept (APPROVED → ACCEPTED → ACTIVE) when review approves (default true). */
+      /** Accept (APPROVED → ACCEPTED) when review approves (default true). */
       autoAccept?: boolean;
-      /** Merge the PR once the candidate is ACTIVE (default true). */
+      /**
+       * Merge the PR after acceptance (default true). This is reached only after
+       * CI passes and a human approves the exact candidate head SHA. Runtime
+       * activation still waits for successful merge read-back and content verification.
+       */
       mergeOnAccept?: boolean;
     };
   }): Promise<
@@ -827,20 +844,46 @@ export class ClosedLoopEngine {
       report,
       alreadyCommitted: true,
     });
-    const ci = await adapter.syncCiFeedback(this.experiments, experimentId, handle.headSha, opts.checksTimeoutMs);
+    const headSha = handle.headSha;
+    const policy = resolveDeliveryPolicy(opts);
+    const ci = await adapter.syncCiFeedback(this.experiments, experimentId, headSha, opts.checksTimeoutMs);
     let review: ReviewVerdict | null = null;
     let accepted = false;
+    let merge: MergeOutcome | null = null;
+    let verification: MergeVerification | null = null;
     let merged = false;
     if (ci.passed) {
-      review = await adapter.syncReviewFeedback(this.experiments, experimentId, handle.prNumber, handle.headSha);
-      if (review.state === "approved" && (opts.autoAccept ?? true)) {
-        accepted = this.finalizeAcceptance(experimentId);
-        if (accepted && (opts.mergeOnAccept ?? true)) {
-          merged = await adapter.mergePullRequest(handle.prNumber, handle.headSha);
+      review = await adapter.syncReviewFeedback(this.experiments, experimentId, handle.prNumber, headSha);
+      if (review.state === "approved" && policy.autoAccept) {
+        // Approval is not a merge: the candidate is ACCEPTED here and only becomes ACTIVE below,
+        // after GitHub confirms the merge.
+        accepted = this.acceptApprovedCandidate(experimentId);
+        if (accepted && policy.mergeOnAccept) {
+          merge = await adapter.mergePullRequest(handle.prNumber, headSha);
+          if (merge.status === "merged") {
+            verification = await adapter.verifyMergedPull(
+              handle.prNumber,
+              headSha,
+              merge.mergeCommitSha,
+              artifact.commitSha,
+            );
+            merged =
+              verification.mergedFromReviewedHead &&
+              verification.mergeCommitMatches &&
+              verification.contentMatches &&
+              this.promoteMergedCandidate(experimentId, merge.mergeCommitSha);
+          }
         }
       }
     }
-    return { handle, ci, review, accepted, merged };
+    const facts: DeliveryFacts = {
+      candidateCommit: artifact.commitSha,
+      review: review ? { headSha, approved: review.state === "approved" } : null,
+      ci: { headSha, passed: ci.passed },
+      merge,
+      verification,
+    };
+    return { handle, ci, review, accepted, merge, verification, merged, facts };
   }
 
   // ── Post-activation monitoring ────────────────────────────────────────
@@ -855,7 +898,43 @@ export class ClosedLoopEngine {
     this.experiments.reportReviewOutcome(experimentId, approved ? "approved" : "changes_requested", reviewer);
   }
 
-  /** Completes acceptance: APPROVED → ACCEPTED → ACTIVE and updates the registry. */
+  /**
+   * GitHub path, step 1: review approved → ACCEPTED. Acceptance is not activation.
+   * The candidate stays out of ACTIVE until its merge is confirmed.
+   */
+  acceptApprovedCandidate(experimentId: string): boolean {
+    const machine = this.experiments.machine(experimentId);
+    if (machine.current() !== "APPROVED") return false;
+    const record = this.experiments.record(experimentId);
+    machine.transition("ACCEPTED", "Review approved");
+    record.lifecycle = { state: "ACCEPTED", enteredAt: Date.now() };
+    this.experiments.persistNow(experimentId);
+    return true;
+  }
+
+  /**
+   * GitHub path, step 2: a merge confirmed against GitHub → ACTIVE. Records the merge
+   * commit so activation can be cross-checked against it. Refuses a malformed sha and
+   * any experiment that is not ACCEPTED.
+   */
+  promoteMergedCandidate(experimentId: string, mergeCommitSha: string): boolean {
+    if (!isCommitSha(mergeCommitSha)) return false;
+    const machine = this.experiments.machine(experimentId);
+    if (machine.current() !== "ACCEPTED") return false;
+    const record = this.experiments.record(experimentId);
+    machine.transition("ACTIVE", "Candidate merged and verified on GitHub");
+    record.mergeCommitSha = mergeCommitSha;
+    record.lifecycle = { state: "ACTIVE", enteredAt: Date.now() };
+    this.experiments.persistNow(experimentId);
+    this.markCandidateActive(experimentId);
+    return true;
+  }
+
+  /**
+   * Local composition for runs without GitHub delivery: APPROVED → ACCEPTED → ACTIVE
+   * with no merge. ACTIVE reached here is NOT merge evidence. activateOnRuntime()
+   * still requires verified merge evidence before any runtime switch.
+   */
   finalizeAcceptance(experimentId: string): boolean {
     const machine = this.experiments.machine(experimentId);
     if (machine.current() !== "APPROVED") return false;
@@ -866,6 +945,13 @@ export class ClosedLoopEngine {
     // v2.4: persist the ACCEPTED → ACTIVE walk — otherwise a fresh process
     // hydrating this experiment would see it still at APPROVED.
     this.experiments.persistNow(experimentId);
+    this.markCandidateActive(experimentId);
+    return true;
+  }
+
+  /** Registry, metrics and the post-activation monitoring envelope for an experiment that is now ACTIVE. */
+  private markCandidateActive(experimentId: string): void {
+    const record = this.experiments.record(experimentId);
     if (this.registry) {
       this.registry.promoteVersion(record.candidate.harness);
     }
@@ -873,7 +959,6 @@ export class ClosedLoopEngine {
     if (switchRecord) switchRecord.accepted = true;
     // Post-activation monitoring starts the moment the candidate is live.
     this.registerActivationEnvelope(experimentId);
-    return true;
   }
 
   /**
@@ -1000,19 +1085,33 @@ export class ClosedLoopEngine {
   }
 
   /**
-   * Runtime-side ACTIVATION: switches the live runtime onto an accepted
-   * (ACTIVE) candidate and verifies it loaded healthily. Complements
-   * finalizeAcceptance() — the registry/state half — with the runtime half.
-   * Returns null when no runtime controller is wired; returns false when the
-   * experiment is not ACTIVE; throws when the runtime refuses the switch
-   * (callers should then roll back).
+   * Runtime-side ACTIVATION. Switches the live runtime onto the candidate's VERIFIED
+   * merge commit, and only when the activation gate passes: explicit opt-in, GitHub
+   * delivery, approval, CI and a confirmed merge, all for the candidate commit.
+   *
+   * The decision is taken from the evidence passed in. The stored record is only
+   * cross-checked: it must be ACTIVE, name the same candidate commit, and carry the
+   * same merge commit that was recorded on promotion.
+   *
+   * Throws when the runtime refuses the switch, and callers then roll back.
    */
-  async activateOnRuntime(experimentId: string): Promise<boolean | null> {
-    if (!this.runtimeActivation) return null;
+  async activateOnRuntime(experimentId: string, evidence: ActivationEvidence): Promise<ActivationResult> {
+    if (!this.runtimeActivation) return { ok: false, reason: "no runtime controller is wired" };
+    if (!evidence) return { ok: false, reason: "no activation evidence was supplied" };
+    const decision = decideActivation(evidence);
+    if (!decision.ok) return decision;
+    if (this.experiments.machine(experimentId).current() !== "ACTIVE") {
+      return { ok: false, reason: "experiment is not ACTIVE" };
+    }
     const record = this.experiments.record(experimentId);
-    if (this.experiments.machine(experimentId).current() !== "ACTIVE") return false;
-    await this.runtimeActivation.switchTo(record.candidate.harness);
-    return true;
+    if (record.candidate.commit !== evidence.candidateCommit) {
+      return { ok: false, reason: "evidence is for a different candidate commit" };
+    }
+    if (record.mergeCommitSha !== decision.mergeCommitSha) {
+      return { ok: false, reason: "verified merge commit differs from the one recorded on promotion" };
+    }
+    await this.runtimeActivation.switchTo(record.candidate.harness, decision.mergeCommitSha);
+    return { ok: true, commitSha: decision.mergeCommitSha };
   }
 }
 
@@ -1032,10 +1131,16 @@ export interface EvolutionCycleGithubResult {
   ci: ChecksVerdict;
   /** Review verdict; null when CI did not pass (review never started). */
   review: ReviewVerdict | null;
-  /** True when the candidate walked APPROVED → ACCEPTED → ACTIVE. */
+  /** Review approved and the candidate reached ACCEPTED. Acceptance is not a merge. */
   accepted: boolean;
-  /** True when the PR was merged after activation. */
+  /** The merge call's typed result; null when no merge was attempted. */
+  merge: MergeOutcome | null;
+  /** Read-back verification of the merge against GitHub; null when not performed. */
+  verification: MergeVerification | null;
+  /** True only when the merge was confirmed against GitHub and the candidate reached ACTIVE. */
   merged: boolean;
+  /** GitHub-observed facts for the activation gate and the experiment artifact. */
+  facts: DeliveryFacts;
 }
 
 function msg(err: unknown): string {

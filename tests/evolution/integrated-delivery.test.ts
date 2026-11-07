@@ -16,6 +16,9 @@ import { Episode } from "../../src/learning/types.js";
 
 const exec = promisify(execFile);
 
+/** The commit GitHub reports for the squash merge in these fakes. */
+const MERGE_SHA = "9".repeat(40);
+
 async function git(cwd: string, args: string[]): Promise<string> {
   const res = await exec("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd });
   return res.stdout;
@@ -97,7 +100,7 @@ interface RecordedCall {
  */
 function makeFakes(options: {
   checkRuns?: Array<{ name: string; status: "queued" | "in_progress" | "completed"; conclusion: string | null }>;
-  reviews?: Array<{ state: string; user?: { login?: string }; submitted_at?: string }>;
+  reviews?: Array<{ state: string; user?: { login?: string; type?: string }; submitted_at?: string }>;
   mergeStatus?: number;
   prStatus?: number;
 }): { runGit: GitCommandRunner; http: GitHubHttpClient; calls: RecordedCall[]; pushedRefs: string[] } {
@@ -137,7 +140,29 @@ function makeFakes(options: {
       return { status: 200, json: (options.reviews ?? []).map((review) => ({ ...review, commit_id: headSha })) };
     }
     if (path.endsWith("/merge")) {
-      return { status: options.mergeStatus ?? 200, json: { merged: true } };
+      const status = options.mergeStatus ?? 200;
+      return status === 200
+        ? { status, json: { merged: true, sha: MERGE_SHA } }
+        : { status, json: { message: "Pull Request is not mergeable" } };
+    }
+    // Read-back: GitHub reports the pull as merged only when the merge succeeded.
+    if (path.endsWith("/pulls/42") && init?.method !== "PUT") {
+      const merged = (options.mergeStatus ?? 200) === 200;
+      return {
+        status: 200,
+        json: {
+          user: { login: "pr-author" },
+          merged,
+          merge_commit_sha: merged ? MERGE_SHA : null,
+          head: { sha: headSha },
+        },
+      };
+    }
+    if (/\/commits\/[0-9a-f]{40}$/.test(path)) {
+      return {
+        status: 200,
+        json: { files: [{ filename: "nexum.harness.json", status: "modified", sha: "blob-candidate" }] },
+      };
     }
     return { status: 404, json: { message: "not found" } };
   };
@@ -199,10 +224,12 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
     return obs;
   }
 
-  it("walks the FULL canonical path: mutation → PR → CI green → approved → ACTIVE → merged", async () => {
+  it("by default an independently reviewed candidate is merged and activated", async () => {
     const fakes = makeFakes({
       checkRuns: [{ name: "build", status: "completed", conclusion: "success" }],
-      reviews: [{ state: "APPROVED", user: { login: "maintainer" }, submitted_at: "2026-01-01T00:00:00Z" }],
+      reviews: [
+        { state: "APPROVED", user: { login: "maintainer", type: "User" }, submitted_at: "2026-01-01T00:00:00Z" },
+      ],
     });
     const engine = makeEngine(fakes);
     const obs = observation(engine);
@@ -223,6 +250,42 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
     expect(res.ok).toBe(true);
     if (!res.ok) return;
 
+    expect(res.github!.accepted).toBe(true);
+    expect(res.github!.review?.state).toBe("approved");
+    expect(res.github!.review?.reviewer).toBe("maintainer");
+    expect(res.github!.merge).toEqual({ status: "merged", mergeCommitSha: MERGE_SHA });
+    expect(res.github!.merged).toBe(true);
+    expect(fakes.calls.some((c) => c.method === "PUT" && c.path.endsWith("/merge"))).toBe(true);
+    expect(engine.experiments.machine("exp-gh-1").current()).toBe("ACTIVE");
+    expect(engine.experiments.record("exp-gh-1").mergeCommitSha).toBe(MERGE_SHA);
+  });
+
+  it("walks the FULL canonical path: mutation → PR → CI green → approved → ACTIVE → merged", async () => {
+    const fakes = makeFakes({
+      checkRuns: [{ name: "build", status: "completed", conclusion: "success" }],
+      reviews: [
+        { state: "APPROVED", user: { login: "maintainer", type: "User" }, submitted_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+    const engine = makeEngine(fakes);
+    const obs = observation(engine);
+
+    const res = await engine.runEvolutionCycle({
+      experimentId: "exp-gh-1",
+      parentHarnessId: "H0",
+      parentCommit: head,
+      candidateHarnessId: "H1",
+      repoRoot,
+      target: obs.target!,
+      diagnosis: obs.diagnoses[0],
+      scope: obs.mutationScope!,
+      baselineResults: results(0.4),
+      evaluateCandidate: () => results(0.9),
+      github: { mergeOnAccept: true },
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
     // The PR was created against the ACTUAL mutation branch, and the push
     // carried the real candidate commit.
     expect(res.github).toBeDefined();
@@ -237,7 +300,19 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
     expect(res.github!.review?.state).toBe("approved");
     expect(res.github!.review?.reviewer).toBe("maintainer");
     expect(res.github!.accepted).toBe(true);
+    // A merge counts only once GitHub has confirmed it by read-back.
+    expect(res.github!.merge).toEqual({ status: "merged", mergeCommitSha: MERGE_SHA });
+    expect(res.github!.verification).toEqual({
+      mergeCommitSha: MERGE_SHA,
+      candidateCommit: res.mutation.artifact!.commitSha,
+      mergedFromReviewedHead: true,
+      mergeCommitMatches: true,
+      contentMatches: true,
+    });
     expect(res.github!.merged).toBe(true);
+    expect(engine.experiments.record("exp-gh-1").mergeCommitSha).toBe(MERGE_SHA);
+    // The activation gate compares evidence to the experiment's candidate commit: they must be the same commit.
+    expect(engine.experiments.record("exp-gh-1").candidate.commit).toBe(res.mutation.artifact!.commitSha);
 
     // Lifecycle completed the whole path inside one cycle.
     const record = engine.experiments.record("exp-gh-1");
@@ -307,7 +382,13 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
   it("stops at CHANGES_REQUESTED when review demands rework", async () => {
     const fakes = makeFakes({
       checkRuns: [{ name: "build", status: "completed", conclusion: "success" }],
-      reviews: [{ state: "CHANGES_REQUESTED", user: { login: "maintainer" }, submitted_at: "2026-01-01T00:00:00Z" }],
+      reviews: [
+        {
+          state: "CHANGES_REQUESTED",
+          user: { login: "maintainer", type: "User" },
+          submitted_at: "2026-01-01T00:00:00Z",
+        },
+      ],
     });
     const engine = makeEngine(fakes);
     const obs = observation(engine);

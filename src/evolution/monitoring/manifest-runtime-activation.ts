@@ -116,8 +116,13 @@ export class ManifestRuntimeActivationController implements RuntimeActivationCon
    * manifest pointer. Throws (writing NOTHING) when the harness cannot be
    * resolved to a commit that exists in the repository.
    */
-  async switchTo(harnessId: string): Promise<void> {
-    const commitSha = await this.resolveCommit(harnessId);
+  async switchTo(harnessId: string, pinnedCommitSha?: string): Promise<void> {
+    if (pinnedCommitSha !== undefined && !/^[0-9a-f]{40}$/.test(pinnedCommitSha)) {
+      throw new Error(`Cannot switch runtime to "${harnessId}": pinned commit must be a full 40-character sha.`);
+    }
+    // An explicit pin (activation) is used as given: the caller has already verified the merge.
+    // Without one, resolution follows the registry or a git ref (used by rollback).
+    const commitSha = pinnedCommitSha ?? (await this.resolveCommit(harnessId));
     if (!commitSha) {
       throw new Error(
         `Cannot switch runtime to unknown harness "${harnessId}": not in the harness registry and not a git-resolvable ref.`,

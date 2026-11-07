@@ -593,6 +593,15 @@ async function handleRunEvents(
   const runRow = await ctx.repos.runs.get(runId);
   const isFinished = runRow && ["completed", "failed", "cancelled", "interrupted"].includes(runRow.status);
   if (isFinished && !unsubscribed) {
+    // The status is written only after its terminal event is appended, so the log now holds every event
+    // up to the status. Replay the tail persisted after the snapshot in step 2, or the stream closes before
+    // its terminal event.
+    const tail = await ctx.repos.events.listByRun(runId, highestSeq);
+    for (const item of tail) {
+      highestSeq = Math.max(highestSeq, item.seq);
+      const payload = { seq: item.seq, ...item.event };
+      res.write(`id: ${item.seq}\nevent: ${item.event.type}\ndata: ${JSON.stringify(payload)}\n\n`);
+    }
     unsubscribed = true;
     await unsubscribe();
     res.end();

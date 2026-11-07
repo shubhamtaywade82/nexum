@@ -24,6 +24,7 @@ import { existsSync, symlinkSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, sep } from "node:path";
 import { promisify } from "node:util";
+import { hostEnv } from "../../tools/command-runner.js";
 import { HarnessComponent, HarnessDiagnosis } from "../types.js";
 import { ImprovementTarget } from "../targets/target-engine.js";
 import { pathWithinAllowedPrefix, protectedEvaluationPath } from "./path-scope.js";
@@ -221,6 +222,8 @@ export class HeuristicMutationStrategy implements MutationStrategy {
  */
 export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
   private readonly run: (args: string[], cwd: string) => Promise<{ stdout: string; exitCode: number }>;
+  /** Runner for verification gates; the injected `run` (tests) applies to gates too. */
+  private readonly verifyRun: (args: string[], cwd: string) => Promise<{ stdout: string; exitCode: number }>;
   private readonly verifyCommands: string[][];
   private readonly linkNodeModulesFrom?: string;
   private readonly componentPaths: Partial<Record<HarnessComponent, string[]>>;
@@ -231,6 +234,7 @@ export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
 
   constructor(opts: MutationExecutorOptions = {}) {
     this.run = opts.run ?? defaultRun;
+    this.verifyRun = opts.run ?? runGate;
     this.verifyCommands = opts.verifyCommands ?? [["node", "--version"]];
     this.linkNodeModulesFrom = opts.linkNodeModulesFrom;
     this.componentPaths = opts.componentPaths ?? {};
@@ -352,7 +356,7 @@ export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
     const commands: Array<{ command: string; exitCode: number; output: string }> = [];
     let commandsOk = true;
     for (const argv of this.verifyCommands) {
-      const res = await this.run(argv, workspace.worktreePath);
+      const res = await this.verifyRun(argv, workspace.worktreePath);
       const output = (res.stdout ?? "").slice(-4000);
       commands.push({ command: argv.join(" "), exitCode: res.exitCode, output });
       if (res.exitCode !== 0) commandsOk = false;
@@ -385,12 +389,17 @@ export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
     if (status.stdout.trim() === "") {
       throw new Error(`Mutation produced no changes in ${workspace.worktreePath}`);
     }
+    // --no-verify: repository hooks are not part of the candidate's contract. A
+    // candidate can change tracked hook files (.husky/ is tracked here), and a
+    // hook would run on the host with the operator's environment. The verification
+    // gates above are the quality bar for a candidate.
     await this.git(workspace.worktreePath, [
       "-c",
       "user.name=Nexum Evolution",
       "-c",
       "user.email=evolution@nexum.local",
       "commit",
+      "--no-verify",
       "-m",
       commitMessage,
     ]);
@@ -534,8 +543,32 @@ export interface HarnessMutationExecutor {
   dispose(workspace: MutationWorkspace): Promise<void>;
 }
 
+/**
+ * Host runner for the executor's git plumbing. Git is host tooling with trusted
+ * configuration, and it needs the inherited environment (git's own GIT_CONFIG_*
+ * variables included) to keep working.
+ */
 function defaultRun(args: string[], cwd: string): Promise<{ stdout: string; exitCode: number }> {
-  return execFileAsync(args[0], args.slice(1), { cwd, maxBuffer: 16 * 1024 * 1024 })
+  return execArgv(args, cwd, undefined);
+}
+
+/**
+ * Runner for verification gates. Gates execute candidate-controlled code (tests,
+ * configs, scripts) on the host, so the child gets hostEnv(): the parent's
+ * environment without credential-looking variables (GITHUB_TOKEN, OLLAMA_API_KEY,
+ * NEXUM_GITHUB_TOKEN, …). Inheriting the full environment would let a candidate's
+ * `npm test` read the operator's tokens.
+ */
+function runGate(args: string[], cwd: string): Promise<{ stdout: string; exitCode: number }> {
+  return execArgv(args, cwd, hostEnv());
+}
+
+function execArgv(
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv | undefined,
+): Promise<{ stdout: string; exitCode: number }> {
+  return execFileAsync(args[0], args.slice(1), { cwd, env, maxBuffer: 16 * 1024 * 1024 })
     .then((r) => ({ stdout: r.stdout, exitCode: 0 }))
     .catch((err: NodeJS.ErrnoException & { stdout?: string; code?: number | string }) => {
       if (typeof err.code === "number") {

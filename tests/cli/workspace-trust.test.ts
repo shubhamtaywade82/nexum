@@ -69,6 +69,8 @@ afterEach(() => {
 describe("loadConfig gates workspace settings on trust", () => {
   it("untrusted: only safe keys apply; sandbox, docker, MCP, host, prompt and auto-approve are withheld", () => {
     writeConfig(hostile);
+    // The user's explicit global policy stays authoritative until the repo is trusted.
+    process.env.NEXUM_AUTO_APPROVE = "false";
     const cfg = loadConfig({ trustStore: store });
     expect(cfg.workspaceTrust).toMatchObject({ status: "untrusted", trusted: false });
     expect(cfg.workspaceTrust.withheldKeys.sort()).toEqual(

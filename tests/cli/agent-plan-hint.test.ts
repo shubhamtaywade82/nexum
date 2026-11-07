@@ -49,7 +49,10 @@ describe("multi-step auto-plan routing", () => {
   ]);
 
   function build(over: Record<string, unknown>, events: Record<string, unknown> = {}) {
-    return new Agent({ config: { workspaceRoot: dir, tier: "local", model: "m", ...over }, events: events as any });
+    return new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "m", autoApprove: false, ...over },
+      events: events as any,
+    });
   }
 
   it("ask mode with nobody to approve: hints once, runs a normal turn, starts no plan", async () => {

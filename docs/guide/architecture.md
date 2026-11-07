@@ -106,7 +106,7 @@ Gateway     │
 Key invariants:
 
 - The Decision Plane never falls back from a decision call to `Provider.chat()`.
-- It is **off by default** (`NEXUM_DECISION=true` to enable) and **auto-disabled in a cloud tier** (System One is local-only).
+- It is **on by default** in the local tier (`NEXUM_DECISION=false` to disable) and **auto-disabled in a cloud tier** (System One is local-only).
 - The decision model is independently configurable (`NEXUM_DECISION_MODEL`), independent of the primary generation `model`.
 - The Decision Plane only changes _which_ tools are surfaced or _whether_ the expensive critic is entered — it never executes a tool, never bypasses the `ApprovalBroker`, never replaces deterministic verification.
 
