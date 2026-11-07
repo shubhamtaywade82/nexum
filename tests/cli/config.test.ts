@@ -319,3 +319,53 @@ describe("commented config file (config.example.jsonc)", () => {
     expect(cfg.sandbox).toBe(true);
   });
 });
+
+describe("enableVerifier default (graduated from experimental)", () => {
+  const originalEnv = { ...process.env };
+  let workspaceRoot: string;
+  let trustStore: ReturnType<typeof WorkspaceTrustStore.inMemory>;
+
+  beforeEach(async () => {
+    workspaceRoot = await mkdtemp(join(tmpdir(), "config-verifier-"));
+    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
+    process.env.DEVAGENT_TEST_NO_GLOBAL = "true";
+    delete process.env.NEXUM_QUICK_MODEL;
+    delete process.env.NEXUM_VERIFIER;
+    delete process.env.DEVAGENT_QUICK_MODEL;
+    delete process.env.DEVAGENT_VERIFIER;
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("stays off by default when no quickModel is configured (backwards compatible)", () => {
+    expect(loadConfig({ trustStore }).enableVerifier).toBe(false);
+  });
+
+  it("turns on by default when a quickModel is configured", () => {
+    process.env.NEXUM_QUICK_MODEL = "minicpm5";
+    const cfg = loadConfig({ trustStore });
+    expect(cfg.quickModel).toBe("minicpm5");
+    expect(cfg.enableVerifier).toBe(true);
+  });
+
+  it("NEXUM_VERIFIER=false wins over the quickModel-conditional default", () => {
+    process.env.NEXUM_QUICK_MODEL = "minicpm5";
+    process.env.NEXUM_VERIFIER = "false";
+    expect(loadConfig({ trustStore }).enableVerifier).toBe(false);
+  });
+
+  it("an explicit enableVerifier in the config file wins over the conditional default", async () => {
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      JSON.stringify({ quickModel: "minicpm5", enableVerifier: false }),
+    );
+    const cfg = loadConfig({ trustStore });
+    expect(cfg.quickModel).toBe("minicpm5");
+    expect(cfg.enableVerifier).toBe(false);
+  });
+});

@@ -60,7 +60,8 @@ export interface CliConfig {
    * Default true when quickModel is set. Disable with NEXUM_LOCAL_WORKER=false. */
   enableLocalWorker?: boolean;
   /** After local generation, run a critic pass to catch confident-wrong answers.
-   * Off by default (experimental). Enable with NEXUM_VERIFIER=true. */
+   * Default: true when quickModel is set (the critic judges quick-model drafts);
+   * false otherwise. Enable/disable with NEXUM_VERIFIER=true/false. */
   enableVerifier?: boolean;
   /** For 'unknown' heuristic decisions, draw N samples and check agreement.
    * Off by default. Enable with NEXUM_SELF_CONSISTENCY=true. */
@@ -473,6 +474,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
 
   const tier: CliConfig["tier"] = (readEnv("TIER") || file.tier) === "cloud" ? "cloud" : "local";
 
+  // Quick model: env var wins, then config file. Hoisted because the
+  // verifier default below is conditional on it being set.
+  const quickModel = readEnv("QUICK_MODEL") || file.quickModel;
+
   // Theme: env var wins, then config file; unknown values fall back to
   // "default" so a typo can never crash the TUI on startup.
   const rawTheme = (readEnv("THEME") || file.theme || "").trim().toLowerCase();
@@ -503,14 +508,22 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     maxActiveTools,
     apiKeys: apiKeys.length ? apiKeys : undefined,
     accountLabels: Object.keys(accountLabels).length ? accountLabels : undefined,
-    quickModel: readEnv("QUICK_MODEL") || file.quickModel,
+    quickModel,
     // Hybrid architecture flags
     enableLocalWorker: readEnvFlag("LOCAL_WORKER", file.enableLocalWorker ?? true),
     // An explicit env value wins in BOTH directions. The previous
     // `env === "true" || file` form meant NEXUM_VERIFIER=false could not
     // switch off a config-file `true`, which is the opposite of how every
     // sibling flag here behaves.
-    enableVerifier: readEnvFlag("VERIFIER", file.enableVerifier ?? false),
+    //
+    // Default graduated from experimental (false) to conditional-on: when a
+    // dedicated quickModel is configured, the critic pass over quick-model
+    // drafts is on — its blast radius is bounded (critic outage accepts the
+    // draft; only quick-model answers are critiqued) and a small model's
+    // confident-wrong answers are exactly what it exists to catch. Without a
+    // quickModel the verifier would critique the PRIMARY model's drafts and
+    // re-run them at full cost, so it stays off there.
+    enableVerifier: readEnvFlag("VERIFIER", file.enableVerifier ?? Boolean(quickModel)),
     enableSelfConsistency: readEnvFlag("SELF_CONSISTENCY", file.enableSelfConsistency ?? false),
     selfConsistencyN,
     selfConsistencyThreshold,
