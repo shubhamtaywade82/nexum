@@ -98,7 +98,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     );
     const onModelUsed = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
       events: { onModelUsed },
     });
 
@@ -210,7 +210,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false, enableVerifier: false },
       events: { onModelUsed },
     });
 
@@ -237,7 +237,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
       events: { onModelUsed },
     });
 
@@ -263,7 +263,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
 
     const onModelUsed = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableHeuristicGate: false },
       events: { onModelUsed },
     });
 
