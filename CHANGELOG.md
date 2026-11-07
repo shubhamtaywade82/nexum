@@ -2,13 +2,14 @@
 
 ## Unreleased
 
-### Evolution: activation requires a verified merge
+### Default-on capabilities and verified evolution delivery
 
-- `--activate-runtime` is an explicit opt-in again. The default-on change is reverted.
-- Approval moves a candidate to `ACCEPTED`. It becomes `ACTIVE` only after GitHub confirms the merge by read-back: the pull is merged from the reviewed head, the merge commit matches, and the merged files match the candidate. A merge call that is rejected (405, 409, 422) or ambiguous never leads to activation.
-- The runtime is pinned to the verified merge commit. Activation fails closed without approval, passing CI, a verified merge, a matching candidate commit, or the explicit opt-in.
-- `mergeOnAccept` defaults to `false`. Merging stays manual until GitHub branch protection enforces review.
-- Experiment artifacts record `reviewApproved`, `mergeStatus`, `mergeCommitSha` and `contentVerified`. The sha256 in an artifact is a self-hash that detects accidental edits. It is not tamper-proof.
+- Model-side capabilities, the local verifier, self-consistency, automatic multi-step planning, and auto-approval are enabled by default. Auto-approval bypasses prompts for confirmation-required and destructive workspace actions; keep the sandbox enabled and use a trusted, bounded workspace.
+- The Docker daemon tool and container egress remain opt-in. The shell sandbox remains enabled by default and independently configurable.
+- GitHub evolution delivery runs automatically when `NEXUM_GITHUB_OWNER` and `NEXUM_GITHUB_REPO` are configured; `--no-github` keeps a run local. The production verification profile and production generalization policy apply to configured delivery.
+- An approved candidate is merged automatically only after CI passes and a human approves the exact candidate head SHA. Runtime activation is enabled by default, but fails closed unless GitHub confirms the merge and read-back verifies the merge commit and candidate content. `--no-activate-runtime` disables the final runtime switch for a run.
+- A missing GitHub destination means local mutation only; no runtime activation. Reviewer/CI/merge evidence is never inferred from missing data.
+- Experiment artifacts record `reviewApproved`, `mergeStatus`, `mergeCommitSha` and `contentVerified`. The sha256 in an artifact is a self-hash that detects accidental edits; it is not tamper-proof. GitHub branch protection remains a separate repository-admin control.
 
 ### CI healer and nexum rpc
 
