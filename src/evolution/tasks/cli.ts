@@ -24,6 +24,7 @@ import { BacklogTracker } from "./backlog-tracker.js";
 import { ReportStore } from "../reporting/report-store.js";
 import { TaskDefinition } from "./types.js";
 import { buildEngineWiring } from "./engine-wiring.js";
+import { TaskScheduler, sweepOnce } from "./task-scheduler.js";
 
 export interface TaskCliOptions {
   taskCatalog?: boolean;
@@ -32,6 +33,7 @@ export interface TaskCliOptions {
   taskBacklog?: boolean;
   taskPrioritize?: boolean;
   taskRun?: string;
+  taskContinuous?: boolean;
   taskCategory?: string;
   taskPriority?: string;
 }
@@ -46,6 +48,8 @@ Usage:
   nexum evolve --task-backlog                  show backlog state for all tasks
   nexum evolve --task-prioritize               rank pending tasks
   nexum evolve --task-run <id>                 run a task end-to-end (diagnose mode)
+  nexum evolve --task-continuous                sweep the catalogue on a schedule
+                                               (--interval <ms>, --max-cycles <n>)
 
 Filters (apply to --task-catalog and --task-prioritize):
   --task-category <name>                       learning|evolution_safety|agent_execution|
@@ -67,7 +71,13 @@ export function taskCliHelpText(): string {
 /** Returns true if `opts` requests any task-catalogue operation. */
 export function isTaskCliInvocation(opts: TaskCliOptions): boolean {
   return Boolean(
-    opts.taskCatalog || opts.taskValidate || opts.taskShow || opts.taskBacklog || opts.taskPrioritize || opts.taskRun,
+    opts.taskCatalog ||
+    opts.taskValidate ||
+    opts.taskShow ||
+    opts.taskBacklog ||
+    opts.taskPrioritize ||
+    opts.taskRun ||
+    opts.taskContinuous,
   );
 }
 
@@ -331,3 +341,52 @@ async function runRun(taskId: string): Promise<number> {
 
 // Re-export so callers (the closed-loop engine) can construct the same stores.
 export { BacklogTracker, ReportStore, TaskRegistry, TaskPrioritizer };
+
+// ── Continuous sweep (--task-continuous) ──────────────────────────────────
+
+export interface TaskContinuousOptions {
+  intervalMs?: number;
+  maxTasks?: number;
+}
+
+/**
+ * `nexum evolve --task-continuous`: the cadence-driven catalogue sweep.
+ * Every tick rebuilds the engine wiring (fresh episode snapshot — new
+ * episodes arriving while the loop runs are picked up), applies the
+ * schedules.yml ceilings, and runs at most one task. SIGINT stops cleanly.
+ */
+export async function runTaskContinuous(bounds: TaskContinuousOptions = {}): Promise<number> {
+  const root = findWorkspaceRoot(process.cwd());
+  const scheduler = new TaskScheduler({
+    // One wiring PER SWEEP: the engine wiring snapshots episodes at
+    // construction, so a long-running loop must re-observe on every tick.
+    sweep: async () => {
+      const wiring = buildEngineWiring({ workspaceRoot: root });
+      try {
+        return await sweepOnce({
+          runner: wiring.runner,
+          registry: wiring.registry,
+          backlog: wiring.backlog,
+          schedules: wiring.schedules,
+          getCurrentCommit: wiring.deps.getCurrentCommit,
+          getNewEvidenceCount: wiring.deps.getNewEvidenceCount,
+        });
+      } finally {
+        wiring.close();
+      }
+    },
+    intervalMs: bounds.intervalMs,
+    maxTasks: bounds.maxTasks,
+  });
+  const onSigint = () => scheduler.stop();
+  process.once("SIGINT", onSigint);
+  try {
+    const summary = await scheduler.run();
+    console.log(
+      `[TaskScheduler] Finished: ${summary.tasksRun} task(s) run, ${summary.tasksDeferred} deferred — ${summary.stoppedReason}.`,
+    );
+    return 0;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+  }
+}

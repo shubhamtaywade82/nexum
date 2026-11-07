@@ -71,5 +71,7 @@ export * from "./tasks/task-validator.js";
 export * from "./tasks/task-prioritizer.js";
 export * from "./tasks/backlog-tracker.js";
 export * from "./tasks/task-runner.js";
+export * from "./tasks/task-scheduler.js";
+export * from "./tasks/engine-wiring.js";
 export * from "./reporting/report-generator.js";
 export * from "./reporting/report-store.js";

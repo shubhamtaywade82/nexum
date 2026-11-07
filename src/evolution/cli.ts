@@ -43,7 +43,7 @@ import { EvolutionPlan } from "./planner.js";
 import { EvolutionWorker, EvolutionCycleResult } from "./evolution-worker.js";
 import { HarnessRegistry } from "./registry.js";
 import { HarnessComponent, HarnessDiagnosis, HarnessVersion } from "./types.js";
-import { isTaskCliInvocation, runTaskCli } from "./tasks/cli.js";
+import { isTaskCliInvocation, runTaskCli, runTaskContinuous } from "./tasks/cli.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -127,8 +127,11 @@ Options:
       --task-show <id>    Show one task definition from the catalogue
       --task-backlog      Show backlog state for all catalogue tasks
       --task-prioritize   Rank pending tasks using the policies.yml weights
-      --task-run <id>     Run a catalogue task (diagnose mode only in this PR;
-                         experiment/implement require the closed-loop engine)
+      --task-run <id>     Run a catalogue task (diagnose mode) end-to-end
+      --task-continuous   Sweep the catalogue on a schedule: every tick picks
+                          the highest-priority eligible task (cadence ceilings
+                          and anti-rules always apply). With --interval <ms>
+                          and --max-cycles <n> to bound it
       --task-category <n> Filter --task-catalog/--task-prioritize by category
       --task-priority <p> Filter --task-catalog/--task-prioritize by P0/P1/P2
   -h, --help             Show this help message
@@ -174,6 +177,7 @@ const CLI_OPTIONS = {
   "task-backlog": { type: "boolean" as const },
   "task-prioritize": { type: "boolean" as const },
   "task-run": { type: "string" as const },
+  "task-continuous": { type: "boolean" as const },
   "task-category": { type: "string" as const },
   "task-priority": { type: "string" as const },
 };
@@ -1280,7 +1284,8 @@ export async function runEvolutionCli(args: string[]): Promise<void> {
   }
 
   // Task catalogue commands are dispatched before the rest so they do not
-  // require a workspace state directory.
+  // require a workspace state directory (except --task-continuous, which
+  // resolves the workspace for its sweep wiring below).
   const taskCliOpts = {
     taskCatalog: values["task-catalog"] as boolean | undefined,
     taskValidate: values["task-validate"] as boolean | undefined,
@@ -1288,11 +1293,17 @@ export async function runEvolutionCli(args: string[]): Promise<void> {
     taskBacklog: values["task-backlog"] as boolean | undefined,
     taskPrioritize: values["task-prioritize"] as boolean | undefined,
     taskRun: values["task-run"] as string | undefined,
+    taskContinuous: values["task-continuous"] as boolean | undefined,
     taskCategory: values["task-category"] as string | undefined,
     taskPriority: values["task-priority"] as string | undefined,
   };
   if (isTaskCliInvocation(taskCliOpts)) {
-    const code = await runTaskCli(taskCliOpts);
+    const code = values["task-continuous"]
+      ? await runTaskContinuous({
+          intervalMs: values.interval ? parseInt(values.interval as string, 10) : undefined,
+          maxTasks: values["max-cycles"] ? parseInt(values["max-cycles"] as string, 10) : undefined,
+        })
+      : await runTaskCli(taskCliOpts);
     process.exit(code);
   }
 
