@@ -7,8 +7,8 @@
  * cannot authorise an activation on its own.
  *
  * Fail closed: every shape that is not an affirmative, consistent proof of the
- * full chain (opt-in, delivery, approval, CI, verified merge, matching content)
- * is refused, and the first broken link is reported.
+ * full chain (activation enabled, delivery, approval, CI, verified merge,
+ * matching content) is refused, and the first broken link is reported.
  */
 
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/;
@@ -48,7 +48,7 @@ export interface MergeVerification {
 }
 
 export interface ActivationEvidence {
-  /** --activate-runtime was passed explicitly. */
+  /** Runtime activation is enabled for this run (the default). */
   activationEnabled: boolean;
   /** GitHub delivery ran (--github). */
   githubDelivery: boolean;
