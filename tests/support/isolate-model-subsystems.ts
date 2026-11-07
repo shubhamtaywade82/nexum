@@ -1,17 +1,17 @@
 import { afterEach, beforeEach } from "@jest/globals";
 
 /**
- * The decision plane (System One) and self-consistency are on by default, and
- * both make model calls of their own. Suites that script one model response per
- * turn (see mockChatFetch) would see those extra calls consume the scripted
- * turns, so they test the wrong path. Such suites call this helper to turn both
- * subsystems off through their env overrides for the duration of each test.
+ * The decision plane, self-consistency and verifier are on by default and each
+ * can make additional model calls. Suites that script one model response per
+ * turn (see mockChatFetch) must isolate those calls unless they explicitly test
+ * the subsystem; otherwise the fixture's turn sequence no longer represents
+ * the behavior under test.
  *
- * An explicit `enableDecision: true` or `enableSelfConsistency: true` in a test's
- * config still wins: Agent spreads the config literal after loadConfig(), so
- * suites that exercise those subsystems keep working.
+ * An explicit `enableDecision: true`, `enableSelfConsistency: true`, or
+ * `enableVerifier: true` in a test config still wins because Agent spreads
+ * the config literal after loadConfig().
  */
-const ISOLATED_ENV = ["NEXUM_DECISION", "NEXUM_SELF_CONSISTENCY"] as const;
+const ISOLATED_ENV = ["NEXUM_DECISION", "NEXUM_SELF_CONSISTENCY", "NEXUM_VERIFIER"] as const;
 
 export function isolateModelSubsystems(): void {
   const saved: Record<string, string | undefined> = {};
