@@ -49,7 +49,7 @@ export interface MergeVerification {
 
 export interface ActivationEvidence {
   /** --activate-runtime was passed explicitly. */
-  explicitOptIn: boolean;
+  activationEnabled: boolean;
   /** GitHub delivery ran (--github). */
   githubDelivery: boolean;
   /** The commit the candidate artifact records. */
@@ -70,11 +70,11 @@ export type DeliveryFacts = Pick<ActivationEvidence, "candidateCommit" | "review
 export type ActivationDecision = { ok: true; mergeCommitSha: string } | { ok: false; reason: string };
 
 /**
- * Merging is not automatic. A human merges the PR in GitHub until branch
- * protection enforces review, so this default stays false. Enabling it is an
- * explicit, separate decision.
+ * Automatic merge is enabled after the candidate has passed CI and a human has
+ * approved the exact reviewed head SHA. GitHub read-back and content verification
+ * are still mandatory before the candidate can become ACTIVE.
  */
-export const DEFAULT_MERGE_ON_ACCEPT = false;
+export const DEFAULT_MERGE_ON_ACCEPT = true;
 
 /** Resolves the delivery policy for one run. Pure, so the defaults are testable. */
 export function resolveDeliveryPolicy(opts: { autoAccept?: boolean; mergeOnAccept?: boolean }): {
@@ -90,8 +90,8 @@ export function resolveDeliveryPolicy(opts: { autoAccept?: boolean; mergeOnAccep
 const refuse = (reason: string): ActivationDecision => ({ ok: false, reason });
 
 export function decideActivation(evidence: ActivationEvidence): ActivationDecision {
-  if (!evidence.explicitOptIn) {
-    return refuse("runtime activation was not explicitly requested (--activate-runtime)");
+  if (!evidence.activationEnabled) {
+    return refuse("runtime activation is disabled (--no-activate-runtime)");
   }
   if (!evidence.githubDelivery) {
     return refuse("no GitHub delivery: nothing was reviewed, merged or verified");
