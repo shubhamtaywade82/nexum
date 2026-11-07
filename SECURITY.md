@@ -21,7 +21,7 @@ contained by **isolation** (what code can physically reach), not merely by
 | `search_code`, `sqlite_query`, LSP     | host, via WorkspaceGuard     | no                   | no                        | no                               |
 | `git`                                  | host                         | configured remotes   | uses your git credentials | repo + configured remotes        |
 | `github` (`gh`)                        | host                         | GitHub               | uses your `gh` token      | issues/PRs only (§6)             |
-| `docker` (**opt-in**)                  | host daemon                  | none by default      | no                        | agent-labelled containers/images |
+| `docker` (trusted workspaces by default) | host daemon, root-equivalent | bridge egress by default in trusted workspaces | no | agent-labelled containers/images |
 | Browser (Playwright)                   | host Chromium                | yes                  | no                        | remote sites                     |
 | Web fetch                              | host                         | public internet only | no                        | no                               |
 | Webhook ingress                        | host                         | inbound              | HMAC secrets              | triggers agent handlers          |
