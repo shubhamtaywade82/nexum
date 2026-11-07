@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +38,8 @@ function mockChatFetch(turns: Array<{ content?: string; tool_calls?: unknown[] }
   });
 }
 
+isolateModelSubsystems();
+
 describe("Agent approval gate", () => {
   let tempDir: string;
 
@@ -59,14 +62,14 @@ describe("Agent approval gate", () => {
       { content: "done" },
     ]);
 
-    const agent = new Agent({ config: { workspaceRoot: tempDir, tier: "local", model: "m" } });
+    const agent = new Agent({ config: { workspaceRoot: tempDir, tier: "local", model: "m", autoApprove: false } });
 
     await agent.runUserMessage("delete the unwatched file");
 
     expect(await fileExists(target)).toBe(true);
   });
 
-  it("skips the prompt entirely when autoApprove is set", async () => {
+  it("auto-approves confirmation-required calls by default", async () => {
     const target = join(tempDir, "auto.txt");
     await writeFile(target, "bye");
 
@@ -77,7 +80,7 @@ describe("Agent approval gate", () => {
 
     let approvalRequested = false;
     const agent = new Agent({
-      config: { workspaceRoot: tempDir, tier: "local", model: "m", autoApprove: true },
+      config: { workspaceRoot: tempDir, tier: "local", model: "m" },
       events: {
         onApprovalRequested: () => {
           approvalRequested = true;
@@ -102,7 +105,7 @@ describe("Agent approval gate", () => {
 
     const requests: ApprovalRequest[] = [];
     const agent = new Agent({
-      config: { workspaceRoot: tempDir, tier: "local", model: "m" },
+      config: { workspaceRoot: tempDir, tier: "local", model: "m", autoApprove: false },
       events: {
         onApprovalRequested: (request) => {
           requests.push(request);
@@ -128,7 +131,7 @@ describe("Agent approval gate", () => {
     ]);
 
     const agent = new Agent({
-      config: { workspaceRoot: tempDir, tier: "local", model: "m" },
+      config: { workspaceRoot: tempDir, tier: "local", model: "m", autoApprove: false },
       events: { onApprovalRequested: (request) => agent.resolveApproval(request.id, false) },
     });
 
@@ -165,7 +168,7 @@ describe("Agent approval gate", () => {
 
     const requests: ApprovalRequest[] = [];
     const agent = new Agent({
-      config: { workspaceRoot: tempDir, tier: "local", model: "m" },
+      config: { workspaceRoot: tempDir, tier: "local", model: "m", autoApprove: false },
       events: {
         onApprovalRequested: (request) => {
           requests.push(request);

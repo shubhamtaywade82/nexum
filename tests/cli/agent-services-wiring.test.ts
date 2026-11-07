@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp, mkdir, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +36,8 @@ function mockModels() {
     return chatResponse("ok");
   });
 }
+
+isolateModelSubsystems();
 
 describe("resolveMcpEnv", () => {
   const creds = { get: async (n: string) => ({ GITHUB_TOKEN: "ghp_x" })[n] };

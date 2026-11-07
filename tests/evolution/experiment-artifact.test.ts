@@ -111,7 +111,7 @@ describe("experiment artifacts (v2.3.2)", () => {
   });
 
   describe("writeExperimentArtifact", () => {
-    it("writes an immutable, self-verifying envelope", () => {
+    it("writes a self-hashed envelope (detects accidental edits; not tamper-proof)", () => {
       const dir = mkdtempSync(join(tmpdir(), "nexumart-"));
       try {
         const envelope = buildExperimentArtifact(

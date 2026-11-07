@@ -94,8 +94,8 @@ async function checkCapabilities(lines: string[], config: ReturnType<typeof load
  * demand a model download the user never asked for, and a missing model
  * means a failed round-trip before every fallback. Instead, doctor makes
  * the hybrid fast path DISCOVERABLE: when a curated quick model is already
- * installed locally, it names it and the one-line config that activates it
- * (which, since the verifier graduation, also turns the critic pass on).
+ * installed locally, it names the one-line config that activates the faster
+ * path. The verifier is already on and uses the primary local model otherwise.
  */
 async function checkQuickModel(lines: string[], config: ReturnType<typeof loadConfig>): Promise<void> {
   if (config.quickModel) {
@@ -116,7 +116,7 @@ async function checkQuickModel(lines: string[], config: ReturnType<typeof loadCo
       .find(Boolean);
     if (found) {
       lines.push(
-        `quickModel: unset — ${found.name} is installed; set quickModel (or NEXUM_QUICK_MODEL) to "${found.name}" to activate the hybrid fast path and the verifier default`,
+        `quickModel: unset — ${found.name} is installed; set quickModel (or NEXUM_QUICK_MODEL) to "${found.name}" to activate the hybrid quick-model fast path (the verifier uses the primary model otherwise)`,
       );
     } else {
       lines.push(

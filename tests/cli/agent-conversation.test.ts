@@ -1,8 +1,11 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentConversation } from "../../src/cli/agent-conversation.js";
 import { Agent } from "../../src/cli/agent.js";
+
+isolateModelSubsystems();
 
 describe("AgentConversation context pruning", () => {
   it("correctly prunes context once maxMessages limit is exceeded", () => {

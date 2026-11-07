@@ -123,7 +123,8 @@ export class AgentToolManager {
     const runner = new ShellTool({ workspaceRoot: root, ...shellOpts, writeScope });
     this.registerToolPack(projectPack(root, runner));
     this.registerToolPack(rubyPack(root, runner));
-    // Docker daemon access is root-equivalent on the host: opt-in only.
+    // The resolved config enables this in trusted workspaces by default. Docker
+    // daemon access remains root-equivalent and untrusted workspaces stay off.
     if (opts.dockerTool) this.registerToolPack(dockerPack(root, { egress: opts.dockerEgress ?? false }));
     this.registerToolPack(databasePack(guard));
     this.registerToolPack(generalPack());

@@ -17,6 +17,9 @@ import { execFile } from "node:child_process";
 import { DeliveryReport } from "../delivery.js";
 import { ExperimentController } from "../experiments/experiment-controller.js";
 import { ExperimentCiStatus, ExperimentReviewState } from "../experiments/experiment-schema.js";
+import { isCommitSha, MergeOutcome, MergeVerification } from "./activation-gate.js";
+
+export type { MergeOutcome, MergeVerification } from "./activation-gate.js";
 
 export interface GitHubAdapterConfig {
   owner: string;
@@ -169,20 +172,121 @@ export class GitHubDeliveryAdapter {
   }
 
   /**
-   * Merges an accepted evolution PR (call after acceptance policy allows).
-   * `headSha` pins the merge to the commit that CI and review were checked
-   * against; GitHub refuses the merge (409) if the branch has moved since.
+   * Merges an accepted evolution PR. `headSha` pins the merge to the commit that
+   * CI and review were checked against; GitHub refuses a moved head.
+   *
+   * Returns a typed outcome. Only a 200 that confirms `merged: true` with a full
+   * merge commit sha counts as merged. Definitive refusals (405, 409, 422) are
+   * "rejected". Everything else (transport failure, other status, a body that
+   * does not confirm a merge) is "uncertain". Neither may lead to activation.
+   * A merged outcome is still unverified until verifyMergedPull() reads it back.
    */
   async mergePullRequest(
     prNumber: number,
     headSha: string,
     method: "merge" | "squash" | "rebase" = "squash",
-  ): Promise<boolean> {
-    const res = await this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}/merge`, {
-      method: "PUT",
-      body: { merge_method: method, sha: headSha },
-    });
-    return res.status === 200;
+  ): Promise<MergeOutcome> {
+    let res: HttpResult;
+    try {
+      res = await this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}/merge`, {
+        method: "PUT",
+        body: { merge_method: method, sha: headSha },
+      });
+    } catch (err) {
+      return { status: "uncertain", reason: `merge request failed: ${(err as Error).message}` };
+    }
+    const body = (res.json ?? {}) as { merged?: unknown; sha?: unknown; message?: unknown };
+    const message = typeof body.message === "string" ? body.message : `HTTP ${res.status}`;
+    if (res.status === 200) {
+      if (body.merged === true && isCommitSha(body.sha)) {
+        return { status: "merged", mergeCommitSha: body.sha };
+      }
+      return { status: "uncertain", reason: "200 response does not confirm a merge with a commit sha" };
+    }
+    if (res.status === 405 || res.status === 409 || res.status === 422) {
+      return { status: "rejected", httpStatus: res.status, reason: message };
+    }
+    return { status: "uncertain", reason: `unexpected HTTP ${res.status} from merge: ${message}` };
+  }
+
+  /**
+   * Confirms a merge by reading it back from GitHub. The merge call's own response
+   * is not trusted. The pull must be merged from the reviewed head, its merge
+   * commit must equal the one the merge call returned, and that commit must carry
+   * the candidate's file contents (path, status and blob sha).
+   *
+   * Fails closed: any lookup error, empty or possibly truncated file list
+   * (GitHub caps commit file lists at 300) yields a false field and a reason.
+   */
+  async verifyMergedPull(
+    prNumber: number,
+    reviewedSha: string,
+    mergeCommitSha: string,
+    candidateCommit: string,
+  ): Promise<MergeVerification> {
+    const repo = `/repos/${this.cfg.owner}/${this.cfg.repo}`;
+    const identity = { mergeCommitSha, candidateCommit };
+    const none = { ...identity, mergedFromReviewedHead: false, mergeCommitMatches: false, contentMatches: false };
+    try {
+      const pull = await this.http(`${repo}/pulls/${prNumber}`);
+      if (pull.status !== 200) {
+        return { ...none, reason: `pull lookup returned HTTP ${pull.status}` };
+      }
+      const p = (pull.json ?? {}) as { merged?: unknown; merge_commit_sha?: unknown; head?: { sha?: unknown } };
+      const mergedFromReviewedHead = p.merged === true && p.head?.sha === reviewedSha;
+      const mergeCommitMatches = p.merge_commit_sha === mergeCommitSha;
+      // Each check reports on its own: a lookup error on one does not hide the others.
+      let contentMatches = false;
+      let contentError: string | undefined;
+      try {
+        contentMatches = await this.sameCommitContent(repo, candidateCommit, mergeCommitSha);
+      } catch (err) {
+        contentError = `content check failed: ${(err as Error).message}`;
+      }
+      const reason = !mergedFromReviewedHead
+        ? "pull is not merged from the reviewed head"
+        : !mergeCommitMatches
+          ? "merge commit differs from the one GitHub reports"
+          : (contentError ?? (contentMatches ? undefined : "merged content does not match the candidate"));
+      return {
+        ...identity,
+        mergedFromReviewedHead,
+        mergeCommitMatches,
+        contentMatches,
+        ...(reason ? { reason } : {}),
+      };
+    } catch (err) {
+      return { ...none, reason: `verification failed: ${(err as Error).message}` };
+    }
+  }
+
+  /** True when the two commits change exactly the same paths to the same blobs. Throws on any doubt. */
+  private async sameCommitContent(repo: string, candidate: string, merged: string): Promise<boolean> {
+    if (!isCommitSha(candidate) || !isCommitSha(merged)) throw new Error("commit sha is malformed");
+    const candidateFiles = await this.commitFileMap(`${repo}/commits/${candidate}`);
+    const mergedFiles = await this.commitFileMap(`${repo}/commits/${merged}`);
+    if (candidateFiles.size === 0) throw new Error("candidate commit reports no changed files");
+    if (candidateFiles.size !== mergedFiles.size) return false;
+    for (const [name, fingerprint] of candidateFiles) {
+      if (mergedFiles.get(name) !== fingerprint) return false;
+    }
+    return true;
+  }
+
+  private async commitFileMap(path: string): Promise<Map<string, string>> {
+    const res = await this.http(path);
+    if (res.status !== 200) throw new Error(`commit lookup returned HTTP ${res.status}`);
+    const files = (res.json as { files?: unknown } | null)?.files;
+    if (!Array.isArray(files)) throw new Error("commit response has no file list");
+    if (files.length >= 300) throw new Error("file list may be truncated (300 entries)");
+    const map = new Map<string, string>();
+    for (const entry of files as Array<{ filename?: unknown; status?: unknown; sha?: unknown }>) {
+      if (typeof entry.filename !== "string" || typeof entry.sha !== "string") {
+        throw new Error("commit file entry is malformed");
+      }
+      map.set(entry.filename, `${String(entry.status)}:${entry.sha}`);
+    }
+    return map;
   }
 
   // ── External reality: CI ─────────────────────────────────────────────────
@@ -217,23 +321,35 @@ export class GitHubDeliveryAdapter {
   }
 
   /**
-   * Fetches the latest human review state for a PR.
-   * Only CHANGES_REQUESTED / APPROVED reviews advance the lifecycle; no
-   * reviews yet → "pending".
+   * Fetches the latest independent human review state for a PR.
+   * Only reviews of the exact current head from a non-author GitHub User count.
+   * Bot reviews, self-approvals, missing author identity and API failures fail closed.
    */
   async getLatestReview(prNumber: number, headSha: string): Promise<ReviewVerdict> {
-    const res = await this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}/reviews?per_page=100`);
-    const reviews = (res.json ?? []) as Array<{
+    const [pullRes, reviewRes] = await Promise.all([
+      this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}`),
+      this.http(`/repos/${this.cfg.owner}/${this.cfg.repo}/pulls/${prNumber}/reviews?per_page=100`),
+    ]);
+    if (pullRes.status !== 200 || reviewRes.status !== 200) return { state: "pending" };
+
+    const pull = pullRes.json as { user?: { login?: string } } | null;
+    const authorLogin = pull?.user?.login?.trim().toLowerCase();
+    if (!authorLogin || !Array.isArray(reviewRes.json)) return { state: "pending" };
+
+    const reviews = reviewRes.json as Array<{
       state: string;
       commit_id?: string;
-      user?: { login?: string };
+      user?: { login?: string; type?: string };
       html_url?: string;
       submitted_at?: string;
     }>;
-    // A review of an earlier commit does not cover the code that would merge, so only reviews of headSha count.
+    // A review of an earlier commit does not cover the code that would merge. GitHub
+    // Bot accounts and the PR author cannot independently approve their own candidate.
     const submitted = reviews
       .filter((r) => r.state === "APPROVED" || r.state === "CHANGES_REQUESTED")
       .filter((r) => r.commit_id === headSha)
+      .filter((r) => r.user?.type === "User" && !!r.user.login)
+      .filter((r) => r.user!.login!.trim().toLowerCase() !== authorLogin)
       .sort((a, b) => (a.submitted_at ?? "").localeCompare(b.submitted_at ?? ""));
     const latest = submitted[submitted.length - 1];
     if (!latest) return { state: "pending" };

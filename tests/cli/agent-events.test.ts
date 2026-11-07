@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp } from "node:fs/promises";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -93,6 +94,8 @@ function mockChatOnce(content: string) {
     body: { getReader: () => reader },
   });
 }
+
+isolateModelSubsystems();
 
 describe("Agent onShellOutput event", () => {
   afterEach(() => {

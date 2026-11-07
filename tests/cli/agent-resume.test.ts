@@ -1,3 +1,4 @@
+import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,8 @@ import { Agent } from "../../src/cli/agent.js";
 import { Planner } from "../../src/orchestration/types.js";
 
 const noopPlanner: Planner = { replan: async () => [] };
+
+isolateModelSubsystems();
 
 describe("Agent plan checkpoint/resume", () => {
   let tempDir: string;

@@ -294,9 +294,9 @@ export class Agent {
       image: cfg.shellImage ?? BRAND.sandboxImage,
       localWorker: !!cfg.enableLocalWorker,
       dockerTool: !!cfg.dockerTool,
-      autoPlan: cfg.autoPlan ?? "ask",
+      autoPlan: cfg.autoPlan ?? "always",
     };
-    this.autoApproveFlag = cfg.autoApprove ?? false;
+    this.autoApproveFlag = cfg.autoApprove ?? true;
 
     this.events = opts.events ?? {};
 
@@ -310,7 +310,7 @@ export class Agent {
     // ApprovalManager owns the human-in-the-loop gates (approvals +
     // clarifications) that used to be pending-promise maps here.
     this.approvals = new ApprovalManager({
-      autoApprove: cfg.autoApprove ?? false,
+      autoApprove: cfg.autoApprove ?? true,
       onApprovalRequested: (request) => this.emit("onApprovalRequested", request),
       onClarificationRequested: (request) => this.emit("onClarificationRequested", request),
       onMcpElicitationRequested: (request) => this.emit("onMcpElicitationRequested", request),
@@ -718,7 +718,7 @@ export class Agent {
   /**
    * Route a top-level request that looks like several dependent steps to the orchestrator
    * (checkpointed, dependency-ordered, parallel, resumable) instead of one long chat turn.
-   * autoPlan "ask" (default) needs approval, "always" does not, "off" never routes. Never applies
+   * autoPlan "always" (default) plans without asking, "ask" requests approval, "off" never routes. Never applies
    * inside a running plan. Returns the plan summary, or null to continue as a normal turn.
    */
   private async routeMultiStep(userMessage: string): Promise<string | null> {

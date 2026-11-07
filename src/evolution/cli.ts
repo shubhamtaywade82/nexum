@@ -18,7 +18,8 @@ import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
 import { Provider } from "../models/adapters/provider.js";
 import { runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
 import { CandidateEvaluationOutcome, EvolutionEngine } from "./engine.js";
-import { ClosedLoopEngine } from "./engine-v2.js";
+import { ActivationResult, ClosedLoopEngine } from "./engine-v2.js";
+import type { ActivationEvidence } from "./delivery/activation-gate.js";
 import { ExperienceStore } from "./experience/experience-store.js";
 import {
   buildExperimentArtifact,
@@ -73,7 +74,7 @@ Options:
       --verify-profile <name>  Verification gates for the mutation worktree:
                          "smoke" (node liveness), "fast" (format + lint +
                          typecheck; default), "full" (fast + npm test,
-                         CI-equivalent). Defaults to "full" with --github.
+                         CI-equivalent). Defaults to "full" when a GitHub destination is configured.
       --repo <path>      Harness repository to mutate (required with --mutate)
       --parent <sha>     Parent commit to mutate from (default: HEAD)
   -c, --candidate <id>   Evaluate candidate harness and check promotion criteria
@@ -84,17 +85,17 @@ Options:
                          real baseline delta)
       --skip-baseline    With --mutate --benchmark: skip benchmarking the
                          parent repository for baseline deltas
-      --github           Canonical delivery: push the mutation branch, open the
-                         PR, poll CI and review, auto-accept on approval, merge.
-                         Requires NEXUM_GITHUB_OWNER + NEXUM_GITHUB_REPO (env);
-                         optional NEXUM_GITHUB_TOKEN, NEXUM_GITHUB_BASE_BRANCH.
+      --github           Force GitHub delivery (enabled automatically when
+                         NEXUM_GITHUB_OWNER + NEXUM_GITHUB_REPO are configured).
+      --no-github         Keep this run local; skip GitHub delivery.
+                         Optional NEXUM_GITHUB_TOKEN, NEXUM_GITHUB_BASE_BRANCH.
       --experiment-dir <path>  Directory for the immutable per-cycle experiment
                          artifact JSON (default: <workspace>/state/experiments).
-      --activate-runtime With --mutate: wire the manifest-file runtime
-                         activation controller. After an ACCEPTED candidate
-                         (GitHub delivery + CI passed + review approved), the
-                         live runtime is switched onto it by atomically
-                         updating nexum.harness.json's activeHarness pointer.
+      --activate-runtime Compatibility flag; activation is on by default.
+      --no-activate-runtime
+                         Disable the final runtime switch for this run. Activation
+                         still requires same-commit human review, passing CI,
+                         successful merge, and GitHub read-back verification.
   -a, --autonomous       Run the full autonomous cycle: ingest ALL experience,
                          observe failures AND successful patterns, form the
                          target, and — with --repo — execute the mutation
@@ -108,7 +109,7 @@ Options:
       --max-cycles <n>   Stop after n mutation cycles in --continuous mode
       --generalization-policy <p>  "optional" | "required" |
                          "required-for-production" (default:
-                         required-for-production with --github, else optional)
+                         required-for-production when GitHub delivery is configured)
       --watch            With --monitor: continuously tail the telemetry file
                          and re-evaluate on every new sample instead of a
                          one-shot verdict
@@ -150,8 +151,10 @@ const CLI_OPTIONS = {
   "verify-profile": { type: "string" as const },
   "skip-baseline": { type: "boolean" as const },
   github: { type: "boolean" as const },
+  "no-github": { type: "boolean" as const },
   "experiment-dir": { type: "string" as const },
   "activate-runtime": { type: "boolean" as const },
+  "no-activate-runtime": { type: "boolean" as const },
   repo: { type: "string" as const },
   parent: { type: "string" as const },
   monitor: { type: "boolean" as const },
@@ -323,9 +326,23 @@ export function formatHistory(versions: HarnessVersion[], active: HarnessVersion
   return `${header}\n${rows.join("\n")}\n\n* = currently active harness version`;
 }
 
-/** Formats diagnoses and the recommended evolution plan into a readable report. */
-export function formatDiagnosesText(diagnoses: HarnessDiagnosis[], plan: EvolutionPlan | null): string {
-  if (diagnoses.length === 0) return "No harness weaknesses detected across evaluated episodes.";
+/**
+ * Formats diagnoses and the recommended evolution plan into a readable report.
+ * `episodeCount` is the number of episodes that were diagnosed. Zero episodes means
+ * nothing was evaluated, which must not read as a clean bill of health.
+ */
+export function formatDiagnosesText(
+  diagnoses: HarnessDiagnosis[],
+  plan: EvolutionPlan | null,
+  episodeCount?: number,
+): string {
+  if (diagnoses.length === 0) {
+    if (episodeCount === 0) {
+      return "No episodes recorded yet (lessons.db is empty or missing), so nothing was diagnosed. This is not evidence that the harness is healthy.";
+    }
+    const scope = episodeCount === undefined ? "evaluated episodes" : `${episodeCount} evaluated episode(s)`;
+    return `No harness weaknesses detected across ${scope}.`;
+  }
   const lines: string[] = [`=== Harness Diagnoses (${diagnoses.length} issue(s) detected) ===`];
   diagnoses.forEach((d, idx) => {
     lines.push(`\n${idx + 1}. [${d.component}] ${d.failureClass} (confidence: ${(d.confidence * 100).toFixed(0)}%)`);
@@ -482,7 +499,7 @@ async function executeCommand(engine: EvolutionEngine, values: Record<string, un
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
   const episodes = loadRecentEpisodes(root, limit);
   const { diagnoses, plan } = engine.diagnoseEpisodes(episodes);
-  console.log(formatDiagnosesText(diagnoses, plan));
+  console.log(formatDiagnosesText(diagnoses, plan, episodes.length));
 }
 
 /** Formats a mutation actuator result for CLI display. */
@@ -600,14 +617,17 @@ export type GeneralizationPolicyName = (typeof GENERALIZATION_POLICIES)[number];
 
 /**
  * v2.4: resolves the generalization evidence policy for `nexum evolve
- * --mutate`. Production delivery (--github) defaults to
+ * --mutate`. Configured GitHub delivery defaults to
  * "required-for-production": a PR may only be opened for a candidate with
  * fixed-executor transfer evidence, so an improvement measured on one model
  * cannot silently ride a weaker evaluation. Local runs keep "optional".
  * Explicit `--generalization-policy` always wins. Throws on unknown names so
  * typos fail loudly instead of silently weakening the gate.
  */
-export function resolveGeneralizationPolicy(values: Record<string, unknown>): GeneralizationPolicyName {
+export function resolveGeneralizationPolicy(
+  values: Record<string, unknown>,
+  githubEnabled: boolean = values.github === true,
+): GeneralizationPolicyName {
   const explicit = values["generalization-policy"] as string | undefined;
   if (explicit) {
     if (!(GENERALIZATION_POLICIES as readonly string[]).includes(explicit)) {
@@ -617,7 +637,7 @@ export function resolveGeneralizationPolicy(values: Record<string, unknown>): Ge
     }
     return explicit as GeneralizationPolicyName;
   }
-  return values.github === true ? "required-for-production" : "optional";
+  return githubEnabled ? "required-for-production" : "optional";
 }
 
 export interface GithubDeliveryEnvConfig {
@@ -631,7 +651,7 @@ export interface GithubDeliveryEnvConfig {
  * Resolves the GitHub delivery adapter configuration from the environment:
  * NEXUM_GITHUB_OWNER + NEXUM_GITHUB_REPO are required; NEXUM_GITHUB_TOKEN and
  * NEXUM_GITHUB_BASE_BRANCH (default "main") are optional. Returns null when
- * the required pair is absent so `--github` can report a precise error.
+ * the required pair is absent so an explicit `--github` can report a precise error.
  */
 export function resolveGithubDeliveryConfig(env: NodeJS.ProcessEnv = process.env): GithubDeliveryEnvConfig | null {
   const owner = env.NEXUM_GITHUB_OWNER?.trim();
@@ -643,6 +663,19 @@ export function resolveGithubDeliveryConfig(env: NodeJS.ProcessEnv = process.env
     ...(env.NEXUM_GITHUB_TOKEN?.trim() ? { token: env.NEXUM_GITHUB_TOKEN.trim() } : {}),
     baseBranch: env.NEXUM_GITHUB_BASE_BRANCH?.trim() || "main",
   };
+}
+
+/** GitHub delivery is the default whenever a destination is configured. */
+export function resolveGithubDeliveryEnabled(
+  values: Record<string, unknown>,
+  config: GithubDeliveryEnvConfig | null,
+): boolean {
+  return values["no-github"] !== true && config !== null;
+}
+
+/** Runtime activation is on by default; the negative flag is a per-run opt-out. */
+export function resolveRuntimeActivationEnabled(values: Record<string, unknown>): boolean {
+  return values["no-activate-runtime"] !== true;
 }
 
 /** Parses the benchmark CLI's `--json` output into TaskExecutionResults. */
@@ -731,16 +764,19 @@ export async function ingestParentExperience(
 }
 
 /**
- * v2.3.3: the RUNTIME half of acceptance. Only an ACTIVE experiment (GitHub
- * delivery with CI passed + review approved + auto-accept) can be switched
- * onto the live runtime. The outcome — including honest skips and failures —
- * is returned so the experiment artifact carries the complete chain.
+ * v2.3.3: the RUNTIME half of acceptance; runtime activation is enabled by default.
+ *
+ * The switch happens only when the activation gate passes on live GitHub evidence
+ * for the candidate commit: approval, CI, and a merge confirmed by read-back. The
+ * runtime is then pinned to the verified merge commit. Everything else is recorded
+ * as an honest skip, never as an activation.
  */
-async function activateRuntimeIfNeeded(
-  engine: ClosedLoopEngine,
-  controller: ManifestRuntimeActivationController,
+export async function activateRuntimeIfNeeded(
+  engine: Pick<ClosedLoopEngine, "activateOnRuntime">,
+  controller: Pick<ManifestRuntimeActivationController, "name" | "activeHarness" | "readPointer">,
   experimentId: string,
   outcome: Awaited<ReturnType<ClosedLoopEngine["runEvolutionCycle"]>>,
+  activationEnabled: boolean,
 ): Promise<NonNullable<ExperimentArtifactInput["activation"]>> {
   const harnessId = outcome.ok ? outcome.outcome.experiment.candidate.harness : "";
   // The launcher in bin/cli.js (src/platform/harness-launcher.ts) runs the pointer's commit for
@@ -749,32 +785,47 @@ async function activateRuntimeIfNeeded(
   if (!outcome.ok) {
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error: "cycle did not produce a candidate" };
   }
-  if (outcome.github?.accepted !== true) {
-    const error = "experiment not ACTIVE (activation requires --github delivery with CI passed + review approved)";
+  if (!activationEnabled) {
+    const error = "runtime activation is disabled (--no-activate-runtime)";
     console.log(`[Evolution] Runtime activation skipped: ${error}.`);
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error };
   }
+
+  const facts = outcome.github?.facts;
+  const evidence: ActivationEvidence = {
+    activationEnabled,
+    githubDelivery: outcome.github !== undefined,
+    candidateCommit: outcome.outcome.experiment.candidate.commit,
+    review: facts?.review ?? null,
+    ci: facts?.ci ?? null,
+    merge: facts?.merge ?? null,
+    verification: facts?.verification ?? null,
+  };
+
+  let result: ActivationResult;
   try {
-    await engine.activateOnRuntime(experimentId);
-    const active = controller.activeHarness();
-    if (active !== harnessId) {
-      throw new Error(`manifest pointer reports "${active}" after activation`);
-    }
-    const pointer = controller.readPointer();
-    console.log(
-      `[Evolution] Activated harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)}. The next agent command started from this checkout runs it; processes already running keep their code.`,
-    );
-    return {
-      ...base,
-      commitSha: pointer?.commitSha ?? "",
-      activatedAt: pointer?.activatedAt ?? Date.now(),
-      ok: true,
-    };
+    result = await engine.activateOnRuntime(experimentId, evidence);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error(`[Evolution] Runtime activation FAILED: ${error}`);
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error };
   }
+  if (!result.ok) {
+    console.log(`[Evolution] Runtime activation skipped: ${result.reason}.`);
+    return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error: result.reason };
+  }
+
+  // The runtime must have landed on exactly the verified merge commit, read back from the manifest.
+  const pointer = controller.readPointer();
+  if (controller.activeHarness() !== harnessId || pointer?.commitSha !== result.commitSha) {
+    const error = `runtime pointer does not match the verified merge commit ${result.commitSha}`;
+    console.error(`[Evolution] Runtime activation FAILED: ${error}`);
+    return { ...base, commitSha: pointer?.commitSha ?? "", activatedAt: Date.now(), ok: false, error };
+  }
+  console.log(
+    `[Evolution] Activated harness ${harnessId} @ ${result.commitSha.slice(0, 12)} (verified merge). The next agent command started from this checkout runs it; processes already running keep their code.`,
+  );
+  return { ...base, commitSha: result.commitSha, activatedAt: pointer.activatedAt ?? Date.now(), ok: true };
 }
 
 async function executeMutationCommand(root: string, values: Record<string, unknown>): Promise<void> {
@@ -798,17 +849,8 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   }
   // Verification profile: the gates the candidate must survive INSIDE the
   // worktree before it becomes a candidate commit. Default "fast" (format +
-  // lint + typecheck); delivery runs (--github) default to "full" so a PR is
-  // only opened for a candidate that passes the CI-equivalent gate.
-  let profile: EvolutionVerificationProfile;
-  try {
-    profile = verificationProfileByName(
-      (values["verify-profile"] as string | undefined) ?? (values.github ? "full" : undefined),
-    );
-  } catch (err) {
-    console.error((err as Error).message);
-    return;
-  }
+  // lint + typecheck); GitHub delivery defaults to "full" so a PR is only
+  // opened for a candidate that passes the CI-equivalent gate.
   const githubCfg = resolveGithubDeliveryConfig();
   if (values.github && !githubCfg) {
     console.error(
@@ -816,13 +858,23 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     );
     return;
   }
-  // v2.4: generalization evidence policy. Production delivery (--github)
-  // defaults to "required-for-production" so a PR can only be opened for a
-  // candidate backed by fixed-executor transfer evidence; local experiments
-  // keep the permissive "optional" default. Explicit flag always wins.
+  const githubEnabled = resolveGithubDeliveryEnabled(values, githubCfg);
+  let profile: EvolutionVerificationProfile;
+  try {
+    profile = verificationProfileByName(
+      (values["verify-profile"] as string | undefined) ?? (githubEnabled ? "full" : undefined),
+    );
+  } catch (err) {
+    console.error((err as Error).message);
+    return;
+  }
+  // v2.4: generalization evidence policy. Production delivery defaults to
+  // "required-for-production" so a PR can only be opened for a candidate
+  // backed by fixed-executor transfer evidence; local experiments remain optional.
+  // Explicit --generalization-policy always wins.
   let policy: GeneralizationPolicyName;
   try {
-    policy = resolveGeneralizationPolicy(values);
+    policy = resolveGeneralizationPolicy(values, githubEnabled);
   } catch (err) {
     console.error((err as Error).message);
     return;
@@ -865,11 +917,10 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   // gates executable inside the worktree. Explicit executor always wins over
   // the engine's agentRuntime auto-wiring, keeping gate control in one place.
   const strategy = buildMutationStrategy(strategyName, cfg);
-  // v2.3.3: runtime activation (--activate-runtime) wires the manifest-file
-  // RuntimeActivationController plus the harness registry so the engine's
-  // acceptance path records real H0→Hn lineage. Default OFF keeps the
-  // pre-activation mutate path byte-identical.
-  const activationRequested = values["activate-runtime"] === true;
+  // v2.3.3: runtime activation is on by default. It wires the manifest-file
+  // RuntimeActivationController plus the harness registry so the acceptance path
+  // records real H0→Hn lineage. --no-activate-runtime keeps this run local.
+  const activationRequested = resolveRuntimeActivationEnabled(values);
   const registry = activationRequested ? new HarnessRegistry(join(stateDir, "evolution.db")) : undefined;
   const activationController = activationRequested
     ? new ManifestRuntimeActivationController({ repoRoot, registry })
@@ -885,7 +936,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       linkNodeModulesFrom: repoRoot,
       ...(strategy ? { strategy } : {}),
     }),
-    ...(githubCfg
+    ...(githubEnabled && githubCfg
       ? {
           githubDelivery: new GitHubDeliveryAdapter(
             {
@@ -956,12 +1007,12 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
         candidateResults = await runBenchmarkInDir(repoRoot, artifact.workspace.worktreePath, categories);
         return candidateResults;
       },
-      ...(values.github && githubCfg ? { github: {} } : {}),
+      ...(githubEnabled && githubCfg ? { github: {} } : {}),
     });
     console.log(formatMutationResult(outcome));
-    // v2.3.3: the runtime half of acceptance — explicit opt-in only.
+    // Runtime activation is enabled by default; the gate refuses without verified evidence.
     const activation = activationController
-      ? await activateRuntimeIfNeeded(engine, activationController, experimentId, outcome)
+      ? await activateRuntimeIfNeeded(engine, activationController, experimentId, outcome, activationRequested)
       : null;
     writeCycleArtifact(outcome, {
       experimentId,
@@ -1075,7 +1126,11 @@ function writeCycleArtifact(
               prNumber: outcome.github.handle.prNumber,
               prUrl: outcome.github.handle.prUrl,
               ciPassed: outcome.github.ci.passed,
+              reviewApproved: outcome.github.facts.review?.approved ?? false,
               accepted: outcome.github.accepted,
+              mergeStatus: outcome.github.merge?.status ?? "not-attempted",
+              mergeCommitSha: outcome.github.merge?.status === "merged" ? outcome.github.merge.mergeCommitSha : null,
+              contentVerified: outcome.github.verification?.contentMatches ?? null,
               merged: outcome.github.merged,
             }
           : null,
@@ -1140,7 +1195,7 @@ async function executeAutonomousCommand(root: string, values: Record<string, unk
     console.log(
       `[Evolution] Episodes: ${allEpisodes.length} total · ${episodes.length} in diagnosis window · experience records: ${experienceStore.count()}`,
     );
-    console.log(formatDiagnosesText(observation.diagnoses, observation.plan));
+    console.log(formatDiagnosesText(observation.diagnoses, observation.plan, episodes.length));
     if (successDriven.length > 0) {
       console.log(
         `\n[Evolution] Success-driven signals: ${successDriven.length} diagnosis(esis) from SUCCESSFUL episodes (efficiency opportunities + comparative patterns).`,
@@ -1266,7 +1321,7 @@ async function executeClosedLoopCommand(root: string, values: Record<string, unk
     if (values.target) {
       console.log(formatTargetText(observation));
     } else {
-      console.log(formatDiagnosesText(observation.diagnoses, observation.plan));
+      console.log(formatDiagnosesText(observation.diagnoses, observation.plan, episodes.length));
       console.log("");
       console.log(formatTargetText(observation));
     }
