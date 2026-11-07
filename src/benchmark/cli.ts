@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
 import { Provider } from "../models/adapters/provider.js";
 import { ModelCatalog, isEmbeddingModel } from "../models/catalog.js";
 import { loadConfig } from "../cli/config.js";
@@ -14,8 +15,14 @@ import { BenchmarkCase } from "./types.js";
 import { scoreByModel, scoreByCategory } from "./score.js";
 import { formatReport, formatCategoryReport } from "./report.js";
 
-async function main() {
+/**
+ * CLI entry for `nexum benchmark`. Exported so bin/cli.js can dispatch to the
+ * compiled dist/ module; the isDirectRun guard at the bottom keeps
+ * `npm run benchmark` (tsx src/benchmark/cli.ts) working unchanged.
+ */
+export async function runBenchmarkCli(argv: string[]): Promise<number> {
   const { values } = parseArgs({
+    args: argv,
     options: {
       model: { type: "string", short: "m" },
       category: { type: "string", short: "c" },
@@ -29,8 +36,7 @@ async function main() {
   const driverName = values.driver ?? "model";
   if (driverName !== "model" && driverName !== "agent") {
     console.error(`Unknown --driver "${driverName}" (expected "model" or "agent").`);
-    process.exitCode = 1;
-    return;
+    return 1;
   }
   const timeoutMs = values.timeout ? Number(values.timeout) : undefined;
   const verbose = values.verbose ?? false;
@@ -55,15 +61,13 @@ async function main() {
 
   if (allModels.length === 0) {
     console.error("No models discovered (local Ollama unreachable and no cloud API key configured).");
-    process.exitCode = 1;
-    return;
+    return 1;
   }
   if (models.length === 0) {
     console.error(
       `No discovered model matches --model "${values.model}". Available: ${allModels.map((m) => m.name).join(", ")}`,
     );
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   const targets: BenchmarkTarget[] = models.map((m) => ({
@@ -100,8 +104,7 @@ async function main() {
   const caseCount = buildCases().filter((c) => !agentDriver || c.kind === "agentic").length;
   if (caseCount === 0) {
     console.error(`No case matches --category "${values.category}".`);
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   if (!values.json) console.log(`Benchmarking ${models.length} model(s) across ${caseCount} case(s)...\n`);
@@ -133,7 +136,7 @@ async function main() {
   // array on stdout, nothing else printed.
   if (values.json) {
     console.log(JSON.stringify(results));
-    return;
+    return 0;
   }
 
   console.log();
@@ -149,16 +152,20 @@ async function main() {
       console.log(`  ${f.tier}/${f.model} — ${f.caseId}: ${f.error ?? f.reason ?? "unknown"}`);
     }
   }
+  return failures.length ? 1 : 0;
 }
 
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    // A timed-out case's underlying fetch may still be in flight (withTimeout
-    // stops waiting on it but doesn't abort it) — force exit instead of
-    // letting a dangling request/socket keep the process alive indefinitely.
-    process.exit(process.exitCode ?? 0);
-  });
+const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (isDirectRun) {
+  runBenchmarkCli(process.argv.slice(2))
+    .catch((e) => {
+      console.error(e);
+      return 1;
+    })
+    .then((code) => {
+      // A timed-out case's underlying fetch may still be in flight (withTimeout
+      // stops waiting on it but doesn't abort it) — force exit instead of
+      // letting a dangling request/socket keep the process alive indefinitely.
+      process.exit(code ?? 0);
+    });
+}
