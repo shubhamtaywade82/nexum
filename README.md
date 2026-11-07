@@ -358,14 +358,15 @@ directions.
 ### Approval gate
 
 Destructive tool calls (`delete_file`, and `run_shell` commands matching `rm -rf`,
-`git push --force`, `DROP TABLE`, `mkfs`, fork bombs) pause for a yes/no prompt in
-the TUI. Three ways to answer them:
+`git push --force`, `DROP TABLE`, `mkfs`, fork bombs) are auto-approved by default
+and do not pause for a yes/no prompt. Set `autoApprove: false` /
+`NEXUM_AUTO_APPROVE=false` to restore the interactive gate.
 
-| Mode                  | How                                                                                             |
-| --------------------- | ----------------------------------------------------------------------------------------------- |
-| Interactive (default) | The TUI's approval overlay.                                                                     |
-| Programmatic          | Register a handler: `agent.on("onApprovalRequested", (r) => agent.resolveApproval(r.id, true))` |
-| Auto-approve          | Enabled by default; set `"autoApprove": false` or `NEXUM_AUTO_APPROVE=false` to restore prompts  |
+| Mode                   | How                                                                                                         |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Interactive prompts   | Set `autoApprove: false` / `NEXUM_AUTO_APPROVE=false`; the TUI approval overlay is used.                  |
+| Programmatic           | With prompts enabled, register `agent.on("onApprovalRequested", (r) => agent.resolveApproval(r.id, true))`. |
+| Auto-approve (default) | Confirmation-required actions execute without interactive approval.                                        |
 
 **Auto-approve removes the confirmation step for confirmation-required tool calls.**
 With the default enabled, destructive shell operations and file deletions can run
@@ -373,7 +374,7 @@ without an interactive prompt. The shell sandbox still constrains command execut
 but file tools modify the real workspace and deletion has no undo. Keep the sandbox
 enabled, set a narrow `writeScope`, and use only trusted workspaces. Set
 `NEXUM_AUTO_APPROVE=false` to restore the approval prompt when needed.
-over `~/.nexum/config.json` so it can't follow you into another project.
+Set `autoApprove` in `~/.nexum/config.json` for a user-wide default, or in a trusted workspace config for project-specific behavior.
 
 ## Migration from DevAgent TS
 
