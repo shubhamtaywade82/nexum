@@ -199,7 +199,10 @@ describe("Docker tool defaults", () => {
 
   it("does not inherit repository-controlled Docker privileges in an untrusted workspace", () => {
     mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
-    writeFileSync(join(workspaceRoot, ".nexum", "config.json"), JSON.stringify({ dockerTool: true, dockerEgress: true }));
+    writeFileSync(
+      join(workspaceRoot, ".nexum", "config.json"),
+      JSON.stringify({ dockerTool: true, dockerEgress: true }),
+    );
     const config = loadConfig({ workspaceRoot, trustStore: WorkspaceTrustStore.inMemory() });
 
     expect(config.dockerTool).toBe(false);

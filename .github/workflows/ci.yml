@@ -77,6 +77,9 @@ jobs:
         env:
           CI: true
           SKIP_NETWORK_TESTS: true
+          # --runInBand runs every suite in one process. It exhausted V8's default
+          # ~2 GB heap when reproduced locally, so give the single process headroom.
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Validate packed npm artifact
         run: npm run package:check

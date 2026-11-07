@@ -378,7 +378,10 @@ describe("GitHubDeliveryAdapter", () => {
         return { status: 200, json: { check_runs: [{ name: "CI", status: "completed", conclusion: "success" }] } };
       }
       if (path.includes("/reviews"))
-        return { status: 200, json: [{ state: "APPROVED", commit_id: "cafe1234", user: { login: "rev", type: "User" } }] };
+        return {
+          status: 200,
+          json: [{ state: "APPROVED", commit_id: "cafe1234", user: { login: "rev", type: "User" } }],
+        };
       return { status: 200, json: {} };
     });
     const adapter = new GitHubDeliveryAdapter(

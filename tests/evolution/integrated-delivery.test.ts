@@ -382,7 +382,13 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
   it("stops at CHANGES_REQUESTED when review demands rework", async () => {
     const fakes = makeFakes({
       checkRuns: [{ name: "build", status: "completed", conclusion: "success" }],
-      reviews: [{ state: "CHANGES_REQUESTED", user: { login: "maintainer", type: "User" }, submitted_at: "2026-01-01T00:00:00Z" }],
+      reviews: [
+        {
+          state: "CHANGES_REQUESTED",
+          user: { login: "maintainer", type: "User" },
+          submitted_at: "2026-01-01T00:00:00Z",
+        },
+      ],
     });
     const engine = makeEngine(fakes);
     const obs = observation(engine);
