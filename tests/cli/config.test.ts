@@ -167,6 +167,56 @@ describe("workspace root resolution (git-root, like most editor tooling)", () =>
   });
 });
 
+describe("Docker tool defaults", () => {
+  const originalEnv = { ...process.env };
+  let workspaceRoot: string;
+
+  beforeEach(async () => {
+    workspaceRoot = await mkdtemp(join(tmpdir(), "docker-config-test-"));
+    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
+    process.env.DEVAGENT_TEST_NO_GLOBAL = "true";
+    delete process.env.NEXUM_DOCKER_TOOL;
+    delete process.env.NEXUM_DOCKER_EGRESS;
+    delete process.env.DEVAGENT_DOCKER_TOOL;
+    delete process.env.DEVAGENT_DOCKER_EGRESS;
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("enables Docker tooling and container egress by default in a trusted workspace", () => {
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+
+    const config = loadConfig({ trustStore });
+
+    expect(config.dockerTool).toBe(true);
+    expect(config.dockerEgress).toBe(true);
+    expect(config.sandbox).toBe(true);
+  });
+
+  it("does not inherit repository-controlled Docker privileges in an untrusted workspace", () => {
+    const config = loadConfig({ trustStore: WorkspaceTrustStore.inMemory() });
+
+    expect(config.dockerTool).toBe(false);
+    expect(config.dockerEgress).toBe(false);
+    expect(config.sandbox).toBe(true);
+  });
+
+  it("allows the operator to turn off Docker access and egress explicitly", () => {
+    const trustStore = WorkspaceTrustStore.inMemory();
+    trustWorkspace(workspaceRoot, trustStore);
+    process.env.NEXUM_DOCKER_TOOL = "false";
+    process.env.NEXUM_DOCKER_EGRESS = "false";
+
+    const config = loadConfig({ trustStore });
+
+    expect(config.dockerTool).toBe(false);
+    expect(config.dockerEgress).toBe(false);
+  });
+});
+
 describe("enableHeuristicGate flag", () => {
   const originalEnv = { ...process.env };
   let workspaceRoot: string;
