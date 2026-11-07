@@ -201,7 +201,7 @@ describe("GitHubDeliveryAdapter", () => {
 
     const ci = await adapter.syncCiFeedback(controller, "exp-gh-1", "sha");
     expect(ci.passed).toBe(true);
-    expect(controller.record("exp-gh-1").lifecycle.state).toBe("DELIVERED");
+    expect(controller.record("exp-gh-1").lifecycle.state).toBe("REVIEW_PENDING");
 
     const review = await adapter.syncReviewFeedback(controller, "exp-gh-1", 42, "sha");
     expect(review.state).toBe("approved");
