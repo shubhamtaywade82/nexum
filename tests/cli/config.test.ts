@@ -247,14 +247,14 @@ describe("loadConfig host/tier interaction", () => {
 });
 
 describe("parseAutoPlan", () => {
-  it("accepts the three modes, honours the legacy hint switch, and defaults to ask", async () => {
+  it("accepts the three modes, honours the legacy hint switch, and defaults to always", async () => {
     const { parseAutoPlan } = await import("../../src/cli/config.js");
     expect(parseAutoPlan("always")).toBe("always");
     expect(parseAutoPlan(" OFF ")).toBe("off");
     expect(parseAutoPlan("ask")).toBe("ask");
     expect(parseAutoPlan(undefined, "0")).toBe("off");
-    expect(parseAutoPlan("nonsense")).toBe("ask");
-    expect(parseAutoPlan(undefined)).toBe("ask");
+    expect(parseAutoPlan("nonsense")).toBe("always");
+    expect(parseAutoPlan(undefined)).toBe("always");
   });
 });
 
