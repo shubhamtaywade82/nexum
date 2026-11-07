@@ -188,10 +188,11 @@ describe("built-in profile bundles", () => {
     expect(b.capabilities).toContain("cli");
   });
 
-  it("serverProfileBundle has expected shape", () => {
+  it("serverProfileBundle has expected shape and enabled unattended execution policy", () => {
     const b = serverProfileBundle();
     expect(b.id).toBe("nexum-server");
     expect(b.capabilities).toContain("rpc");
+    expect(b.settings?.["policy.autoApprove"]).toBe(true);
   });
 
   it("cryptoBotProfileBundle depends on server", () => {
