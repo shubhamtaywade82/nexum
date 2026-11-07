@@ -36,9 +36,9 @@ export interface CliConfig {
   sandbox?: boolean;
   /** Absolute directory file-mutating tools are confined to (inside workspaceRoot). Unset = the whole workspace. */
   writeScope?: string;
-  /** Mount the host `docker` tool (daemon access is root-equivalent; default off). */
+  /** Mount the Docker tool by default in trusted workspaces (daemon access is root-equivalent). */
   dockerTool?: boolean;
-  /** Let containers started by the docker tool reach the network (default off: internal network only). */
+  /** Allow Docker-tool containers network egress by default in trusted workspaces (bridge network; loopback ports only). */
   dockerEgress?: boolean;
   languages?: Record<string, LanguageOverride>;
   lsp?: LspCliConfig;
@@ -506,8 +506,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     shellImage: readEnv("SHELL_IMAGE") || file.shellImage,
     shellTimeoutSec,
     sandbox: readEnvFlag("SANDBOX", file.sandbox ?? true),
-    dockerTool: readEnvFlag("DOCKER_TOOL", file.dockerTool ?? false),
-    dockerEgress: readEnvFlag("DOCKER_EGRESS", file.dockerEgress ?? false),
+    // Docker daemon access is root-equivalent: default it on only after this
+    // workspace is trusted. A global config or explicit environment value still
+    // represents an operator decision and can override the default.
+    dockerTool: readEnvFlag("DOCKER_TOOL", file.dockerTool ?? trust.trusted),
+    dockerEgress: readEnvFlag("DOCKER_EGRESS", file.dockerEgress ?? trust.trusted),
     writeScope: resolveWriteScope(readEnv("WRITE_SCOPE") || file.writeScope, workspaceRoot),
     toolSelectionMode,
     maxActiveTools,
