@@ -334,8 +334,10 @@ export function registerDefaultSpecs(service: SettingsService): void {
   });
   service.registerSpec({
     key: "policy.autoApprove",
-    label: "Auto-Approve Destructive Actions",
-    default: false,
+    label: "Auto-Approve Confirmation-Required Actions",
+    description:
+      "On by default for unattended execution. Confirmation-required and destructive workspace actions run without an interactive prompt.",
+    default: true,
     type: "boolean",
     namespace: "policy",
     editable: true,
