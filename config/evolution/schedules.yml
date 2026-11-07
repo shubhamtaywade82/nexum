@@ -1,0 +1,99 @@
+# Nexum Evolution Schedules
+#
+# Declares the maximum cadence per category. A task may be re-evaluated sooner
+# if its trigger fires (e.g. a new failure class appears in ExperienceStore),
+# but never more often than the cadence.
+#
+# Cadence is a ceiling, not a target. The runner also respects:
+#   - the anti-rule "no re-diagnosis without new evidence"
+#   - the task's next_evaluation_condition (set when a task is deferred)
+
+version: 1
+
+default_cadence: daily
+
+categories:
+  learning:
+    cadence: hourly
+    reason: "Episodes accumulate continuously; rapid feedback prevents stale lessons."
+    min_evidence_delta_to_re_run: 5
+    # At least 5 new episodes must have arrived since the last report before
+    # the runner re-evaluates a learning task.
+
+  evolution_safety:
+    cadence: per-release
+    reason: "Safety gates must not drift between releases."
+    min_evidence_delta_to_re_run: 0
+    # Safety tasks are re-evaluated on every release tag, regardless of
+    # evidence delta. They may also be re-evaluated out-of-cycle if a
+    # catastrophic regression is observed.
+
+  agent_execution:
+    cadence: daily
+    reason: "Execution signals stabilize over a day; sub-day noise dominates."
+    min_evidence_delta_to_re_run: 20
+
+  memory_knowledge:
+    cadence: daily
+    reason: "Memory writes accrue over a day; sub-day review is premature."
+    min_evidence_delta_to_re_run: 10
+
+  model_intelligence:
+    cadence: weekly
+    reason: "Model behavior is stable over days; weekly review avoids thrash."
+    min_evidence_delta_to_re_run: 50
+
+  platform_operations:
+    cadence: weekly
+    reason: "Platform metrics are slow-moving; weekly review is sufficient."
+    min_evidence_delta_to_re_run: 0
+    # Platform tasks are re-evaluated on schedule, not on evidence delta.
+
+  observability:
+    cadence: weekly
+    reason: "Same as platform_operations."
+    min_evidence_delta_to_re_run: 0
+
+  documentation:
+    cadence: per-release
+    reason: "Docs must match the released code; per-release review is the right cadence."
+    min_evidence_delta_to_re_run: 0
+
+# ── Out-of-cycle triggers ──────────────────────────────────────────────────
+triggers:
+  # When a new failure class appears in ExperienceStore, re-evaluate the
+  # matching failure-pattern task immediately (subject to its cadence).
+  - event: new_failure_class
+    re_evaluate:
+      - EVO-004 # Failure Pattern Discovery
+
+  # When a regression is detected post-activation, re-evaluate the safety
+  # tasks immediately, bypassing cadence (safety overrides cadence).
+  - event: post_activation_regression
+    re_evaluate:
+      - EVO-015 # Regression Detection
+      - EVO-018 # Automatic Rollback
+    bypass_cadence: true
+
+  # When a new model is added to the adapter registry, re-evaluate model
+  # intelligence tasks.
+  - event: new_model_registered
+    re_evaluate:
+      - EVO-037 # Model Capability Benchmark
+      - EVO-038 # Intelligent Model Routing
+
+# ── Initial batch ──────────────────────────────────────────────────────────
+# When the runner starts from an empty backlog, evaluate these first and in
+# this order. They cover the entire loop end-to-end (capture -> ingest ->
+# diagnose -> target -> automate -> verify -> generalize -> recover).
+initial_batch:
+  - EVO-001
+  - EVO-002
+  - EVO-003
+  - EVO-004
+  - EVO-005
+  - EVO-008
+  - EVO-009
+  - EVO-012
+  - EVO-014
+  - EVO-018

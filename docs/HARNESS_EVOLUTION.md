@@ -529,3 +529,94 @@ Modelled on the strict-test protocol of _Can LLMs Improve Their Own Harness?_ (a
   - Cost includes every model call, background ones too. The conversation summary reports usage through `onBackgroundModelUsage`, and the driver waits on `Agent.whenIdle()` before totalling.
   - The quick model is pinned to the target. Any other model the router picks is listed in the result's `modelsUsed`.
   - Single-turn cases are skipped under the agent driver, because they score a raw model response that no harness code touches.
+
+## 6.23 Success-driven evolution, autonomous mode & the persistent loop (v2.4)
+
+v2.3 closed the actuator, evaluation and delivery halves of the loop. v2.4
+closes the four gaps that still kept evolution failure-biased and
+single-shot:
+
+### 1. Successes are now evolution evidence (`SuccessPatternAnalyzer`)
+
+`HarnessDiagnoser` deliberately skips clean successful episodes, so a
+workspace without failures could never form an improvement target — the loop
+was failure-driven by construction. `src/evolution/experience/success-analyzer.ts`
+adds the success-driven half of diagnosis, wired into `ClosedLoopEngine.observe()`:
+
+- **Efficiency opportunities** (`efficiency_opportunity`): successful episodes
+  that succeeded _wastefully_ — tool errors absorbed by retries, repeated
+  same-tool retries, long turn counts. The component follows the dominant
+  waste signal (tools / lifecycle / execution).
+- **Comparative success patterns** (`success_pattern`): within one task class,
+  when the efficient successes meaningfully outscore the wasteful ones, the
+  execution pattern itself becomes the improvement hypothesis. Normalized by
+  task class, never by raw success frequency.
+
+Both are ordinary `HarnessDiagnosis` records, so they flow through the same
+TargetEngine → planner → mutation-scope pipeline with no special casing
+(`capabilityAreaFor` maps them to `tool_utilization` / `execution_stability`).
+A uniformly clean workspace still produces nothing: no evidence, no target.
+
+### 2. The experience feed covers every episode
+
+`loadAllEpisodes()` reads the _entire_ `lessons.db`, and the mutate path now
+ingests ALL completed episodes into `experience.db` — the `--limit` window
+only bounds what the _diagnosis_ consults. Accumulation is independent of
+mutation success, and continuous mode re-ingests on every tick, so episodes
+recorded while earlier cycles ran are picked up.
+
+### 3. `--autonomous` is dispatched for real
+
+The flag was previously declared in the CLI options and silently ignored.
+Now:
+
+- `nexum evolve --autonomous` — observation + planning cycle over all
+  accumulated experience (ingests everything, reports the target it would
+  chase, prints the experience digest).
+- `nexum evolve --autonomous --repo . [--strategy agent] [--benchmark]` — the
+  full closed loop, exactly the `--mutate` path.
+
+### 4. The persistent evolution worker (`--continuous`)
+
+`nexum evolve --mutate --repo . --continuous` runs the loop through
+`EvolutionWorker` (`src/evolution/evolution-worker.ts`) instead of a single
+cycle. Two hard policy invariants:
+
+- **Never mutate because a schedule fired.** Every tick re-observes the
+  evidence; a cycle only runs when a capability target exists AND its
+  confidence clears the threshold (`--interval`, `--max-cycles` bound the
+  loop; Ctrl-C stops it cleanly).
+- **Budgeted failure.** Consecutive failed cycles (stage failures, not clean
+  rejections) stop the worker instead of burning the improvement budget.
+
+### 5. Continuous post-activation monitoring (`--monitor --watch`)
+
+`nexum evolve --monitor --telemetry prod.jsonl --experiment <id> --watch`
+runs `ContinuousMonitorService` (`src/evolution/monitoring/monitor-service.ts`):
+it tails the JSONL telemetry file (half-written samples are never evaluated),
+ingests into the `ActivationMonitor`, and evaluates through
+`engine.evaluateActivationLive()` — which drives ACTIVE → REGRESSED →
+ROLLBACK automatically when a regression lands. Supporting this
+cross-process, `ExperimentController.hydrate(id)` restores a persisted
+experiment (record + state machine) into a fresh process, and
+`finalizeAcceptance()` now persists the ACCEPTED → ACTIVE walk so a hydrated
+experiment does not come back as still-APPROVED.
+
+### 6. Generalization evidence is required in production
+
+`resolveGeneralizationPolicy()`: with `--github` (production delivery) the
+default generalization policy is now **`required-for-production`** — a PR can
+only be opened for a candidate with fixed-executor transfer evidence. Local
+runs keep `optional`; `--generalization-policy <p>` overrides both.
+
+```bash
+# Autonomous planning over ALL experience (no mutation):
+nexum evolve --autonomous
+
+# Persistent, policy-gated self-development loop:
+nexum evolve --mutate --repo . --strategy agent --benchmark \
+  --verify-profile full --continuous --interval 3600000 --max-cycles 8
+
+# Continuous monitoring with automatic rollback:
+nexum evolve --monitor --telemetry prod.jsonl --experiment exp-... --watch
+```

@@ -17,6 +17,21 @@ export interface LearningEngineOptions {
   /** Reflect on at most every Nth episode when the episode was a clean success. */
   reflectSuccessEveryN?: number;
   logger?: Pick<Console, "info" | "warn">;
+  /**
+   * Optional experience-layer ingestor; called once per persisted episode, on
+   * the serialized `inFlight` chain (so it never blocks the user-facing turn
+   * and never throws into it). EVO-002: closes the structural break between
+   * `lessons.db` (this layer) and `experience.db` (the evolution layer) by
+   * having the runtime wire a {@link ExperienceIngestionBridge} here.
+   *
+   * The callback MUST:
+   *  - never throw (wrap all work in try/catch; this engine swallows errors
+   *    via the `inFlight` chain's `.catch`, but the callback should still be
+   *    defensive so a misconfigured store does not poison the lesson pipeline);
+   *  - be idempotent (`ExperienceStore.save` uses ON CONFLICT(episode_id));
+   *  - not block on network or long IO.
+   */
+  onEpisodePersisted?: (episode: Episode) => void;
 }
 
 /**
@@ -30,6 +45,7 @@ export class LearningEngine {
   private readonly synthesizer: SkillSynthesizer;
   private readonly reflectSuccessEveryN: number;
   private readonly logger: Pick<Console, "info" | "warn">;
+  private readonly onEpisodePersisted?: (episode: Episode) => void;
   private successCounter = 0;
   private inFlight: Promise<void> = Promise.resolve();
 
@@ -40,6 +56,7 @@ export class LearningEngine {
     this.synthesizer = new SkillSynthesizer(opts.workspaceRoot, this.lessons, opts.logger);
     this.reflectSuccessEveryN = opts.reflectSuccessEveryN ?? 4;
     this.logger = opts.logger ?? console;
+    this.onEpisodePersisted = opts.onEpisodePersisted;
   }
 
   onEpisodeEnd(terminal: Episode["terminal"], finalText: string): void {
@@ -77,6 +94,24 @@ export class LearningEngine {
       toolEventCount: episode.toolEvents.length,
       payload: JSON.stringify(episode),
     });
+
+    // EVO-002: bridge every persisted episode into the cross-session
+    // experience store so the evolution layer's TrajectoryAnalyzer,
+    // EvidenceAggregator, and TargetEngine operate on measured evidence
+    // instead of an empty store. The callback is wired by the runtime
+    // (ExperienceIngestionBridge) and MUST NOT throw — it runs on the
+    // serialized inFlight chain, so a throw here would be swallowed by the
+    // .catch in onEpisodeEnd, but we still guard so a misconfigured store
+    // can't poison the downstream reflection/synthesis steps.
+    if (this.onEpisodePersisted) {
+      try {
+        this.onEpisodePersisted(episode);
+      } catch (err) {
+        this.logger.warn(
+          `[Learning] experience ingestion failed for ${episode.id}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
 
     const shouldReflect =
       episode.grade.verdict !== "success" || ++this.successCounter % this.reflectSuccessEveryN === 0;

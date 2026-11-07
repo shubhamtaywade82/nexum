@@ -124,6 +124,26 @@ export class ExperimentController {
     return r;
   }
 
+  /**
+   * v2.4: hydrates a PERSISTED experiment into this controller so
+   * cross-process callers (the continuous monitor, a fresh CLI run) can
+   * operate on experiments created by earlier processes. The state machine is
+   * restored at the persisted lifecycle state, so advance()/report*() calls
+   * behave exactly as they would inside the original process. Returns null
+   * when the experiment is neither in-memory nor persisted. Idempotent: an
+   * already-known experiment is returned as-is.
+   */
+  hydrate(experimentId: string): ExperimentRecord | null {
+    const known = this.records.get(experimentId);
+    if (known) return known;
+    if (!this.store) return null;
+    const persisted = this.store.get(experimentId);
+    if (!persisted) return null;
+    this.records.set(experimentId, persisted);
+    this.machines.set(experimentId, new EvolutionStateMachine(persisted.lifecycle.state));
+    return persisted;
+  }
+
   /** Advances the experiment through an arbitrary legal transition with audit note. */
   advance(experimentId: string, to: EvolutionState, note?: string): StateTransitionResult {
     const machine = this.machine(experimentId);
@@ -244,6 +264,17 @@ export class ExperimentController {
       if (s === "REJECTED") rejected++;
     }
     return { eligible, accepted, rejected };
+  }
+
+  /**
+   * v2.4: persists the CURRENT in-memory record for an experiment. Needed
+   * when the engine mutates a record directly (e.g. finalizeAcceptance's
+   * ACCEPTED → ACTIVE walk) — without it the store keeps showing the last
+   * advance()'d state and a fresh process hydrates a stale lifecycle.
+   */
+  persistNow(experimentId: string): void {
+    const record = this.records.get(experimentId);
+    if (record) this.persist(record);
   }
 
   private persist(record: ExperimentRecord): void {
