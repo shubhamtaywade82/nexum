@@ -94,6 +94,11 @@ export interface ExperimentRecord {
   };
   /** Mutation scope components used for this experiment (single or compound). */
   scopeComponents?: string[];
+  /**
+   * The commit that landed on the base branch, recorded only after a merge was
+   * confirmed against GitHub. Activation must match it. Absent until then.
+   */
+  mergeCommitSha?: string;
   createdAt: number;
 }
 

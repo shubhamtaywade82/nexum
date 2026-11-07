@@ -231,13 +231,16 @@ describe("GitHubDeliveryAdapter", () => {
 
   it("pins the merge to the reviewed head sha, so a commit pushed after approval is not merged unreviewed", async () => {
     const { runner } = fakeGit();
-    const { client, requests } = fakeHttp(() => ({ status: 200, json: { merged: true } }));
+    const { client, requests } = fakeHttp(() => ({ status: 200, json: { merged: true, sha: "f".repeat(40) } }));
     const adapter = new GitHubDeliveryAdapter(
       { owner: "o", repo: "r", baseBranch: "main" },
       { runGit: runner, http: client, sleep: NO_SLEEP },
     );
 
-    expect(await adapter.mergePullRequest(42, "reviewed-sha")).toBe(true);
+    expect(await adapter.mergePullRequest(42, "reviewed-sha")).toEqual({
+      status: "merged",
+      mergeCommitSha: "f".repeat(40),
+    });
     expect(requests).toEqual([
       expect.objectContaining({
         path: "/repos/o/r/pulls/42/merge",

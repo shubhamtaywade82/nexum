@@ -32,10 +32,11 @@ export interface RuntimeActivationController {
   /** Harness id the runtime is currently executing. */
   activeHarness(): string | Promise<string>;
   /**
-   * Atomically switches the runtime onto `harnessId`. Throws when the
-   * runtime refuses or fails to load the target harness.
+   * Atomically switches the runtime onto `harnessId`. `pinnedCommitSha`, when
+   * given, is the exact commit the runtime must run (activation pins the verified
+   * merge commit). Throws when the runtime refuses or fails to load the target.
    */
-  switchTo(harnessId: string): Promise<void> | void;
+  switchTo(harnessId: string, pinnedCommitSha?: string): Promise<void> | void;
   /**
    * Optional runtime-level health probe for a harness id (used to verify a
    * switched-to harness is actually fit before a rollback is persisted).

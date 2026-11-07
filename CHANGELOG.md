@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Evolution: activation requires a verified merge
+
+- `--activate-runtime` is an explicit opt-in again. The default-on change is reverted.
+- Approval moves a candidate to `ACCEPTED`. It becomes `ACTIVE` only after GitHub confirms the merge by read-back: the pull is merged from the reviewed head, the merge commit matches, and the merged files match the candidate. A merge call that is rejected (405, 409, 422) or ambiguous never leads to activation.
+- The runtime is pinned to the verified merge commit. Activation fails closed without approval, passing CI, a verified merge, a matching candidate commit, or the explicit opt-in.
+- `mergeOnAccept` defaults to `false`. Merging stays manual until GitHub branch protection enforces review.
+- Experiment artifacts record `reviewApproved`, `mergeStatus`, `mergeCommitSha` and `contentVerified`. The sha256 in an artifact is a self-hash that detects accidental edits. It is not tamper-proof.
+
 ### CI healer and nexum rpc
 
 - New command `nexum ci-healer <tick|plan|status> --config <path>`. It heals failing GitHub Actions runs: each repair runs in an isolated worktree, the change is verified in a sandbox, and a draft PR is opened. Start with `plan`, which only reads. See `src/domains/ci-healer/README.md`.

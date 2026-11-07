@@ -18,7 +18,8 @@ import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
 import { Provider } from "../models/adapters/provider.js";
 import { runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
 import { CandidateEvaluationOutcome, EvolutionEngine } from "./engine.js";
-import { ClosedLoopEngine } from "./engine-v2.js";
+import { ActivationResult, ClosedLoopEngine } from "./engine-v2.js";
+import type { ActivationEvidence } from "./delivery/activation-gate.js";
 import { ExperienceStore } from "./experience/experience-store.js";
 import {
   buildExperimentArtifact,
@@ -85,16 +86,17 @@ Options:
       --skip-baseline    With --mutate --benchmark: skip benchmarking the
                          parent repository for baseline deltas
       --github           Canonical delivery: push the mutation branch, open the
-                         PR, poll CI and review, auto-accept on approval, merge.
+                         PR, poll CI and review, auto-accept on approval. This command
+                         does not merge: a human merges the PR in GitHub.
                          Requires NEXUM_GITHUB_OWNER + NEXUM_GITHUB_REPO (env);
                          optional NEXUM_GITHUB_TOKEN, NEXUM_GITHUB_BASE_BRANCH.
       --experiment-dir <path>  Directory for the immutable per-cycle experiment
                          artifact JSON (default: <workspace>/state/experiments).
-      --activate-runtime With --mutate (on by default): wire the manifest-file
-                         runtime activation controller. After an ACCEPTED candidate
-                         (GitHub delivery + CI passed + review approved), the
-                         live runtime is switched onto it by atomically
-                         updating nexum.harness.json's activeHarness pointer.
+      --activate-runtime With --mutate (explicit opt-in): wire the manifest-file
+                         runtime activation controller. Activation requires GitHub
+                         delivery, approval and CI for the candidate commit, and a
+                         merge confirmed by GitHub read-back. The live runtime is
+                         then pinned to the merge commit in nexum.harness.json.
   -a, --autonomous       Run the full autonomous cycle: ingest ALL experience,
                          observe failures AND successful patterns, form the
                          target, and — with --repo — execute the mutation
@@ -745,16 +747,19 @@ export async function ingestParentExperience(
 }
 
 /**
- * v2.3.3: the RUNTIME half of acceptance. Only an ACTIVE experiment (GitHub
- * delivery with CI passed + review approved + auto-accept) can be switched
- * onto the live runtime. The outcome — including honest skips and failures —
- * is returned so the experiment artifact carries the complete chain.
+ * v2.3.3: the RUNTIME half of acceptance, behind an explicit --activate-runtime.
+ *
+ * The switch happens only when the activation gate passes on live GitHub evidence
+ * for the candidate commit: approval, CI, and a merge confirmed by read-back. The
+ * runtime is then pinned to the verified merge commit. Everything else is recorded
+ * as an honest skip, never as an activation.
  */
-async function activateRuntimeIfNeeded(
-  engine: ClosedLoopEngine,
-  controller: ManifestRuntimeActivationController,
+export async function activateRuntimeIfNeeded(
+  engine: Pick<ClosedLoopEngine, "activateOnRuntime">,
+  controller: Pick<ManifestRuntimeActivationController, "name" | "activeHarness" | "readPointer">,
   experimentId: string,
   outcome: Awaited<ReturnType<ClosedLoopEngine["runEvolutionCycle"]>>,
+  explicitOptIn: boolean,
 ): Promise<NonNullable<ExperimentArtifactInput["activation"]>> {
   const harnessId = outcome.ok ? outcome.outcome.experiment.candidate.harness : "";
   // The launcher in bin/cli.js (src/platform/harness-launcher.ts) runs the pointer's commit for
@@ -763,32 +768,47 @@ async function activateRuntimeIfNeeded(
   if (!outcome.ok) {
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error: "cycle did not produce a candidate" };
   }
-  if (outcome.github?.accepted !== true) {
-    const error = "experiment not ACTIVE (activation requires --github delivery with CI passed + review approved)";
+  if (!explicitOptIn) {
+    const error = "runtime activation was not requested (--activate-runtime)";
     console.log(`[Evolution] Runtime activation skipped: ${error}.`);
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error };
   }
+
+  const facts = outcome.github?.facts;
+  const evidence: ActivationEvidence = {
+    explicitOptIn,
+    githubDelivery: outcome.github !== undefined,
+    candidateCommit: outcome.outcome.experiment.candidate.commit,
+    review: facts?.review ?? null,
+    ci: facts?.ci ?? null,
+    merge: facts?.merge ?? null,
+    verification: facts?.verification ?? null,
+  };
+
+  let result: ActivationResult;
   try {
-    await engine.activateOnRuntime(experimentId);
-    const active = controller.activeHarness();
-    if (active !== harnessId) {
-      throw new Error(`manifest pointer reports "${active}" after activation`);
-    }
-    const pointer = controller.readPointer();
-    console.log(
-      `[Evolution] Activated harness ${harnessId} @ ${(pointer?.commitSha ?? "").slice(0, 12)}. The next agent command started from this checkout runs it; processes already running keep their code.`,
-    );
-    return {
-      ...base,
-      commitSha: pointer?.commitSha ?? "",
-      activatedAt: pointer?.activatedAt ?? Date.now(),
-      ok: true,
-    };
+    result = await engine.activateOnRuntime(experimentId, evidence);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error(`[Evolution] Runtime activation FAILED: ${error}`);
     return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error };
   }
+  if (!result.ok) {
+    console.log(`[Evolution] Runtime activation skipped: ${result.reason}.`);
+    return { ...base, commitSha: "", activatedAt: Date.now(), ok: false, error: result.reason };
+  }
+
+  // The runtime must have landed on exactly the verified merge commit, read back from the manifest.
+  const pointer = controller.readPointer();
+  if (controller.activeHarness() !== harnessId || pointer?.commitSha !== result.commitSha) {
+    const error = `runtime pointer does not match the verified merge commit ${result.commitSha}`;
+    console.error(`[Evolution] Runtime activation FAILED: ${error}`);
+    return { ...base, commitSha: pointer?.commitSha ?? "", activatedAt: Date.now(), ok: false, error };
+  }
+  console.log(
+    `[Evolution] Activated harness ${harnessId} @ ${result.commitSha.slice(0, 12)} (verified merge). The next agent command started from this checkout runs it; processes already running keep their code.`,
+  );
+  return { ...base, commitSha: result.commitSha, activatedAt: pointer.activatedAt ?? Date.now(), ok: true };
 }
 
 async function executeMutationCommand(root: string, values: Record<string, unknown>): Promise<void> {
@@ -879,12 +899,10 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   // gates executable inside the worktree. Explicit executor always wins over
   // the engine's agentRuntime auto-wiring, keeping gate control in one place.
   const strategy = buildMutationStrategy(strategyName, cfg);
-  // v2.3.3: runtime activation wires the manifest-file RuntimeActivationController
-  // plus the harness registry so the engine's acceptance path records real H0→Hn
-  // lineage. On by default. It only switches the runtime for an ACTIVE experiment,
-  // which requires --github delivery with CI passed and review approved; without
-  // that the activation step records an honest skip.
-  const activationRequested = values["activate-runtime"] !== false;
+  // v2.3.3: runtime activation is an explicit opt-in (--activate-runtime). It wires the
+  // manifest-file RuntimeActivationController plus the harness registry so the acceptance
+  // path records real H0→Hn lineage. Without the flag the mutate path never touches the runtime.
+  const activationRequested = values["activate-runtime"] === true;
   const registry = activationRequested ? new HarnessRegistry(join(stateDir, "evolution.db")) : undefined;
   const activationController = activationRequested
     ? new ManifestRuntimeActivationController({ repoRoot, registry })
@@ -974,9 +992,9 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       ...(values.github && githubCfg ? { github: {} } : {}),
     });
     console.log(formatMutationResult(outcome));
-    // v2.3.3: the runtime half of acceptance. Runs by default; a non-ACTIVE experiment is a recorded skip.
+    // v2.3.3: the runtime half of acceptance, behind the explicit opt-in. The gate refuses without verified evidence.
     const activation = activationController
-      ? await activateRuntimeIfNeeded(engine, activationController, experimentId, outcome)
+      ? await activateRuntimeIfNeeded(engine, activationController, experimentId, outcome, activationRequested)
       : null;
     writeCycleArtifact(outcome, {
       experimentId,
@@ -1090,7 +1108,11 @@ function writeCycleArtifact(
               prNumber: outcome.github.handle.prNumber,
               prUrl: outcome.github.handle.prUrl,
               ciPassed: outcome.github.ci.passed,
+              reviewApproved: outcome.github.facts.review?.approved ?? false,
               accepted: outcome.github.accepted,
+              mergeStatus: outcome.github.merge?.status ?? "not-attempted",
+              mergeCommitSha: outcome.github.merge?.status === "merged" ? outcome.github.merge.mergeCommitSha : null,
+              contentVerified: outcome.github.verification?.contentMatches ?? null,
               merged: outcome.github.merged,
             }
           : null,

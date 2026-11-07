@@ -87,7 +87,7 @@ nexum evolve --benchmark
 nexum evolve --mutate --repo .
 
 # Full production run: engineering agent + subprocess benchmark (parent
-# baseline first) + canonical GitHub delivery (PR → CI → review → merge)
+# baseline first) + canonical GitHub delivery (PR → CI → review; a human merges)
 NEXUM_GITHUB_OWNER=<owner> NEXUM_GITHUB_REPO=<repo> nexum evolve \
   --mutate --repo . --strategy agent --benchmark --github
 
@@ -316,7 +316,7 @@ Key properties:
 
 ```text
 mutation → git commit → push branch → create PR → CI → review → feedback
-        → rework (CI_FAILED / CHANGES_REQUESTED → CANDIDATE) → accept → merge
+        → rework (CI_FAILED / CHANGES_REQUESTED → CANDIDATE) → accept (a human merges)
 ```
 
 - `deliverExperiment()` commits, pushes the evolution branch, and opens the PR carrying the provenance body.
@@ -399,7 +399,7 @@ target → mutation → evaluation → eligibility
        → push mutation branch → open PR (branch overridden to the REAL mutation branch)
        → poll CI  (CI_PENDING → CI_PASSED | CI_FAILED, timeout stays honest pending)
        → poll review (REVIEW_PENDING → APPROVED | CHANGES_REQUESTED)
-       → accept on approval (APPROVED → ACCEPTED → ACTIVE) → merge
+       → accept on approval (APPROVED → ACCEPTED); ACTIVE only after a merge confirmed by GitHub read-back
        → CI_FAILED / CHANGES_REQUESTED → beginRework() re-enters the loop at CANDIDATE
 ```
 
@@ -451,7 +451,7 @@ nexum evolve --mutate --repo . --strategy agent --benchmark --github
 - **Real evaluation with a real baseline** (`--benchmark`): the candidate worktree is benchmarked in a SUBPROCESS (`src/benchmark/cli.ts --json`, `cwd` = worktree) — in-process evaluation would benchmark the host module graph, not the mutated code. The parent repository is benchmarked first (`--skip-baseline` to opt out), so the two-stage comparison measures real deltas B(H0) vs B(H1) instead of evaluating H1 against a synthetic baseline.
 - **EvolutionVerificationProfile** (`--verify-profile smoke|fast|full`): repository-defined gates run sequentially inside the worktree — `smoke` (node liveness, the historical default), `fast` (prettier --check, eslint, tsc --noEmit; the new default), `full` (fast + `npm test`; automatic for `--github` delivery runs, so a PR is only opened for a CI-equivalent candidate). Unknown names fail loudly instead of silently weakening the gate.
 - **Worktree toolchain linking**: the executor's `linkNodeModulesFrom` symlinks the host `node_modules` into fresh worktrees (git worktrees carry history, not dependencies), making real gates executable. Dependency directories are gitignored, so the actual-diff scope audit is unaffected.
-- **Canonical delivery** (`--github`): the adapter is constructed from `NEXUM_GITHUB_*` environment variables, enabling push mutation branch → PR → CI poll → review poll → auto-accept → merge, with rework re-entry via `beginRework()`.
+- **Canonical delivery** (`--github`): the adapter is constructed from `NEXUM_GITHUB_*` environment variables, enabling push mutation branch → PR → CI poll → review poll → auto-accept (merge stays manual unless the engine option mergeOnAccept is set), with rework re-entry via `beginRework()`.
 - **Strategy unification**: `--strategy agent|heuristic` (loud failures on typos) with `--agent` as an alias; the CLI builds one explicit executor carrying strategy + profile + linking, while the engine's `agentRuntime` auto-wiring stays available to API users.
 - **Segment-aware scope containment** (`mutation/path-scope.ts`): every scope predicate (runtime proposal checks, strategy attribution, executor planned/actual audits) now uses `pathWithinAllowedPrefix` — allowed prefix `src/evolution` no longer admits the sibling `src/evolution2/...`. The executor's actual-diff audit remains the backstop; the invariant is now explicit at every layer.
 - **Bounded worktree view**: `list_files` excludes dependency/build directories and caps at `maxListEntries` (400); `read_file` truncates at `maxReadBytes` (64 KiB) — the agent's context budget is a function of the configured envelope, not of the worktree size.
@@ -496,9 +496,9 @@ production implementation.
   `harnessHealth()` is real external reality (git cat-file), so the runtime
   rollback orchestrator's post-switch verification checks the repository,
   not self-report. A successful switch clears the freeze marker.
-- **CLI**: `--activate-runtime` (on by default; it switches the runtime only for an ACTIVE experiment, which requires `--github` delivery with CI passed and review approved) wires the
+- **CLI**: `--activate-runtime` (explicit opt-in; the activation gate switches the runtime only when approval, CI and a merge read back from GitHub are all verified for the candidate commit) wires the
   controller plus the harness registry into the mutate path. After a cycle
-  whose candidate was ACCEPTED (GitHub delivery, CI passed, review approved),
+  whose candidate was merged and verified (GitHub delivery, CI passed, review approved, merge read back from GitHub),
   the live runtime is switched onto the candidate via
   `ClosedLoopEngine.activateOnRuntime()`; skips and failures are honest and
   recorded. The experiment artifact gains an `activation` section carrying
@@ -511,7 +511,7 @@ production implementation.
 ```bash
 nexum evolve --mutate --repo . --strategy agent --verify-profile full \
   --benchmark --github --activate-runtime
-# → accepted candidate becomes the manifest pointer (nexum.harness.json)
+# → the verified merge commit becomes the manifest pointer (nexum.harness.json); with merge manual (the default) this run records a skip
 ```
 
 ## 6.22 Held-out protocol and token accounting

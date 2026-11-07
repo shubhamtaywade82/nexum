@@ -1,5 +1,8 @@
 /**
- * ExperimentArtifact — the immutable, per-cycle JSON record (v2.3.2).
+ * ExperimentArtifact — the per-cycle JSON record (v2.3.2), written once with a
+ * sha256 self-hash over its payload. That hash detects accidental or partial edits.
+ * It is NOT an authenticity or immutability guarantee: whoever can rewrite the
+ * payload can rewrite the hash too. See verifyExperimentArtifactIntegrity().
  *
  * The ExperimentStore (SQLite) is the PROGRESSIVE audit log: rows are
  * upserted as the lifecycle advances, so the database always shows the live
@@ -40,7 +43,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExperimentRecord } from "./experiment-schema.js";
 import {
@@ -149,7 +152,16 @@ export interface ExperimentArtifactPayload {
     prNumber?: number;
     prUrl?: string;
     ciPassed?: boolean | null;
+    /** Review approved for the reviewed head (distinct from acceptance and merge). */
+    reviewApproved?: boolean;
+    /** Acceptance: the candidate reached ACCEPTED. Not a merge. */
     accepted?: boolean;
+    /** The merge call's outcome; "uncertain" and "rejected" never lead to activation. */
+    mergeStatus?: "merged" | "rejected" | "uncertain" | "not-attempted";
+    mergeCommitSha?: string | null;
+    /** Merged content matched the candidate (blob-level read-back). */
+    contentVerified?: boolean | null;
+    /** The merge was confirmed against GitHub. Only this may lead to activation. */
     merged?: boolean;
   };
   ci: { status: string; runUrl?: string } | null;
@@ -227,7 +239,11 @@ export interface ExperimentArtifactInput {
     prNumber: number;
     prUrl: string;
     ciPassed: boolean | null;
+    reviewApproved: boolean;
     accepted: boolean;
+    mergeStatus: "merged" | "rejected" | "uncertain" | "not-attempted";
+    mergeCommitSha: string | null;
+    contentVerified: boolean | null;
     merged: boolean;
   } | null;
   /** Local delivery preparation (eligible candidate without --github). */
@@ -325,7 +341,11 @@ export function buildExperimentArtifact(input: ExperimentArtifactInput): Experim
         prNumber: input.github.prNumber,
         prUrl: input.github.prUrl,
         ciPassed: input.github.ciPassed,
+        reviewApproved: input.github.reviewApproved,
         accepted: input.github.accepted,
+        mergeStatus: input.github.mergeStatus,
+        mergeCommitSha: input.github.mergeCommitSha,
+        contentVerified: input.github.contentVerified,
         merged: input.github.merged,
       }
     : input.localDelivery
@@ -442,4 +462,34 @@ export function writeExperimentArtifact(dir: string, envelope: ExperimentArtifac
   const path = join(dir, `${envelope.experimentId}.json`);
   writeFileSync(path, `${JSON.stringify(envelope, null, 2)}\n`, { flag: "wx" });
   return path;
+}
+
+export type ArtifactIntegrity = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Recomputes the self-hash over the payload. It detects accidental or partial edits
+ * that were not re-hashed. It does NOT authenticate the artifact: anyone who can
+ * rewrite the payload can also rewrite the hash. Tamper resistance needs an
+ * independently trusted anchor, such as a signature or a copy held elsewhere.
+ * No decision in the activation path reads this file; activation uses live GitHub
+ * evidence.
+ */
+export function verifyExperimentArtifactIntegrity(envelope: unknown): ArtifactIntegrity {
+  const e = envelope as Partial<ExperimentArtifactEnvelope> | null;
+  if (!e || e.kind !== "nexum-experiment-artifact") return { ok: false, reason: "not an experiment artifact" };
+  if (e.integrity?.algorithm !== "sha256" || typeof e.integrity.hash !== "string") {
+    return { ok: false, reason: "missing sha256 integrity hash" };
+  }
+  if (!e.payload || typeof e.payload !== "object") return { ok: false, reason: "missing payload" };
+  const actual = createHash("sha256").update(JSON.stringify(e.payload)).digest("hex");
+  return actual === e.integrity.hash ? { ok: true } : { ok: false, reason: "payload does not match its recorded hash" };
+}
+
+/** Reads a stored artifact and reports whether its payload still matches its self-hash. */
+export function readExperimentArtifact(path: string): {
+  envelope: ExperimentArtifactEnvelope;
+  integrity: ArtifactIntegrity;
+} {
+  const envelope = JSON.parse(readFileSync(path, "utf8")) as ExperimentArtifactEnvelope;
+  return { envelope, integrity: verifyExperimentArtifactIntegrity(envelope) };
 }
