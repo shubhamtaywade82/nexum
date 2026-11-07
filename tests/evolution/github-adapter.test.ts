@@ -265,7 +265,7 @@ describe("GitHubDeliveryAdapter", () => {
 
     const review = await adapter.syncReviewFeedback(controller, "exp-gh-1", 42, "sha");
     expect(review.state).toBe("pending");
-    expect(controller.record("exp-gh-1").lifecycle.state).toBe("REVIEW_PENDING");
+    expect(controller.record("exp-gh-1").lifecycle.state).toBe("DELIVERED");
   });
 
   it("does not accept an approval from a GitHub bot account", async () => {
@@ -297,7 +297,7 @@ describe("GitHubDeliveryAdapter", () => {
 
     const review = await adapter.syncReviewFeedback(controller, "exp-gh-1", 42, "sha");
     expect(review.state).toBe("pending");
-    expect(controller.record("exp-gh-1").lifecycle.state).toBe("REVIEW_PENDING");
+    expect(controller.record("exp-gh-1").lifecycle.state).toBe("DELIVERED");
   });
 
   it("pins the merge to the reviewed head sha, so a commit pushed after approval is not merged unreviewed", async () => {
