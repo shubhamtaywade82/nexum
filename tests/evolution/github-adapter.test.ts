@@ -158,6 +158,7 @@ describe("GitHubDeliveryAdapter", () => {
   it("syncs a passing CI verdict (→ CI_PASSED → REVIEW_PENDING) and review approval (→ APPROVED)", async () => {
     const { runner } = fakeGit();
     const { client } = fakeHttp((path) => {
+      if (path.endsWith("/pulls/42")) return { status: 200, json: { user: { login: "pr-author" } } };
       if (path.includes("/check-runs")) {
         return {
           status: 200,
