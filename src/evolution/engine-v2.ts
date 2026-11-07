@@ -665,8 +665,9 @@ export class ClosedLoopEngine {
       /** Accept (APPROVED → ACCEPTED) when review approves (default true). */
       autoAccept?: boolean;
       /**
-       * Merge the PR after acceptance (default false). Merging is never automatic
-       * unless this is set explicitly. A merge only reaches ACTIVE once GitHub confirms it.
+       * Merge the PR after acceptance (default true). This is reached only after
+       * CI passes and a human approves the exact candidate head SHA. Runtime
+       * activation still waits for successful merge read-back and content verification.
        */
       mergeOnAccept?: boolean;
     };
