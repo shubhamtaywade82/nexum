@@ -191,7 +191,7 @@ automatically and injects it when relevant.
 | Model not found                        | `ollama pull <model-name>`                            |
 | Slow first response                    | Local model cold-start; subsequent turns are fast     |
 | `nexum rpc` child exits immediately    | Ensure the workspace is valid + `nexum doctor` passes |
-| Approval dialog blocks everything      | Set `autoApprove: true` in config (less safe)         |
+| Need interactive approval prompts     | Set `autoApprove: false` in config (restores prompts) |
 
 ## Next Steps
 
