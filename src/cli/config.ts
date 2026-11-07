@@ -59,9 +59,9 @@ export interface CliConfig {
   /** Route trivial boilerplate tasks to the local quick model before calling cloud.
    * Default true when quickModel is set. Disable with NEXUM_LOCAL_WORKER=false. */
   enableLocalWorker?: boolean;
-  /** After local generation, run a critic pass to catch confident-wrong answers.
-   * Default: true when quickModel is set (the critic judges quick-model drafts);
-   * false otherwise. Enable/disable with NEXUM_VERIFIER=true/false. */
+  /** Run a critic pass after local generation to catch confident-wrong answers.
+   * On by default, using quickModel when configured and the local primary model
+   * otherwise. Disable only with NEXUM_VERIFIER=false. This adds model calls. */
   enableVerifier?: boolean;
   /** For 'unknown' heuristic decisions, draw N samples and check agreement.
    * On by default. Disable with NEXUM_SELF_CONSISTENCY=false. */
@@ -84,12 +84,14 @@ export interface CliConfig {
    * billing) — this only computes a cost estimate if you supply your own
    * real rate. Omit to leave cost tracking off (the honest default). */
   pricing?: { inputPerMillion: number; outputPerMillion: number };
-  /** Approve every destructive tool call (delete_file, `rm -rf`-class shell
-   * commands) without prompting. Off by default; only for CI/benchmark runs
-   * and throwaway containers. Enable with NEXUM_AUTO_APPROVE=true. */
+  /** Approve confirmation-required tool calls without prompting. On by default
+   * for unattended execution. This includes destructive workspace operations;
+   * keep sandboxing enabled and run only in a trusted, bounded workspace.
+   * Disable with NEXUM_AUTO_APPROVE=false. */
   autoApprove?: boolean;
-  /** How a top-level multi-step request is handled: "ask" (default) offers to run it as a checkpointed
-   * plan and waits for approval, "always" plans without asking, "off" never routes. NEXUM_AUTO_PLAN. */
+  /** How a top-level multi-step request is handled: "always" (default) uses the
+   * checkpointed plan orchestrator, "ask" waits for approval, "off" never routes.
+   * NEXUM_AUTO_PLAN. */
   autoPlan?: "ask" | "always" | "off";
   /** Color theme for the TUI: one of the built-in THEME_ORDER names.
    * Set in .nexum/config.json ("theme") or NEXUM_THEME; defaults to "default". */
@@ -382,12 +384,12 @@ export interface LoadConfigOptions {
   workspaceRoot?: string;
 }
 
-/** "ask" | "always" | "off"; the older NEXUM_PLAN_HINT=0 still means "off". Unknown values fall back to "ask". */
+/** "ask" | "always" | "off"; the older NEXUM_PLAN_HINT=0 still means "off". Unknown values use the always-plan default. */
 export function parseAutoPlan(value: string | undefined, legacyHint?: string): "ask" | "always" | "off" {
   const v = value?.trim().toLowerCase();
   if (v === "ask" || v === "always" || v === "off") return v;
   if (legacyHint === "0") return "off";
-  return "ask";
+  return "always";
 }
 
 export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
@@ -477,8 +479,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
 
   const tier: CliConfig["tier"] = (readEnv("TIER") || file.tier) === "cloud" ? "cloud" : "local";
 
-  // Quick model: env var wins, then config file. Hoisted because the
-  // verifier default below is conditional on it being set.
+  // Quick model: env var wins, then config file. When absent, localWorker and
+  // verifier use the configured local primary model rather than staying disabled.
   const quickModel = readEnv("QUICK_MODEL") || file.quickModel;
 
   // Theme: env var wins, then config file; unknown values fall back to
@@ -519,21 +521,17 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     // switch off a config-file `true`, which is the opposite of how every
     // sibling flag here behaves.
     //
-    // Default graduated from experimental (false) to conditional-on: when a
-    // dedicated quickModel is configured, the critic pass over quick-model
-    // drafts is on — its blast radius is bounded (critic outage accepts the
-    // draft; only quick-model answers are critiqued) and a small model's
-    // confident-wrong answers are exactly what it exists to catch. Without a
-    // quickModel the verifier would critique the PRIMARY model's drafts and
-    // re-run them at full cost, so it stays off there.
-    enableVerifier: readEnvFlag("VERIFIER", file.enableVerifier ?? Boolean(quickModel)),
+    // The critic is always active by default. When quickModel is configured it
+    // critiques quick-model drafts; otherwise ModelStack uses the local primary
+    // model. A failed verifier call degrades to the normal answer path.
+    enableVerifier: readEnvFlag("VERIFIER", file.enableVerifier ?? true),
     enableSelfConsistency: readEnvFlag("SELF_CONSISTENCY", file.enableSelfConsistency ?? true),
     selfConsistencyN,
     selfConsistencyThreshold,
     availabilityCheckTtlMs,
     enableAvailabilityCheck: readEnvFlag("AVAIL_CHECK", file.enableAvailabilityCheck ?? true),
     enableHeuristicGate: readEnvFlag("HEURISTIC_GATE", file.enableHeuristicGate ?? true),
-    autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? false),
+    autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? true),
     autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
     mcpServers: file.mcpServers,
