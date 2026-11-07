@@ -201,7 +201,7 @@ describe("GitHubDeliveryAdapter", () => {
 
     const ci = await adapter.syncCiFeedback(controller, "exp-gh-1", "sha");
     expect(ci.passed).toBe(true);
-    expect(controller.record("exp-gh-1").lifecycle.state).toBe("REVIEW_PENDING");
+    expect(controller.record("exp-gh-1").lifecycle.state).toBe("DELIVERED");
 
     const review = await adapter.syncReviewFeedback(controller, "exp-gh-1", 42, "sha");
     expect(review.state).toBe("approved");
@@ -373,11 +373,12 @@ describe("GitHubDeliveryAdapter", () => {
     const { runner, calls } = fakeGit();
     const { client, requests } = fakeHttp((path) => {
       if (path.endsWith("/pulls")) return { status: 201, json: { number: 9, html_url: "pr-url" } };
+      if (path.endsWith("/pulls/9")) return { status: 200, json: { user: { login: "pr-author" } } };
       if (path.includes("/check-runs")) {
         return { status: 200, json: { check_runs: [{ name: "CI", status: "completed", conclusion: "success" }] } };
       }
       if (path.includes("/reviews"))
-        return { status: 200, json: [{ state: "APPROVED", commit_id: "cafe1234", user: { login: "rev" } }] };
+        return { status: 200, json: [{ state: "APPROVED", commit_id: "cafe1234", user: { login: "rev", type: "User" } }] };
       return { status: 200, json: {} };
     });
     const adapter = new GitHubDeliveryAdapter(
