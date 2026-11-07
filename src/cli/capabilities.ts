@@ -224,7 +224,7 @@ export async function collectCapabilities(input: CapabilityInputs): Promise<Feat
     state: input.dockerToolEnabled ? "active" : "off",
     detail: input.dockerToolEnabled
       ? "enabled (root-equivalent host access)"
-      : "opt-in: dockerTool / NEXUM_DOCKER_TOOL=1",
+      : "off in untrusted workspaces by default; enable via trusted workspace or operator setting",
   });
 
   return caps;
