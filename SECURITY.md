@@ -108,12 +108,14 @@ Desktop (macOS/Windows) — see §11.
 ### Sandbox disabled (`NEXUM_SANDBOX=0` / `sandbox: false`)
 
 Commands run on the host with your privileges; nothing can be isolated.
-Nexum then: requires human confirmation for **every** `run_shell` and
-script-runner call (argument-based "benign command" allowances do not
-apply to host execution), and strips credential-looking variables
-(`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*CREDENTIAL*`, `*PRIVATE*`)
-from the child environment. An operator who also enables auto-approve
-has removed the last check.
+Nexum strips credential-looking variables (`*KEY*`, `*TOKEN*`, `*SECRET*`,
+`*PASSWORD*`, `*CREDENTIAL*`, `*PRIVATE*`) from the child environment.
+**Auto-approval is enabled by default**, so host shell and script-runner calls
+that would otherwise need confirmation can run without a human prompt. Disabling
+the sandbox while leaving auto-approval on removes both isolation and the
+interactive shell confirmation boundary. Do not use this combination on a
+workspace or machine you cannot afford to lose. Restore prompts with
+`NEXUM_AUTO_APPROVE=false`, or keep the sandbox enabled (the default).
 
 ## 4. `docker` tool (opt-in)
 
