@@ -64,7 +64,7 @@ export interface ActivationEvidence {
   verification: MergeVerification | null;
 }
 
-/** The GitHub-observed facts a delivery produces. The activation gate adds the operator's opt-in. */
+/** GitHub-observed facts from the current delivery run; activation preference is supplied separately. */
 export type DeliveryFacts = Pick<ActivationEvidence, "candidateCommit" | "review" | "ci" | "merge" | "verification">;
 
 export type ActivationDecision = { ok: true; mergeCommitSha: string } | { ok: false; reason: string };
