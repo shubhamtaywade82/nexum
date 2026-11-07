@@ -56,8 +56,8 @@ export interface CliConfig {
   quickModel?: string;
 
   // ── Hybrid local-cloud architecture ──────────────────────────────────────
-  /** Route trivial boilerplate tasks to the local quick model before calling cloud.
-   * Default true when quickModel is set. Disable with NEXUM_LOCAL_WORKER=false. */
+  /** Route trivial tasks through a local worker. On by default; uses quickModel
+   * when configured and the local primary model otherwise. Disable with NEXUM_LOCAL_WORKER=false. */
   enableLocalWorker?: boolean;
   /** Run a critic pass after local generation to catch confident-wrong answers.
    * On by default, using quickModel when configured and the local primary model
