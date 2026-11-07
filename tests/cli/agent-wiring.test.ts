@@ -153,7 +153,13 @@ describe("Agent wiring — decision plane", () => {
     });
     const onStatus = jest.fn();
     const agent = new Agent({
-      config: { workspaceRoot: dir, tier: "local", model: "test-model", enableDecision: true },
+      config: {
+        workspaceRoot: dir,
+        tier: "local",
+        model: "test-model",
+        enableDecision: true,
+        enableHeuristicGate: false,
+      },
       decisionGateway: gateway,
       events: { onStatus },
     });
