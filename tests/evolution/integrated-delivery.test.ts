@@ -100,7 +100,7 @@ interface RecordedCall {
  */
 function makeFakes(options: {
   checkRuns?: Array<{ name: string; status: "queued" | "in_progress" | "completed"; conclusion: string | null }>;
-  reviews?: Array<{ state: string; user?: { login?: string }; submitted_at?: string }>;
+  reviews?: Array<{ state: string; user?: { login?: string; type?: string }; submitted_at?: string }>;
   mergeStatus?: number;
   prStatus?: number;
 }): { runGit: GitCommandRunner; http: GitHubHttpClient; calls: RecordedCall[]; pushedRefs: string[] } {
@@ -382,7 +382,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
   it("stops at CHANGES_REQUESTED when review demands rework", async () => {
     const fakes = makeFakes({
       checkRuns: [{ name: "build", status: "completed", conclusion: "success" }],
-      reviews: [{ state: "CHANGES_REQUESTED", user: { login: "maintainer" }, submitted_at: "2026-01-01T00:00:00Z" }],
+      reviews: [{ state: "CHANGES_REQUESTED", user: { login: "maintainer", type: "User" }, submitted_at: "2026-01-01T00:00:00Z" }],
     });
     const engine = makeEngine(fakes);
     const obs = observation(engine);
