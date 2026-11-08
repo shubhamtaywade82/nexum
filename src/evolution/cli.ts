@@ -698,6 +698,7 @@ export async function runBenchmarkInDir(
   repoRoot: string,
   dir: string,
   categories: string[],
+  model?: string,
 ): Promise<TaskExecutionResult[]> {
   const absRepoRoot = resolve(repoRoot);
   const tsxEntry = resolve(absRepoRoot, "node_modules", "tsx", "dist", "cli.mjs");
@@ -724,6 +725,7 @@ export async function runBenchmarkInDir(
   // The agent driver runs each case through the worktree's own Agent, so a mutation to the
   // runtime, prompts, routing or tool selection can move the score. The model driver could not.
   const args = [tsxEntry, "src/benchmark/cli.ts", "--json", "--driver", "agent"];
+  if (model) args.push("--model", model);
   for (const category of categories) args.push("--category", category);
   const { stdout } = await execFileAsync("node", args, { cwd: dir, maxBuffer: 32 * 1024 * 1024 });
   return parseBenchmarkJson(stdout);
@@ -991,7 +993,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     let baselineResults: TaskExecutionResult[] = [];
     if (values.benchmark && !values["skip-baseline"]) {
       console.log(`[Evolution] Benchmarking parent (baseline) across [${categories.join(", ") || "all"}]...`);
-      baselineResults = await runBenchmarkInDir(repoRoot, repoRoot, categories);
+      baselineResults = await runBenchmarkInDir(repoRoot, repoRoot, categories, cfg.model);
     }
     // Captured so the experiment artifact can carry the raw candidate runs.
     let candidateResults: TaskExecutionResult[] = [];
@@ -1014,7 +1016,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
           );
         }
         console.log(`[Evolution] Benchmarking candidate worktree across [${categories.join(", ") || "all"}]...`);
-        candidateResults = await runBenchmarkInDir(repoRoot, artifact.workspace.worktreePath, categories);
+        candidateResults = await runBenchmarkInDir(repoRoot, artifact.workspace.worktreePath, categories, cfg.model);
         return candidateResults;
       },
       ...(githubEnabled && githubCfg ? { github: {} } : {}),
@@ -1367,6 +1369,7 @@ export async function runEvolutionCli(args: string[]): Promise<void> {
       ? await runTaskContinuous({
           intervalMs: values.interval ? parseInt(values.interval as string, 10) : undefined,
           maxTasks: values["max-cycles"] ? parseInt(values["max-cycles"] as string, 10) : undefined,
+          maxIdleTicks: values["max-cycles"] ? parseInt(values["max-cycles"] as string, 10) : undefined,
         })
       : await runTaskCli(taskCliOpts);
     process.exit(code);

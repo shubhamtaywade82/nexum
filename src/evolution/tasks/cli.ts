@@ -347,6 +347,7 @@ export { BacklogTracker, ReportStore, TaskRegistry, TaskPrioritizer };
 export interface TaskContinuousOptions {
   intervalMs?: number;
   maxTasks?: number;
+  maxIdleTicks?: number;
 }
 
 /**
@@ -377,6 +378,7 @@ export async function runTaskContinuous(bounds: TaskContinuousOptions = {}): Pro
     },
     intervalMs: bounds.intervalMs,
     maxTasks: bounds.maxTasks,
+    maxIdleTicks: bounds.maxIdleTicks,
   });
   const onSigint = () => scheduler.stop();
   process.once("SIGINT", onSigint);

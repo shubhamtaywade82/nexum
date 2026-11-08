@@ -33,7 +33,9 @@ export function inferCapabilities(name: string): Capability[] {
 
   if (/(^|[^a-z])(vl|vision)([^a-z]|$)/.test(n)) caps.push("vision");
   if (/(r1|reason|thinking|qwq)/.test(n)) caps.push("reasoning");
-  if (/(0\.5b|1b|2b|3b|4b|nano|mini|hermes|opencode)/.test(n)) caps.push("quick");
+  if (/(0\.5b|1b|2b|3b|4b|nano|mini|hermes|opencode)/.test(n) && !/-(summarizer|embed|analyst)/.test(n)) {
+    caps.push("quick");
+  }
   if (/(hermes|openhermes|nous-hermes)/.test(n)) caps.push("agentic");
   if (!caps.includes("vision") && !caps.includes("reasoning")) caps.push("coding");
 
@@ -80,7 +82,9 @@ function capabilitiesFromLocalTag(entry: LocalTagEntry, name: string, quickPrefe
   if (entry.capabilities.includes("thinking")) caps.push("reasoning");
 
   const sizeB = parseParameterSizeB(entry.details?.parameter_size);
-  if (sizeB !== null && sizeB <= QUICK_MAX_PARAMS_B) caps.push("quick");
+  if (sizeB !== null && sizeB <= QUICK_MAX_PARAMS_B && !/-(summarizer|embed|analyst)/i.test(name)) {
+    caps.push("quick");
+  }
 
   // Embedding-only models (capabilities: ["embedding"], no "completion") can't
   // generate text at all — don't fall back to "coding" for them, they can't

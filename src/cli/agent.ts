@@ -1061,6 +1061,9 @@ export class Agent {
           // against, plus the output reserve. Without this Ollama falls back to
           // its server default (2048–4096) and silently truncates the prompt.
           ...(turnBudget ? { contextLength: turnBudget.contextTokens + turnBudget.reserveOutputTokens } : {}),
+          options: {
+            num_predict: turnBudget?.reserveOutputTokens ?? 4096,
+          },
           onChunk: (chunk: ChatResponse) => {
             const delta = chunk.message?.content;
             if (typeof delta === "string" && delta) {

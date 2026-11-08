@@ -1,1 +1,7 @@
+if [ -d "$HOME/.nvm" ]; then
+  DEFAULT_VER=$(cat "$HOME/.nvm/alias/default" 2>/dev/null || echo "v24.19.0")
+  [ "${DEFAULT_VER#v}" = "$DEFAULT_VER" ] && DEFAULT_VER="v$DEFAULT_VER"
+  [ -d "$HOME/.nvm/versions/node/$DEFAULT_VER/bin" ] && export PATH="$HOME/.nvm/versions/node/$DEFAULT_VER/bin:$HOME/.local/bin:$PATH"
+fi
+
 npx --no-install lint-staged
