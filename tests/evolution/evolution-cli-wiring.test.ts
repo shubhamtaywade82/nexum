@@ -20,6 +20,7 @@ import {
 import {
   buildMutationStrategy,
   combineCycleResults,
+  failedToolDigest,
   ingestParentExperience,
   parseBenchmarkJson,
   resolveGithubDeliveryConfig,
@@ -484,5 +485,25 @@ describe("parallel evolution helpers", () => {
     expect(combined.ok).toBe(true);
     expect(combined.detail).toContain("c1: attempt crashed: boom");
     expect(combined.detail).toContain("c2: candidate H1");
+  });
+
+  it("should rank failed tool calls by tool and error with a sample of args", () => {
+    const event = (name: string, ok: boolean, errorLabel?: string) => ({
+      name,
+      args: { path: "x" },
+      ok,
+      errorLabel,
+      durationMs: 1,
+      at: 1,
+    });
+    const episode = (events: ReturnType<typeof event>[]) => ({ toolEvents: events }) as unknown as Episode;
+    const digest = failedToolDigest([
+      episode([event("run_shell", false, "exit 125"), event("read_file", true)]),
+      episode([event("run_shell", false, "exit 125"), event("read_file", false, "PathEscapeError")]),
+    ]);
+    expect(digest.split("\n")).toEqual([
+      '- 2× run_shell → exit 125 (e.g. args {"path":"x"})',
+      '- 1× read_file → PathEscapeError (e.g. args {"path":"x"})',
+    ]);
   });
 });

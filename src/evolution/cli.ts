@@ -616,7 +616,7 @@ export function mutationTraceWriter(path: string, label = ""): (entry: MutationT
 function traceSummary(entry: MutationTraceEntry): string {
   if (entry.kind === "model") {
     const calls = entry.toolCalls.map((c) => (c as { function?: { name?: string } }).function?.name ?? "?");
-    const text = entry.content.replace(/\s+/g, " ").slice(0, 160);
+    const text = (entry.content || (entry.thinking ? `💭 ${entry.thinking}` : "")).replace(/\s+/g, " ").slice(0, 160);
     return `model: ${text || "(no text)"}${calls.length ? ` → calls ${calls.join(", ")}` : ""}`;
   }
   const status = entry.ok ? "ok" : "ERROR";
@@ -1084,16 +1084,23 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
         `[Evolution] Running ${parallel} candidate attempts in parallel for ${observation.target.capability}.`,
       );
     }
-    const prepared = { observation, categories, baselineResults };
+    // Concrete failing tool calls: without them the agent only sees "high tool error rate" and declines.
+    const telemetryDigest = failedToolDigest(allEpisodes);
+    const prepared = { observation, categories, baselineResults, telemetryDigest };
     const settled = await Promise.allSettled(engines.map((_, slot) => runCandidate(slot, prepared)));
     return combineCycleResults(settled);
   };
 
   const runCandidate = async (
     slot: number,
-    prepared: { observation: ClosedLoopDiagnosis; categories: string[]; baselineResults: TaskExecutionResult[] },
+    prepared: {
+      observation: ClosedLoopDiagnosis;
+      categories: string[];
+      baselineResults: TaskExecutionResult[];
+      telemetryDigest: string;
+    },
   ): Promise<EvolutionCycleResult> => {
-    const { categories, baselineResults } = prepared;
+    const { categories, baselineResults, telemetryDigest } = prepared;
     const observation = prepared.observation as ClosedLoopDiagnosis & {
       target: NonNullable<ClosedLoopDiagnosis["target"]>;
       mutationScope: NonNullable<ClosedLoopDiagnosis["mutationScope"]>;
@@ -1115,6 +1122,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       diagnosis,
       scope: observation.mutationScope,
       baselineResults,
+      ...(telemetryDigest ? { telemetryDigest } : {}),
       evaluateCandidate: async (artifact) => {
         if (!values.benchmark) {
           throw new Error(
@@ -1198,6 +1206,25 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     experimentStore.close();
     registry?.close();
   }
+}
+
+/** Groups failed tool calls across episodes by tool + error, most frequent first, with one sample of args each. */
+export function failedToolDigest(episodes: Episode[], limit = 15): string {
+  const groups = new Map<string, { count: number; sampleArgs: string }>();
+  for (const episode of episodes) {
+    for (const event of episode.toolEvents) {
+      if (event.ok) continue;
+      const key = `${event.name} → ${event.errorLabel ?? "error"}`;
+      const group = groups.get(key) ?? { count: 0, sampleArgs: JSON.stringify(event.args).slice(0, 160) };
+      group.count++;
+      groups.set(key, group);
+    }
+  }
+  return [...groups.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, limit)
+    .map(([key, g]) => `- ${g.count}× ${key} (e.g. args ${g.sampleArgs})`)
+    .join("\n");
 }
 
 /** Folds parallel candidate attempts into one cycle result: ok when any attempt succeeded. */
