@@ -19,7 +19,7 @@ import {
 } from "../../src/evolution/mutation/verification-profile.js";
 import {
   buildMutationStrategy,
-  combineCycleResults,
+  summarizeAttempt,
   failedToolDigest,
   ingestParentExperience,
   parseBenchmarkJson,
@@ -476,15 +476,54 @@ describe("parallel evolution helpers", () => {
     expect(rotateKeysForSlot([], 2)).toEqual([]);
   });
 
-  it("should report ok when any parallel attempt succeeded and keep crashed attempts visible", () => {
-    const combined = combineCycleResults([
-      { status: "fulfilled", value: { ok: false, detail: "stage implement: turn budget" } },
-      { status: "rejected", reason: new Error("boom") },
-      { status: "fulfilled", value: { ok: true, detail: "candidate H1 → decision=promote" } },
-    ]);
-    expect(combined.ok).toBe(true);
-    expect(combined.detail).toContain("c1: attempt crashed: boom");
-    expect(combined.detail).toContain("c2: candidate H1");
+  it("should summarize each attempt for champion selection: eligibility is the engine's delivery report", () => {
+    const commit = "a".repeat(40);
+    const eligible = summarizeAttempt(1, "exp-1", {
+      ok: true,
+      outcome: {
+        experiment: {
+          candidate: { harness: "H1", commit },
+          decision: { result: "eligible" },
+          lifecycle: { state: "ELIGIBLE" },
+        },
+        twoStage: { stageB: { deltas: { capability: 0.05, reliability: 0.01, efficiency: 0 } } },
+        heldOut: { gain: 0.02 },
+        delivery: { branchName: "evolution/h1" },
+      },
+      mutation: { artifact: { commitSha: commit } },
+    } as unknown as Parameters<typeof summarizeAttempt>[2]);
+    expect(eligible).toMatchObject({
+      slot: 1,
+      ok: true,
+      eligible: true,
+      candidateCommit: commit,
+      stageB: { capability: 0.05, reliability: 0.01, efficiency: 0 },
+      heldOutGain: 0.02,
+    });
+
+    const rejected = summarizeAttempt(2, "exp-2", {
+      ok: true,
+      outcome: {
+        experiment: {
+          candidate: { harness: "H2", commit },
+          decision: { result: "rejected" },
+          lifecycle: { state: "CANDIDATE" },
+        },
+        twoStage: { stageB: { deltas: { capability: -0.01, reliability: 0, efficiency: 0 } } },
+        heldOut: { gain: null },
+        delivery: null,
+      },
+      mutation: { artifact: { commitSha: commit } },
+    } as unknown as Parameters<typeof summarizeAttempt>[2]);
+    expect(rejected.eligible).toBe(false);
+
+    const failed = summarizeAttempt(0, "exp-0", {
+      ok: false,
+      stage: "implement",
+      reason: "turn budget",
+      mutation: {},
+    } as unknown as Parameters<typeof summarizeAttempt>[2]);
+    expect(failed).toMatchObject({ slot: 0, ok: false, eligible: false, detail: "stage implement: turn budget" });
   });
 
   it("should rank failed tool calls by tool and error with a sample of args", () => {

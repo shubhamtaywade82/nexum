@@ -70,11 +70,11 @@ export type DeliveryFacts = Pick<ActivationEvidence, "candidateCommit" | "review
 export type ActivationDecision = { ok: true; mergeCommitSha: string } | { ok: false; reason: string };
 
 /**
- * Automatic merge is enabled after the candidate has passed CI and a human has
- * approved the exact reviewed head SHA. GitHub read-back and content verification
- * are still mandatory before the candidate can become ACTIVE.
+ * Merging is not automatic by default. A human merges the approved PR in GitHub. Enabling
+ * merge-on-accept is an explicit decision. Even when enabled, a candidate becomes ACTIVE only
+ * after GitHub read-back and content verification, and parallel cycles deliver one champion only.
  */
-export const DEFAULT_MERGE_ON_ACCEPT = true;
+export const DEFAULT_MERGE_ON_ACCEPT = false;
 
 /** Resolves the delivery policy for one run. Pure, so the defaults are testable. */
 export function resolveDeliveryPolicy(opts: { autoAccept?: boolean; mergeOnAccept?: boolean }): {

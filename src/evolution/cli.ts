@@ -20,6 +20,8 @@ import { runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
 import { CandidateEvaluationOutcome, EvolutionEngine } from "./engine.js";
 import { ActivationResult, ClosedLoopDiagnosis, ClosedLoopEngine } from "./engine-v2.js";
 import type { ActivationEvidence } from "./delivery/activation-gate.js";
+import type { ChampionCandidate } from "./parallel/champion.js";
+import { runParallelCycle, type SlotRun } from "./parallel/orchestrator.js";
 import { ExperienceStore } from "./experience/experience-store.js";
 import {
   buildExperimentArtifact,
@@ -1003,9 +1005,14 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   const activationController = activationRequested
     ? new ManifestRuntimeActivationController({ repoRoot, registry })
     : undefined;
-  // One engine per parallel slot: each owns its strategy (its own preferred key + transcript) and
-  // executor (its own worktree); the SQLite stores are shared.
-  const buildEngine = (slot: number): ClosedLoopEngine => {
+  // One experiment controller for the whole run, so a candidate created by one slot is visible to the
+  // coordinator that may deliver it. The SQLite stores are shared as before.
+  const sharedExperiments = new ExperimentController({ store: experimentStore });
+  // Each slot owns its strategy (its own preferred key + transcript) and executor (its own worktree).
+  // A "candidate" engine can only generate, verify and benchmark: it has no GitHub adapter and no
+  // activation controller, so it cannot deliver or activate anything. The solo engine (one candidate per
+  // cycle) keeps the full canonical path.
+  const buildEngine = (slot: number, role: "solo" | "candidate"): ClosedLoopEngine => {
     const keys = slotKeys(slot);
     const strategy = buildMutationStrategy(
       strategyName,
@@ -1020,16 +1027,16 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     );
     return new ClosedLoopEngine({
       experienceStore,
-      experimentController: new ExperimentController({ store: experimentStore }),
+      experimentController: sharedExperiments,
       ...(registry ? { registry } : {}),
-      ...(activationController ? { runtimeActivation: activationController } : {}),
+      ...(role === "solo" && activationController ? { runtimeActivation: activationController } : {}),
       generalizationPolicy: policy,
       mutationExecutor: new GitWorktreeMutationExecutor({
         verifyCommands: profile.commands,
         linkNodeModulesFrom: repoRoot,
         ...(strategy ? { strategy } : {}),
       }),
-      ...githubDeliveryOption,
+      ...(role === "solo" ? githubDeliveryOption : {}),
     });
   };
   const githubDeliveryOption =
@@ -1046,7 +1053,23 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
           ),
         }
       : {};
-  const engines = Array.from({ length: parallel }, (_, slot) => buildEngine(slot));
+  const engines =
+    parallel > 1
+      ? Array.from({ length: parallel }, (_, slot) => buildEngine(slot, "candidate"))
+      : [buildEngine(0, "solo")];
+  // The coordinator is the only engine that can deliver or activate during a parallel cycle, and it
+  // receives only the selected champion. It has no mutation executor, because it never generates.
+  const coordinator =
+    parallel > 1
+      ? new ClosedLoopEngine({
+          experienceStore,
+          experimentController: sharedExperiments,
+          ...(registry ? { registry } : {}),
+          ...(activationController ? { runtimeActivation: activationController } : {}),
+          generalizationPolicy: policy,
+          ...githubDeliveryOption,
+        })
+      : undefined;
   const engine = engines[0];
 
   /**
@@ -1058,6 +1081,143 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
    * cycle failure). With --parallel, one observation and one baseline feed
    * N concurrent candidate attempts against the same target.
    */
+  type PreparedCycle = {
+    observation: ClosedLoopDiagnosis;
+    categories: string[];
+    baselineResults: TaskExecutionResult[];
+    telemetryDigest: string;
+  };
+  type AttemptPayload = {
+    slotEngine: ClosedLoopEngine;
+    experimentId: string;
+    outcome: Awaited<ReturnType<ClosedLoopEngine["runEvolutionCycle"]>>;
+    candidateResults: TaskExecutionResult[];
+    activation: ExperimentArtifactInput["activation"] | null;
+  };
+
+  /**
+   * One parallel attempt: generate, verify and benchmark a candidate in its own worktree, then keep
+   * the worktree until the orchestrator decides. It never delivers or activates: its engine has
+   * neither, and the retained workspace is released by the orchestrator.
+   */
+  const runSlotAttempt = async (slot: number, prepared: PreparedCycle): Promise<SlotRun<AttemptPayload>> => {
+    const { categories, baselineResults, telemetryDigest } = prepared;
+    const observation = prepared.observation as ClosedLoopDiagnosis & {
+      target: NonNullable<ClosedLoopDiagnosis["target"]>;
+      mutationScope: NonNullable<ClosedLoopDiagnosis["mutationScope"]>;
+    };
+    const slotEngine = engines[slot];
+    const tag = `[c${slot}] `;
+    const experimentId = `exp-${Date.now()}${slotSuffix(slot)}`;
+    let candidateResults: TaskExecutionResult[] = [];
+    const outcome = await slotEngine.runEvolutionCycle({
+      experimentId,
+      parentHarnessId: "HEAD",
+      parentCommit: parentRef,
+      candidateHarnessId: `H${Date.now().toString(36)}${slotSuffix(slot)}`,
+      repoRoot,
+      target: observation.target,
+      diagnosis: observation.diagnoses[0],
+      scope: observation.mutationScope,
+      baselineResults,
+      ...(telemetryDigest ? { telemetryDigest } : {}),
+      retainWorkspace: true,
+      evaluateCandidate: async (artifact) => {
+        if (!values.benchmark) {
+          throw new Error(
+            "Candidate evaluation requires --benchmark (subprocess benchmark of the mutated worktree); pass a custom evaluateCandidate for other suites.",
+          );
+        }
+        console.log(`[Evolution] ${tag}Benchmarking candidate worktree across [${categories.join(", ") || "all"}]...`);
+        candidateResults = await runBenchmarkInDir(repoRoot, artifact.workspace.worktreePath, categories, {
+          model: cfg.model,
+          apiKeys: slotKeys(slot),
+        });
+        return candidateResults;
+      },
+    });
+    console.log(`${tag}${formatMutationResult(outcome)}`);
+    return {
+      candidate: summarizeAttempt(slot, experimentId, outcome),
+      payload: { slotEngine, experimentId, outcome, candidateResults, activation: null },
+      holdsWorkspace: outcome.mutation.workspace !== undefined,
+    };
+  };
+
+  /**
+   * The parallel cycle as one controlled unit: N attempts run concurrently, one champion is selected
+   * after they all settle, and only that champion reaches GitHub delivery and runtime activation.
+   */
+  const runParallelAttempts = async (prepared: PreparedCycle): Promise<EvolutionCycleResult> => {
+    const observation = prepared.observation as ClosedLoopDiagnosis & {
+      target: NonNullable<ClosedLoopDiagnosis["target"]>;
+      mutationScope: NonNullable<ClosedLoopDiagnosis["mutationScope"]>;
+    };
+    const { categories, baselineResults } = prepared;
+    const result = await runParallelCycle<AttemptPayload>(parallel, {
+      runSlot: (slot) => runSlotAttempt(slot, prepared),
+      release: async (run) => {
+        const workspace = run.payload?.outcome.mutation.workspace;
+        if (run.payload && workspace) await run.payload.slotEngine.disposeWorkspace(workspace);
+      },
+      deliverChampion: async (champion) => {
+        const payload = champion.payload as AttemptPayload;
+        const cycle = payload.outcome;
+        if (!cycle.ok || !cycle.mutation.artifact) {
+          return { ok: false, detail: "champion has no candidate artifact" };
+        }
+        if (!coordinator || !githubEnabled || !githubCfg) {
+          return { ok: true, detail: "champion kept local: GitHub delivery is not configured, nothing was pushed" };
+        }
+        const delivered = await coordinator.deliverChampion({
+          experimentId: payload.experimentId,
+          artifact: cycle.mutation.artifact,
+          outcome: cycle.outcome,
+          github: {},
+        });
+        payload.activation = activationController
+          ? await activateRuntimeIfNeeded(
+              coordinator,
+              activationController,
+              payload.experimentId,
+              { ok: true, outcome: cycle.outcome, mutation: cycle.mutation, github: delivered },
+              activationRequested,
+            )
+          : null;
+        return {
+          ok: delivered.ci.passed !== false,
+          detail:
+            `champion delivered as PR #${delivered.handle.prNumber} (${delivered.handle.prUrl}); ` +
+            `CI ${delivered.ci.passed ?? "pending"}; review ${delivered.review?.state ?? "not read"}; ` +
+            `accepted=${delivered.accepted}; merged=${delivered.merged}`,
+        };
+      },
+    });
+
+    // One artifact per attempt. Only the champion carries an activation record.
+    for (const run of result.runs) {
+      const payload = run.payload;
+      if (!payload) continue;
+      writeCycleArtifact(payload.outcome, {
+        experimentId: payload.experimentId,
+        strategyName: strategyName ?? "heuristic",
+        model: cfg.model,
+        tier: cfg.tier,
+        verifyProfileName: profile.name,
+        benchmarkCategories: categories,
+        baselineAbsent: !values.benchmark || !!values["skip-baseline"],
+        target: observation.target,
+        diagnosis: observation.diagnoses[0],
+        scope: observation.mutationScope,
+        baselineResults,
+        candidateResults: payload.candidateResults,
+        experimentDir,
+        activation: payload.activation,
+      });
+    }
+    return { ok: result.ok, detail: result.detail };
+  };
+
   const runCycle = async (): Promise<EvolutionCycleResult> => {
     const allEpisodes = loadAllEpisodes(root);
     await ingestParentExperience(engine, allEpisodes, repoRoot, parentRef);
@@ -1092,8 +1252,8 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     // Concrete failing tool calls: without them the agent only sees "high tool error rate" and declines.
     const telemetryDigest = failedToolDigest(allEpisodes);
     const prepared = { observation, categories, baselineResults, telemetryDigest };
-    const settled = await Promise.allSettled(engines.map((_, slot) => runCandidate(slot, prepared)));
-    return combineCycleResults(settled);
+    if (parallel > 1) return runParallelAttempts(prepared);
+    return runCandidate(0, prepared);
   };
 
   const runCandidate = async (
@@ -1232,15 +1392,41 @@ export function failedToolDigest(episodes: Episode[], limit = 15): string {
     .join("\n");
 }
 
-/** Folds parallel candidate attempts into one cycle result: ok when any attempt succeeded. */
-export function combineCycleResults(settled: PromiseSettledResult<EvolutionCycleResult>[]): EvolutionCycleResult {
-  const results = settled.map((s) =>
-    s.status === "fulfilled" ? s.value : { ok: false, detail: `attempt crashed: ${(s.reason as Error)?.message}` },
-  );
-  if (results.length === 1) return results[0];
+/**
+ * Reduces one parallel attempt to what champion selection needs. Eligibility is the engine's own
+ * gate: a delivery report exists only for an attempt that passed the two-stage decision and the
+ * generalization policy. Held-out gain is carried through for the veto, never for ranking.
+ */
+export function summarizeAttempt(
+  slot: number,
+  experimentId: string,
+  outcome: Awaited<ReturnType<ClosedLoopEngine["runEvolutionCycle"]>>,
+): ChampionCandidate {
+  if (!outcome.ok) {
+    return {
+      slot,
+      experimentId,
+      ok: false,
+      eligible: false,
+      candidateCommit: null,
+      stageB: null,
+      heldOutGain: null,
+      detail: `stage ${outcome.stage}: ${outcome.reason}`,
+    };
+  }
+  const deltas = outcome.outcome.twoStage.stageB?.deltas;
+  const record = outcome.outcome.experiment;
   return {
-    ok: results.some((r) => r.ok),
-    detail: results.map((r, slot) => `c${slot}: ${r.detail}`).join(" | "),
+    slot,
+    experimentId,
+    ok: true,
+    eligible: outcome.outcome.delivery !== null,
+    candidateCommit: outcome.mutation.artifact?.commitSha ?? null,
+    stageB: deltas
+      ? { capability: deltas.capability, reliability: deltas.reliability, efficiency: deltas.efficiency }
+      : null,
+    heldOutGain: outcome.outcome.heldOut.gain,
+    detail: `candidate ${record.candidate.harness} → decision=${record.decision.result} state=${record.lifecycle.state}`,
   };
 }
 

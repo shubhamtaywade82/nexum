@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Evolution: one champion per cycle
+
+- `--parallel n` now runs n candidate attempts concurrently and selects one champion. The champion is chosen only from attempts that passed the engine's own eligibility gate, ranked by development deltas (capability, then reliability, then efficiency), with a deterministic tie-break on slot. Held-out results can only veto an attempt; they never rank one.
+- Only the champion reaches GitHub delivery and runtime activation. Candidate engines have neither a GitHub adapter nor an activation controller, so they cannot deliver or activate.
+- Runtime activation is a compare-and-swap. It switches only while the runtime still executes the harness the caller expected, under a lock beside the manifest. Two competing activations cannot both land.
+- Automatic merge is off by default (`DEFAULT_MERGE_ON_ACCEPT = false`). A human merges the approved PR. Enabling merge is an explicit decision.
+- `combineCycleResults` (ok if any attempt succeeded) is replaced by champion selection.
+
 ### Default-on capabilities and verified evolution delivery
 
 - Model-side capabilities, the local verifier, self-consistency, automatic multi-step planning, and auto-approval are enabled by default. Auto-approval bypasses prompts for confirmation-required and destructive workspace actions; keep the sandbox enabled and use a trusted, bounded workspace.

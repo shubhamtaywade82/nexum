@@ -670,9 +670,9 @@ export class ClosedLoopEngine {
       /** Accept (APPROVED → ACCEPTED) when review approves (default true). */
       autoAccept?: boolean;
       /**
-       * Merge the PR after acceptance (default true). This is reached only after
-       * CI passes and a human approves the exact candidate head SHA. Runtime
-       * activation still waits for successful merge read-back and content verification.
+       * Merge the PR after acceptance (default false: a human merges). When enabled, it is reached
+       * only after CI passes and a human approves the exact candidate head SHA. Runtime activation
+       * still waits for successful merge read-back and content verification.
        */
       mergeOnAccept?: boolean;
     };
@@ -818,6 +818,27 @@ export class ClosedLoopEngine {
         }
       }
     }
+  }
+
+  /**
+   * Delivers ONE selected champion through the canonical GitHub path. Parallel cycles call this
+   * on a single coordinator engine after champion selection, so at most one candidate per cycle is
+   * pushed, reviewed, merged or activated. The candidate's workspace must have been retained
+   * (retainWorkspace: true) so its branch can be pushed.
+   */
+  async deliverChampion(input: {
+    experimentId: string;
+    artifact: CandidateArtifact;
+    outcome: ExperimentOutcome;
+    github?: { checksTimeoutMs?: number; autoAccept?: boolean; mergeOnAccept?: boolean };
+  }): Promise<EvolutionCycleGithubResult> {
+    if (!this.githubDelivery) {
+      throw new Error("deliverChampion requires ClosedLoopEngineOptions.githubDelivery.");
+    }
+    if (!input.outcome.delivery) {
+      throw new Error("deliverChampion: the candidate is not eligible (it has no delivery report).");
+    }
+    return this.deliverAndFollowUp(input.experimentId, input.artifact, input.outcome, input.github ?? {});
   }
 
   /** Disposes a retained workspace (manual delivery flows). */
@@ -1114,7 +1135,10 @@ export class ClosedLoopEngine {
     if (record.mergeCommitSha !== decision.mergeCommitSha) {
       return { ok: false, reason: "verified merge commit differs from the one recorded on promotion" };
     }
-    await this.runtimeActivation.switchTo(record.candidate.harness, decision.mergeCommitSha);
+    // The switch is a compare-and-swap against the harness the runtime executes now. A competing
+    // activation that landed first makes this one refuse, rather than overwrite it.
+    const expectedActive = await this.runtimeActivation.activeHarness();
+    await this.runtimeActivation.switchTo(record.candidate.harness, decision.mergeCommitSha, expectedActive);
     return { ok: true, commitSha: decision.mergeCommitSha };
   }
 }
