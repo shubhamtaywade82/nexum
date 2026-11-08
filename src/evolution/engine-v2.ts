@@ -86,7 +86,7 @@ import { ExperimentController } from "./experiments/experiment-controller.js";
 import { ExperimentRecord } from "./experiments/experiment-schema.js";
 import { HarnessRegistry } from "./registry.js";
 import { TargetEngine, ImprovementTarget } from "./targets/target-engine.js";
-import { ComparisonResult, EvaluationMetrics, HarnessDiagnosis, HarnessHypothesis } from "./types.js";
+import { ComparisonResult, EvaluationMetrics, HarnessComponent, HarnessDiagnosis, HarnessHypothesis } from "./types.js";
 
 /**
  * How strictly the fixed-executor generalization gate is enforced before a
@@ -373,11 +373,15 @@ export class ClosedLoopEngine {
     diagnoses.push(...this.successAnalyzer.analyzeEpisodes(episodes));
 
     const target = this.targetEngine.formTarget(diagnoses);
-    const plan = this.planner.createPlan(diagnoses);
+    let plan = this.planner.createPlan(diagnoses);
 
+    // Anchor on the target's diagnosed component, not the v1 planner's summed-confidence pick:
+    // many 30% "unknown" diagnoses otherwise outvote a single 85% one and mutate the wrong subsystem.
     let mutationScope: MutationScope | null = null;
     if (target && plan) {
-      mutationScope = this.scopePolicy.decideScope(target, plan.targetComponent);
+      const primary = (target.affectedComponents[0] ?? plan.targetComponent) as HarnessComponent;
+      mutationScope = this.scopePolicy.decideScope(target, primary);
+      plan = this.planner.createPlanFromTarget(target, primary, mutationScope);
     }
 
     // EVO-003: success-driven discovery. The analyzer reads from the

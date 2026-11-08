@@ -99,6 +99,27 @@ describe("ClosedLoopEngine (v2 integration)", () => {
     expect(observation.mutationScope!.kind).toBe("single_component");
   });
 
+  it("anchors scope on the target's component even when many weak diagnoses outvote it", () => {
+    const variant = (id: string, toolErrorRate: number): Episode => {
+      const ep = failureEpisode(id, "Something went wrong");
+      return {
+        ...ep,
+        terminal: "completed",
+        toolEvents: toolErrorRate > 0 ? ep.toolEvents : [],
+        grade: {
+          ...ep.grade!,
+          signals: { ...ep.grade!.signals, toolErrorRate, loopAborted: false, retriedSameToolMax: 0 },
+        },
+      } as Episode;
+    };
+    const vague = ["a", "b", "c", "d", "e", "f"].map((id) => variant(id, 0));
+    const episodes = [variant("ep-tool", 0.7), ...vague];
+    const observation = engine.observe(episodes);
+    expect(observation.target!.capability).toBe("tool_utilization");
+    expect(observation.mutationScope!.components[0]).toBe(observation.target!.affectedComponents[0]);
+    expect(observation.plan!.targetComponent).toBe(observation.target!.affectedComponents[0]);
+  });
+
   it("ingests graded episodes into the experience store with evidence", () => {
     const episodes = [failureEpisode("ep-1", "Fix the login bug"), failureEpisode("ep-2", "Add retry feature")];
     engine.ingestExperience(episodes, "H0");
