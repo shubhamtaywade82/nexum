@@ -567,6 +567,8 @@ export function formatActivationHealth(health: ReturnType<ActivationMonitor["eva
 
 // ── Production wiring helpers (v2.3.1) ──────────────────────────────────────
 
+const EVOLUTION_REQUEST_TIMEOUT_MS = 5 * 60_000;
+
 /** Builds the standard benchmark/eval Provider from CLI config. */
 export function providerFromConfig(cfg: CliConfig): Provider {
   return new Provider({
@@ -574,6 +576,9 @@ export function providerFromConfig(cfg: CliConfig): Provider {
     model: cfg.model,
     ...(cfg.apiKey ? { apiKey: cfg.apiKey } : {}),
     ...(cfg.apiKeys?.length ? { apiKeys: cfg.apiKeys } : {}),
+    // Mutation turns carry whole source files plus thinking; the provider's 60s cloud default
+    // timed out every parallel attempt mid-investigation. NEXUM_TIMEOUT_MS still wins.
+    timeoutMs: cfg.timeoutMs ?? EVOLUTION_REQUEST_TIMEOUT_MS,
     ...(cfg.tier === "local" && cfg.host ? { host: cfg.host } : {}),
   });
 }
