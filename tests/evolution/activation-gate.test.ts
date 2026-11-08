@@ -39,8 +39,8 @@ function complete(over: Partial<ActivationEvidence> = {}): ActivationEvidence {
 }
 
 describe("default delivery policy", () => {
-  it("auto-accepts an approved candidate and merges it after all delivery gates pass", () => {
-    expect(resolveDeliveryPolicy({})).toEqual({ autoAccept: true, mergeOnAccept: true });
+  it("auto-accepts an approved candidate but leaves the merge to a human by default", () => {
+    expect(resolveDeliveryPolicy({})).toEqual({ autoAccept: true, mergeOnAccept: false });
   });
 
   it("allows an explicit emergency opt-out without weakening the default", () => {

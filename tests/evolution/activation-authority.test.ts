@@ -241,8 +241,8 @@ describe("activation authority (engine)", () => {
 });
 
 describe("delivery policy defaults", () => {
-  it("merges automatically after the independent approval and CI gates pass", () => {
-    expect(resolveDeliveryPolicy({})).toEqual({ autoAccept: true, mergeOnAccept: true });
+  it("never merges unless merging is explicitly enabled", () => {
+    expect(resolveDeliveryPolicy({})).toEqual({ autoAccept: true, mergeOnAccept: false });
     expect(resolveDeliveryPolicy({ mergeOnAccept: true }).mergeOnAccept).toBe(true);
   });
 });

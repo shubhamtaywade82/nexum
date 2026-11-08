@@ -224,7 +224,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
     return obs;
   }
 
-  it("by default an independently reviewed candidate is merged and activated", async () => {
+  it("with merging explicitly enabled, an independently reviewed candidate is merged and activated", async () => {
     const fakes = makeFakes({
       checkRuns: [{ name: "build", status: "completed", conclusion: "success" }],
       reviews: [
@@ -245,7 +245,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
       scope: obs.mutationScope!,
       baselineResults: results(0.4),
       evaluateCandidate: () => results(0.9),
-      github: {},
+      github: { mergeOnAccept: true },
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;

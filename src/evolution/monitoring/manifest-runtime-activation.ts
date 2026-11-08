@@ -35,8 +35,8 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { HarnessRegistry } from "../registry.js";
 import { RuntimeActivationController } from "./runtime-activation.js";
@@ -79,6 +79,20 @@ function defaultRun(args: string[], cwd: string): Promise<{ stdout: string; exit
     });
 }
 
+/** A conditional switch found the runtime on a different harness than the caller expected. */
+export class RuntimeSwitchConflictError extends Error {
+  constructor(
+    readonly targetHarness: string,
+    readonly expectedActive: string,
+    readonly actualActive: string,
+  ) {
+    super(
+      `Runtime switch to "${targetHarness}" refused: expected "${expectedActive}" to be active, found "${actualActive}".`,
+    );
+    this.name = "RuntimeSwitchConflictError";
+  }
+}
+
 export class ManifestRuntimeActivationController implements RuntimeActivationController {
   readonly name = "manifest-file-runtime";
   private readonly repoRoot: string;
@@ -112,11 +126,16 @@ export class ManifestRuntimeActivationController implements RuntimeActivationCon
   }
 
   /**
-   * Atomically switches the runtime onto `harnessId` by updating the
-   * manifest pointer. Throws (writing NOTHING) when the harness cannot be
-   * resolved to a commit that exists in the repository.
+   * Atomically switches the runtime onto `harnessId` by updating the manifest pointer.
+   * Throws (writing NOTHING) when the harness cannot be resolved to a commit that exists
+   * in the repository, or when the compare-and-swap fails.
+   *
+   * `expectedActiveId`, when given, makes the switch conditional: it proceeds only while the
+   * runtime still executes that harness at the moment of the write. The check and the write
+   * run under a lock directory beside the manifest, so two processes that captured the same
+   * expectation cannot both succeed. Only one of them lands; the other gets a conflict.
    */
-  async switchTo(harnessId: string, pinnedCommitSha?: string): Promise<void> {
+  async switchTo(harnessId: string, pinnedCommitSha?: string, expectedActiveId?: string): Promise<void> {
     if (pinnedCommitSha !== undefined && !/^[0-9a-f]{40}$/.test(pinnedCommitSha)) {
       throw new Error(`Cannot switch runtime to "${harnessId}": pinned commit must be a full 40-character sha.`);
     }
@@ -132,22 +151,71 @@ export class ManifestRuntimeActivationController implements RuntimeActivationCon
       throw new Error(`Cannot switch runtime to "${harnessId}": commit ${commitSha} is missing from the repository.`);
     }
 
-    const previous = this.readManifestForWrite();
-    const manifest: Record<string, unknown> = { ...previous };
-    // A successful switch IS the unfreeze: the freeze marker exists to stop
-    // new work while a rollback is in flight, and the runtime has now landed
-    // on a verified harness.
-    delete manifest.frozen;
-    manifest.activeHarness = { id: harnessId, commitSha, activatedAt: this.now() } satisfies ManifestActiveHarness;
-    this.writeManifestAtomic(manifest);
+    const release = await this.acquireSwitchLock();
+    try {
+      if (expectedActiveId !== undefined && this.activeHarness() !== expectedActiveId) {
+        throw new RuntimeSwitchConflictError(harnessId, expectedActiveId, this.activeHarness());
+      }
 
-    // Self-verify: the pointer must actually be readable back.
-    const readBack = this.readPointer();
-    if (!readBack || readBack.id !== harnessId || readBack.commitSha !== commitSha) {
-      // Restore the previous content so a failed switch never half-lands.
-      this.writeManifestAtomic(previous);
-      throw new Error(`Runtime switch to "${harnessId}" failed verification; manifest restored.`);
+      const previous = this.readManifestForWrite();
+      const manifest: Record<string, unknown> = { ...previous };
+      // A successful switch IS the unfreeze: the freeze marker exists to stop
+      // new work while a rollback is in flight, and the runtime has now landed
+      // on a verified harness.
+      delete manifest.frozen;
+      manifest.activeHarness = { id: harnessId, commitSha, activatedAt: this.now() } satisfies ManifestActiveHarness;
+      this.writeManifestAtomic(manifest);
+
+      // Self-verify: the pointer must actually be readable back.
+      const readBack = this.readPointer();
+      if (!readBack || readBack.id !== harnessId || readBack.commitSha !== commitSha) {
+        // Restore the previous content so a failed switch never half-lands.
+        this.writeManifestAtomic(previous);
+        throw new Error(`Runtime switch to "${harnessId}" failed verification; manifest restored.`);
+      }
+    } finally {
+      release();
     }
+  }
+
+  /**
+   * Takes the switch lock: an atomic mkdir beside the manifest, the same mechanism the harness
+   * launcher uses. A lock held longer than the timeout fails closed; a crashed holder leaves the
+   * directory behind, and the error says to remove it.
+   */
+  private acquireSwitchLock(timeoutMs = 10_000): Promise<() => void> {
+    const lockDir = `${this.manifestPath}.switch.lock`;
+    mkdirSync(dirname(this.manifestPath), { recursive: true });
+    const deadline = Date.now() + timeoutMs;
+    return new Promise((resolve, reject) => {
+      const attempt = (): void => {
+        try {
+          mkdirSync(lockDir);
+          resolve(() => {
+            try {
+              rmdirSync(lockDir);
+            } catch {
+              // Already released: nothing to do.
+            }
+          });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+            reject(err);
+            return;
+          }
+          if (Date.now() >= deadline) {
+            reject(
+              new Error(
+                `timed out waiting for the runtime switch lock ${lockDir}; if no switch is running, remove it.`,
+              ),
+            );
+            return;
+          }
+          setTimeout(attempt, 20);
+        }
+      };
+      attempt();
+    });
   }
 
   /**
