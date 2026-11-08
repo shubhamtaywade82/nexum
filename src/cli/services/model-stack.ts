@@ -164,7 +164,7 @@ export class ModelStack {
         })
       : undefined;
 
-    this.catalog = new ModelCatalog(localProvider, cloudProvider, cfg.quickModel);
+    this.catalog = new ModelCatalog(localProvider, cloudProvider, cfg.quickModel, cfg.tier);
     this.router = new Router({
       local: localProvider,
       cloud: cloudProvider,
@@ -176,11 +176,17 @@ export class ModelStack {
 
     const quickLocalProvider = cfg.quickModel
       ? new Provider({
-          tier: "local",
+          tier: cfg.tier === "cloud" ? "cloud" : "local",
           model: cfg.quickModel,
-          host: cfg.tier === "local" ? cfg.host : undefined,
+          host: cfg.host,
+          apiKey: cfg.apiKey,
+          apiKeys: cfg.apiKeys,
+          keySelector,
+          ...(cfg.timeoutMs ? { timeoutMs: cfg.timeoutMs } : {}),
         })
-      : localProvider;
+      : cfg.tier === "cloud" && cloudProvider
+        ? cloudProvider
+        : localProvider;
     this.localWorker = cfg.enableLocalWorker ? new LocalWorker(quickLocalProvider) : undefined;
     this.verifier = cfg.enableVerifier && this.localWorker ? new Verifier(quickLocalProvider) : undefined;
     this.selfConsistency = cfg.enableSelfConsistency

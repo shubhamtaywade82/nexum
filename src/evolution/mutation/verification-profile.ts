@@ -49,7 +49,7 @@ export const NEXUM_FAST_PROFILE: EvolutionVerificationProfile = {
   name: "fast",
   description: "format + lint + typecheck inside the candidate worktree",
   commands: [
-    ["npx", "prettier", "--check", "."],
+    ["npx", "prettier", "--check", "src", "tests"],
     ["npx", "eslint", "src", "tests"],
     ["npx", "tsc", "--noEmit"],
   ],

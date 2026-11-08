@@ -53,7 +53,7 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
       })
     : undefined;
 
-  const catalog = new ModelCatalog(local, cloud);
+  const catalog = new ModelCatalog(local, cloud, cfg.quickModel, cfg.tier);
   const allModels = (await catalog.refresh()).filter((m) => m.capabilities.length > 0 && !isEmbeddingModel(m.name));
 
   const modelFilter = values.model?.toLowerCase();

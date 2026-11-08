@@ -126,6 +126,7 @@ export class ModelCatalog {
     // so a specific always-resident model is always tried before any other local
     // candidate or cloud fallback.
     private readonly quickPreferredName?: string,
+    private readonly preferredTier: Tier = "local",
   ) {}
 
   async refresh(): Promise<ModelInfo[]> {
@@ -166,6 +167,9 @@ export class ModelCatalog {
         const data = await this.cloud.availableModels();
         for (const name of namesFromCloudModels(data)) {
           const capabilities = inferCapabilities(name);
+          if (this.quickPreferredName && name.toLowerCase().includes(this.quickPreferredName.toLowerCase())) {
+            if (!capabilities.includes("quick")) capabilities.push("quick");
+          }
           if (capabilities.length === 0) continue;
           results.push({ name, tier: "cloud", capabilities });
         }
@@ -191,8 +195,11 @@ export class ModelCatalog {
     return this.models
       .filter((m) => m.capabilities.includes(capability))
       .sort((a, b) => {
-        // Tier: local always before cloud
-        if (a.tier !== b.tier) return a.tier === "local" ? -1 : 1;
+        // Preferred tier wins first (defaults to local; cloud-first when preferredTier is cloud)
+        if (a.tier !== b.tier) {
+          if (this.preferredTier === "cloud") return a.tier === "cloud" ? -1 : 1;
+          return a.tier === "local" ? -1 : 1;
+        }
         // quickPreferredName wins within the quick capability
         if (capability === "quick" && preferred) {
           const aMatch = a.name.toLowerCase().includes(preferred);

@@ -332,7 +332,8 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       // "answered" terminal becomes unreachable, which is exactly the
       // legacy fail-closed shape (turn budget → AgentMutationError).
       callModel: async (turnInfo, opts) => {
-        const response = await context.modelGateway.route("tools", turnInfo.messages as ChatMessage[], {
+        const messages = context.context.messages() as ChatMessage[];
+        const response = await context.modelGateway.route("tools", messages, {
           tools: opts.tools as OllamaToolSchema[] | undefined,
         });
         // Traced before the prose strip below, so the transcript shows what the model actually said.
@@ -358,18 +359,23 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
           this.onTurn?.(info.turn - 1, turnInvocations);
           turnInvocations = [];
         }
-        // Transcripts showed agents that had already found a fix (e.g. a market alias) keep surveying
-        // until the budget ran out; a midpoint push converts investigation into a proposal or a decline.
-        if (info.turn === Math.floor(this.maxTurns / 2) && proposals.length === 0) {
-          conversation.pushSystem(
-            "[Notice] Half your turn budget is spent and nothing is proposed. Choose the single clearest fixable failure you have found and call propose_edit now, or decline with the reason.",
-          );
-        }
+        // Nudge the model to stop surveying and propose an edit or finish
         const remaining = this.maxTurns - info.turn;
-        if (this.maxTurns > 4 && remaining <= 4 && remaining > 0) {
-          conversation.pushSystem(
-            `[Notice] You have ${remaining} turn(s) remaining before turn budget is exhausted. You must call propose_edit to queue your edits and finish() to complete the mutation, or decline() if no safe mutation exists.`,
-          );
+        if (info.turn >= 4 && proposals.length === 0) {
+          conversation.push({
+            role: "user",
+            content: `[Notice] You have taken ${info.turn} turns investigating (${remaining} turns remaining). Stop exploring: pick the single clearest code bug you identified, call propose_edit now with the complete replacement file content, then call finish.`,
+          });
+        } else if (remaining <= 4 && remaining > 0 && proposals.length > 0) {
+          conversation.push({
+            role: "user",
+            content: `[Notice] Only ${remaining} turn(s) remaining and you have ${proposals.length} edit(s) queued. Call finish now to submit your mutation.`,
+          });
+        } else if (this.maxTurns > 4 && remaining <= 4 && remaining > 0) {
+          conversation.push({
+            role: "user",
+            content: `[Notice] You have ${remaining} turn(s) remaining before turn budget is exhausted. You must call propose_edit to queue your edits and finish() to complete the mutation, or decline() if no safe mutation exists.`,
+          });
         }
       },
       // With onToolObserved installed, the hook OWNS the observation push.
@@ -473,6 +479,8 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       "Contract:",
       "- You have NO direct write or shell access. Use propose_edit to queue the FULL",
       "  new content of a file; the executor applies, verifies, and commits it.",
+      "- Calling finish without calling propose_edit discards the mutation as declined.",
+      "  Never describe your code edits in finish(summary) without calling propose_edit first.",
       `- Allowed mutation paths (prefixes): ${request.allowedPaths.join(", ")}`,
       "- Proposing outside them is rejected; repeated violations abort the cycle.",
       "- Read before proposing: understand the existing implementation first.",
@@ -482,7 +490,15 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       "  propose_edit; do not spend turns searching for it.",
       "- Strategy: pick ONE concrete failure from the telemetry below whose cause is code under the",
       "  allowed paths, fix it with the smallest edit, then finish. Do not survey the whole subsystem.",
-      "  Environment failures (e.g. run_shell exit 125 = Docker could not start) are not fixable here.",
+      "- Environment failures (e.g. run_shell exit 125 = Docker could not start, timeouts) are external and",
+      "  CANNOT be fixed here. Do NOT decline because of environment failures: focus on concrete code fixes.",
+      "- In-scope failure modes to target:",
+      "  * Broken aliases in src/core/tools/tool-aliases.ts: aliases like print_tree, tree, ls map to 'list_dir',",
+      "    which does not exist (the canonical tool in src/tools/directory-tools.ts is 'list_directory').",
+      "  * Parameter or market normalization issues in src/tools/ (e.g. binance-tools.ts, argument-validator.ts).",
+      "- Spend AT MOST 2-3 turns investigating. Once you locate the relevant file, propose the edit",
+      "  immediately with propose_edit and then call finish. Do NOT spend your budget on exhaustive surveys.",
+      "- Formatting: your proposed code must pass prettier and eslint, so preserve the file's exact formatting, indentation, and semicolons.",
       "- Prefer the smallest in-scope change with a clear causal path to the target.",
       `- You have a budget of up to ${this.maxTurns} turns. Conclude with finish (edits queued) or decline (no safe mutation exists).`,
       "",

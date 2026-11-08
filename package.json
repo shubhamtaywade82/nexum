@@ -55,6 +55,8 @@
     "serve": "tsx src/cli/serve.ts",
     "benchmark": "tsx src/benchmark/cli.ts",
     "eval": "tsx src/evaluation/cli.ts",
+    "evolve": "tsx src/evolution/cli.ts --mutate --repo . --parallel 5 --agent --verify-profile fast --benchmark",
+    "evolve:continuous": "tsx src/evolution/cli.ts --mutate --repo . --parallel 5 --agent --verify-profile fast --benchmark --continuous",
     "docs:ingest": "tsx src/docs/cli.ts",
     "doctor": "tsx src/cli/doctor.ts",
     "migrate": "tsx src/cli/migrate.ts",

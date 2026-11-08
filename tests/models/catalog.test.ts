@@ -64,6 +64,20 @@ describe("ModelCatalog.refresh", () => {
     expect(candidates[0].tier).toBe("local");
   });
 
+  it("modelsFor sorts cloud candidates before local when preferredTier is cloud", async () => {
+    const local = new Provider({ tier: "local", model: "x" });
+    const cloud = new Provider({ tier: "cloud", model: "x", apiKey: "k" });
+
+    jest.spyOn(local, "availableModels").mockResolvedValue({ models: [{ name: "qwen3:8b" }] });
+    jest.spyOn(cloud, "availableModels").mockResolvedValue({ data: [{ id: "qwen3.5:8b" }] });
+
+    const catalog = new ModelCatalog(local, cloud, undefined, "cloud");
+    await catalog.refresh();
+
+    const candidates = catalog.modelsFor("coding");
+    expect(candidates[0].tier).toBe("cloud");
+  });
+
   it("uses local Ollama's real capabilities array instead of guessing from the name", async () => {
     // Real /api/tags shape — a model named without any vision/reasoning hints
     // in its name, but genuinely capable per the server's own metadata.

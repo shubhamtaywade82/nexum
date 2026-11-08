@@ -894,15 +894,13 @@ export async function activateRuntimeIfNeeded(
 }
 
 async function executeMutationCommand(root: string, values: Record<string, unknown>): Promise<void> {
-  const rawRepo = values.repo as string | undefined;
-  if (!rawRepo) {
-    console.error("--mutate requires --repo <path> (the harness repository to mutate).");
-    return;
-  }
+  const rawRepo = (values.repo as string | undefined) ?? ".";
   const repoRoot = resolve(root, rawRepo);
   const cfg = loadConfig();
   // --agent is an alias for --strategy agent; an explicit --strategy wins.
-  const strategyName = (values.strategy as string | undefined) ?? (values.agent ? "agent" : undefined);
+  // In cloud environments or when configured via env, default to the production engineering agent.
+  const defaultStrategy = process.env.NEXUM_MUTATION_STRATEGY ?? (cfg.tier === "cloud" ? "agent" : undefined);
+  const strategyName = (values.strategy as string | undefined) ?? (values.agent ? "agent" : defaultStrategy);
   if (values.agent && values.strategy && values.strategy !== "agent") {
     console.error(`--agent and --strategy ${values.strategy} conflict; pass only one.`);
     return;
@@ -968,12 +966,16 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       return;
     }
   }
-  const parallel = values.parallel !== undefined ? parseInt(values.parallel as string, 10) : 1;
+  const keyPool = cfg.apiKeys ?? (cfg.apiKey ? [cfg.apiKey] : []);
+  const envParallel = process.env.NEXUM_EVOLUTION_PARALLEL
+    ? parseInt(process.env.NEXUM_EVOLUTION_PARALLEL, 10)
+    : undefined;
+  const defaultParallel = envParallel ?? (cfg.tier === "cloud" && keyPool.length > 1 ? Math.min(keyPool.length, 5) : 1);
+  const parallel = values.parallel !== undefined ? parseInt(values.parallel as string, 10) : defaultParallel;
   if (Number.isNaN(parallel) || parallel < 1) {
     console.error("--parallel must be a positive integer.");
     return;
   }
-  const keyPool = cfg.apiKeys ?? (cfg.apiKey ? [cfg.apiKey] : []);
   if (parallel > 1 && cfg.tier === "cloud" && keyPool.length < parallel) {
     console.log(
       `[Evolution] --parallel ${parallel} with ${keyPool.length} API key(s): attempts will share keys and may hit rate limits. Add keys via OLLAMA_API_KEYS.`,

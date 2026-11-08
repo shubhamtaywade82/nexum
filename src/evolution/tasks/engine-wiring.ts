@@ -230,8 +230,8 @@ function collectDiagnosedEpisodeIds(diagnoses: HarnessDiagnosis[]): Set<string> 
 
 /** Static map: harness component → the files that implement it. */
 const COMPONENT_FILES: Record<HarnessComponent, string[]> = {
-  execution: ["src/cli/agent.ts", "src/runtime/"],
-  tools: ["src/tools/", "src/cli/agent-tools.ts"],
+  execution: ["src/cli/agent.ts", "src/runtime/", "src/core/"],
+  tools: ["src/tools/", "src/core/tools/", "src/cli/agent-tools.ts"],
   context: ["src/runtime/context/"],
   state: ["src/runtime/state/"],
   lifecycle: ["src/runtime/lifecycle/"],

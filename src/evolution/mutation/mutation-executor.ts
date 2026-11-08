@@ -137,8 +137,8 @@ export interface MutationStrategy {
 
 /** Default component → allowed path prefixes (repo-relative, POSIX). */
 export const DEFAULT_COMPONENT_PATHS: Record<HarnessComponent, string[]> = {
-  execution: ["src/runtime/", "src/orchestration/"],
-  tools: ["src/tools/", "src/skills/"],
+  execution: ["src/runtime/", "src/orchestration/", "src/core/"],
+  tools: ["src/tools/", "src/core/tools/", "src/skills/"],
   context: ["src/context/", "src/intelligence/"],
   state: ["src/memory/", "src/runtime/"],
   lifecycle: ["src/runtime/", "src/hooks/"],
@@ -305,7 +305,8 @@ export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
       }
       const abs = join(workspace.worktreePath, ...edit.path.split("/"));
       await mkdir(dirname(abs), { recursive: true });
-      await writeFile(abs, edit.content, "utf8");
+      const content = edit.content.endsWith("\n") ? edit.content : `${edit.content}\n`;
+      await writeFile(abs, content, "utf8");
       applied.push(edit);
     }
     const diffStat = await this.diffStat(workspace);
@@ -570,9 +571,11 @@ function execArgv(
 ): Promise<{ stdout: string; exitCode: number }> {
   return execFileAsync(args[0], args.slice(1), { cwd, env, maxBuffer: 16 * 1024 * 1024 })
     .then((r) => ({ stdout: r.stdout, exitCode: 0 }))
-    .catch((err: NodeJS.ErrnoException & { stdout?: string; code?: number | string }) => {
+    .catch((err: NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | string }) => {
       if (typeof err.code === "number") {
-        return { stdout: err.stdout ?? "", exitCode: err.code };
+        const out = err.stdout ?? "";
+        const errOut = err.stderr ?? "";
+        return { stdout: out && errOut ? `${out}\n${errOut}` : out || errOut, exitCode: err.code };
       }
       throw err;
     });
