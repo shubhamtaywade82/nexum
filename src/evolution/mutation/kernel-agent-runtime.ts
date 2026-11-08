@@ -240,6 +240,12 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
     };
 
     register("list_files", true, async (args) => {
+      const remaining = this.maxTurns - lastTurnSeen;
+      if (remaining <= 2 && proposals.length === 0) {
+        return {
+          error: `Turn budget critical (${remaining} turns remaining). Do not list files. Call propose_edit now or decline.`,
+        };
+      }
       const prefix = typeof args.prefix === "string" ? args.prefix : undefined;
       const files = await worktree.listFiles(prefix);
       investigation.push(`list_files(${prefix ?? "*"}) → ${files.length} files`);
@@ -254,6 +260,12 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
     });
 
     register("search_files", true, async (args) => {
+      const remaining = this.maxTurns - lastTurnSeen;
+      if (remaining <= 2 && proposals.length === 0) {
+        return {
+          error: `Turn budget critical (${remaining} turns remaining). Do not search files. Call propose_edit now with your fix or decline.`,
+        };
+      }
       investigation.push(`search_files(${String(args.pattern)})`);
       return searchFiles(worktree, args);
     });
@@ -377,20 +389,25 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
         }
         // Nudge the model to stop surveying and propose an edit or finish
         const remaining = this.maxTurns - info.turn;
-        if (info.turn >= 4 && proposals.length === 0) {
+        if (remaining <= 3 && proposals.length === 0) {
           conversation.push({
             role: "user",
-            content: `[Notice] You have taken ${info.turn} turns investigating (${remaining} turns remaining). Stop exploring: pick the single clearest code bug you identified, call propose_edit now with the complete replacement file content, then call finish.`,
+            content: `[CRITICAL NOTICE] Only ${remaining} turn(s) remaining! You have 0 edits queued. You must stop exploring immediately: call propose_edit now with your complete file fix or call decline. Do NOT call search_files or list_files.`,
           });
-        } else if (remaining <= 4 && remaining > 0 && proposals.length > 0) {
+        } else if (remaining <= 3 && proposals.length > 0) {
           conversation.push({
             role: "user",
             content: `[Notice] Only ${remaining} turn(s) remaining and you have ${proposals.length} edit(s) queued. Call finish now to submit your mutation.`,
           });
-        } else if (this.maxTurns > 4 && remaining <= 4 && remaining > 0) {
+        } else if (info.turn >= 4 && proposals.length === 0) {
           conversation.push({
             role: "user",
-            content: `[Notice] You have ${remaining} turn(s) remaining before turn budget is exhausted. You must call propose_edit to queue your edits and finish() to complete the mutation, or decline() if no safe mutation exists.`,
+            content: `[Notice] You have taken ${info.turn} turns investigating (${remaining} turns remaining). Stop exploring: pick the single clearest code bug you identified, call propose_edit now with the complete replacement file content, then call finish.`,
+          });
+        } else if (this.maxTurns > 4 && remaining <= 4 && remaining > 0 && proposals.length > 0) {
+          conversation.push({
+            role: "user",
+            content: `[Notice] Only ${remaining} turn(s) remaining and you have ${proposals.length} edit(s) queued. Call finish now to submit your mutation.`,
           });
         }
       },
@@ -509,9 +526,9 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       "- Environment failures (e.g. run_shell exit 125 = Docker could not start, timeouts) are external and",
       "  CANNOT be fixed here. Do NOT decline because of environment failures: focus on concrete code fixes.",
       "- In-scope failure modes to target:",
-      "  * Broken aliases in src/core/tools/tool-aliases.ts: aliases like print_tree, tree, ls map to 'list_dir',",
-      "    which does not exist (the canonical tool in src/tools/directory-tools.ts is 'list_directory').",
-      "  * Parameter or market normalization issues in src/tools/ (e.g. binance-tools.ts, argument-validator.ts).",
+      "  * Parameter or market normalization in src/tools/ (e.g. binance-tools.ts, argument-validator.ts, backtest-tools.ts).",
+      "  * Schema enum validation in src/tools/validation/argument-validator.ts: ensure alias inputs like market 'futures' or numbers as strings pass validation safely.",
+      "  * Error handling for missing files or edge-case tool inputs.",
       "- Spend AT MOST 2-3 turns investigating. Once you locate the relevant file, propose the edit",
       "  immediately with propose_edit and then call finish. Do NOT spend your budget on exhaustive surveys.",
       "- Formatting: your proposed code must pass prettier and eslint, so preserve the file's exact formatting, indentation, and semicolons.",
