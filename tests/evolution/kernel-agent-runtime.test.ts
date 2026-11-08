@@ -16,6 +16,7 @@ import {
   modelGatewayFromChatClient,
   type MutationTraceEntry,
 } from "../../src/evolution/mutation/kernel-agent-runtime.js";
+import { searchFiles } from "../../src/evolution/mutation/nexum-agent-runtime.js";
 import { AgentMutationError, AgentMutationRequest } from "../../src/evolution/mutation/agent-mutation.js";
 import { DefaultAgentRuntime } from "../../src/runtime/agent/agent-runtime.js";
 import { ModelCapabilityRegistry } from "../../src/models/profiles/model-capability-registry.js";
@@ -363,7 +364,27 @@ describe("KernelEvolutionAgentRuntime", () => {
     expect(messages[1].content).toContain("Improvement target: execution");
     // The propose-only tool schemas were advertised to the model.
     const tools = firstTurn.tools as Array<{ function: { name: string } }>;
-    expect(tools.map((t) => t.function.name)).toEqual(["list_files", "read_file", "propose_edit", "finish", "decline"]);
+    expect(tools.map((t) => t.function.name)).toEqual([
+      "list_files",
+      "read_file",
+      "search_files",
+      "propose_edit",
+      "finish",
+      "decline",
+    ]);
+  });
+
+  it("searches file contents with a regex, reports path:line matches and rejects bad patterns", async () => {
+    const files: Record<string, string> = { "src/a.ts": "one\nmarket: usdm\n", "src/b.ts": "nothing" };
+    const worktree = {
+      listFiles: async () => Object.keys(files),
+      readFile: async (p: string) => files[p] ?? null,
+    };
+    expect(await searchFiles(worktree, { pattern: "market:" })).toEqual({
+      matches: ["src/a.ts:2: market: usdm"],
+      truncated: false,
+    });
+    expect(await searchFiles(worktree, { pattern: "(" })).toHaveProperty("error");
   });
 
   it("traces each model response (unstripped) and each tool call with args and result", async () => {

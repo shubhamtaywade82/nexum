@@ -177,3 +177,26 @@ describe("DefaultAgentRuntime + ReActStrategy (kernel-native path)", () => {
     expect(peak).toBe(1); // agent gate = 1 in flight at a time
   });
 });
+
+describe("TransientContextManager.elideToolResults", () => {
+  it("should stub all but the newest tool results and leave other roles untouched", () => {
+    const ctx = new TransientContextManager([{ role: "system", content: "sys" }]);
+    ctx.pushToolResult("old-1");
+    ctx.push({ role: "assistant", content: "thinking" });
+    ctx.pushToolResult("old-2");
+    ctx.pushToolResult("new-1");
+    ctx.pushToolResult("small");
+
+    const replaced = ctx.elideToolResults(2, (c) => (c === "small" ? null : `[elided ${c}]`));
+
+    expect(replaced).toBe(2);
+    expect(ctx.messages().map((m) => m.content)).toEqual([
+      "sys",
+      "[elided old-1]",
+      "thinking",
+      "[elided old-2]",
+      "new-1",
+      "small",
+    ]);
+  });
+});

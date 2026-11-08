@@ -120,6 +120,22 @@ export const TOOLS: OllamaToolSchema[] = [
   {
     type: "function",
     function: {
+      name: "search_files",
+      description:
+        "Search file contents with a JavaScript regular expression. Returns matching lines as path:line: text (capped). Use it to locate code instead of reading whole files.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: 'JavaScript regular expression, e.g. "InvalidMarket|market:".' },
+          prefix: { type: "string", description: 'Optional repo-relative path prefix, e.g. "src/tools".' },
+        },
+        required: ["pattern"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "propose_edit",
       description:
         "Propose the FULL new content of a repo-relative file. You do not write to disk — the executor applies, verifies, and commits. Paths must be inside the allowed mutation paths.",
@@ -130,7 +146,8 @@ export const TOOLS: OllamaToolSchema[] = [
           content: { type: "string", description: "The complete new file content." },
           rationale: { type: "string", description: "Why this edit moves the target metric." },
         },
-        required: ["path", "content", "rationale"],
+        // rationale stays optional: requiring it rejected the only edits agents ever proposed.
+        required: ["path", "content"],
       },
     },
   },
@@ -160,6 +177,32 @@ export const TOOLS: OllamaToolSchema[] = [
     },
   },
 ];
+
+const MAX_SEARCH_MATCHES = 60;
+
+/** Read-only content search over the worktree; returns `path:line: text` matches or an error. */
+export async function searchFiles(
+  worktree: Pick<AgentMutationRequest["worktree"], "listFiles" | "readFile">,
+  args: Record<string, unknown>,
+): Promise<{ matches: string[]; truncated: boolean } | { error: string }> {
+  let regex: RegExp;
+  try {
+    regex = new RegExp(typeof args.pattern === "string" ? args.pattern : "");
+  } catch (err) {
+    return { error: `invalid regular expression: ${(err as Error).message}` };
+  }
+  const prefix = typeof args.prefix === "string" ? args.prefix : undefined;
+  const matches: string[] = [];
+  for (const path of await worktree.listFiles(prefix)) {
+    const lines = (await worktree.readFile(path))?.split("\n") ?? [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!regex.test(lines[i])) continue;
+      if (matches.length === MAX_SEARCH_MATCHES) return { matches, truncated: true };
+      matches.push(`${path}:${i + 1}: ${lines[i].trim().slice(0, 200)}`);
+    }
+  }
+  return { matches, truncated: false };
+}
 
 // ── Runtime ─────────────────────────────────────────────────────────────────
 
@@ -237,6 +280,9 @@ export class NexumEngineeringAgentRuntime implements EngineeringAgentRuntime {
           const content = await worktree.readFile(path);
           investigation.push(`read_file(${path}) → ${content === null ? "MISSING" : `${content.length} chars`}`);
           result = content === null ? { error: `file not found or unreadable: ${path}` } : { path, content };
+        } else if (name === "search_files") {
+          result = await searchFiles(worktree, args);
+          investigation.push(`search_files(${String(args.pattern)})`);
         } else if (name === "propose_edit") {
           const verdict = this.checkProposal(args, request, proposals.length);
           if (verdict.error !== null) {

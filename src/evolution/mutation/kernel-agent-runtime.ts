@@ -53,7 +53,7 @@ import {
   AgentMutationResponse,
   EngineeringAgentRuntime,
 } from "./agent-mutation.js";
-import { EngineeringChatClient, TOOLS } from "./nexum-agent-runtime.js";
+import { EngineeringChatClient, TOOLS, searchFiles } from "./nexum-agent-runtime.js";
 import { mutationScopeViolation } from "./path-scope.js";
 
 import { ToolCatalog } from "../../tools/gateway/tool-catalog.js";
@@ -144,6 +144,16 @@ export interface KernelEvolutionAgentRuntimeOptions {
 export type MutationTraceEntry =
   | { kind: "model"; turn: number; content: string; thinking?: string; toolCalls: unknown[] }
   | { kind: "tool"; turn: number; name: string; args: Record<string, unknown>; ok: boolean; result: unknown };
+
+// A full investigation (31 whole files) put ~92k tokens of tool output in the transcript; the model
+// lost the task, restated it every turn and never proposed. Only the newest results stay verbatim.
+const KEEP_FULL_TOOL_RESULTS = 8;
+const ELIDE_ABOVE_CHARS = 2_000;
+
+function elideLargeToolResult(content: string): string | null {
+  if (content.length <= ELIDE_ABOVE_CHARS) return null;
+  return `${content.slice(0, 160)}… [elided ${content.length} chars from an earlier turn; read_file again if you still need it]`;
+}
 
 interface QueuedEdit {
   proposal: AgentEditProposal;
@@ -242,6 +252,11 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       return content === null ? { error: `file not found or unreadable: ${path}` } : { path, content };
     });
 
+    register("search_files", true, async (args) => {
+      investigation.push(`search_files(${String(args.pattern)})`);
+      return searchFiles(worktree, args);
+    });
+
     register("propose_edit", false, async (args) => {
       const verdict = checkProposal(args, request, proposals.length, this.maxProposals, this.maxEditBytes);
       if (verdict.error !== null) {
@@ -337,9 +352,18 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       // strategy's turn counter is 0-based (legacy was 1-based).
       onTurnStart: (info) => {
         lastTurnSeen = info.turn;
+        // ponytail: fixed window of full tool results; summarise-then-elide if agents need older detail.
+        conversation.elideToolResults(KEEP_FULL_TOOL_RESULTS, elideLargeToolResult);
         if (info.turn > 0 && turnInvocations.length > 0) {
           this.onTurn?.(info.turn - 1, turnInvocations);
           turnInvocations = [];
+        }
+        // Transcripts showed agents that had already found a fix (e.g. a market alias) keep surveying
+        // until the budget ran out; a midpoint push converts investigation into a proposal or a decline.
+        if (info.turn === Math.floor(this.maxTurns / 2) && proposals.length === 0) {
+          conversation.pushSystem(
+            "[Notice] Half your turn budget is spent and nothing is proposed. Choose the single clearest fixable failure you have found and call propose_edit now, or decline with the reason.",
+          );
         }
         const remaining = this.maxTurns - info.turn;
         if (this.maxTurns > 4 && remaining <= 4 && remaining > 0) {
@@ -359,7 +383,7 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
           ok: obs.result.ok,
           result: obs.result.ok ? obs.result.data : obs.result,
         });
-        conversation.pushToolResult(JSON.stringify(obs.result.data, null, 2));
+        conversation.pushToolResult(JSON.stringify(obs.result.data));
         // finish/decline are the protocol's terminal tools: end the kernel
         // run right here (the legacy loop broke out of its for-loop).
         if (obs.name === "finish" && obs.result.ok) {
@@ -452,6 +476,13 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       `- Allowed mutation paths (prefixes): ${request.allowedPaths.join(", ")}`,
       "- Proposing outside them is rejected; repeated violations abort the cycle.",
       "- Read before proposing: understand the existing implementation first.",
+      "- Your only tools are list_files, read_file, search_files, propose_edit, finish, decline (no grep or",
+      "  shell). Locate code with search_files; read_file only files you will edit or must understand.",
+      "- An allowed path that does not exist yet (e.g. nexum.harness.json) can be created with",
+      "  propose_edit; do not spend turns searching for it.",
+      "- Strategy: pick ONE concrete failure from the telemetry below whose cause is code under the",
+      "  allowed paths, fix it with the smallest edit, then finish. Do not survey the whole subsystem.",
+      "  Environment failures (e.g. run_shell exit 125 = Docker could not start) are not fixable here.",
       "- Prefer the smallest in-scope change with a clear causal path to the target.",
       `- You have a budget of up to ${this.maxTurns} turns. Conclude with finish (edits queued) or decline (no safe mutation exists).`,
       "",

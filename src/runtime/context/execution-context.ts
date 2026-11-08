@@ -73,6 +73,21 @@ export class TransientContextManager implements ContextManager {
     this.items.push({ role: "tool", content });
   }
 
+  /** Replaces every tool result except the newest `keep` with `stub(content)`; returns how many were replaced. */
+  elideToolResults(keep: number, stub: (content: string) => string | null): number {
+    let seen = 0;
+    let replaced = 0;
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const m = this.items[i];
+      if (m.role !== "tool" || ++seen <= keep) continue;
+      const next = stub(m.content ?? "");
+      if (next === null || next === m.content) continue;
+      this.items[i] = { ...m, content: next };
+      replaced++;
+    }
+    return replaced;
+  }
+
   lastAssistantText(): string | undefined {
     for (let i = this.items.length - 1; i >= 0; i--) {
       const m = this.items[i];
