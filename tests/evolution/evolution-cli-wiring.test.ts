@@ -19,10 +19,12 @@ import {
 } from "../../src/evolution/mutation/verification-profile.js";
 import {
   buildMutationStrategy,
+  combineCycleResults,
   ingestParentExperience,
   parseBenchmarkJson,
   resolveGithubDeliveryConfig,
   resolveRepoCommit,
+  rotateKeysForSlot,
   runBenchmarkInDir,
 } from "../../src/evolution/cli.js";
 import { ClosedLoopEngine } from "../../src/evolution/engine-v2.js";
@@ -461,5 +463,26 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
         rmSync(stateDir, { recursive: true, force: true });
       }
     });
+  });
+});
+
+describe("parallel evolution helpers", () => {
+  it("should give each slot a different preferred key while keeping the full pool as failover", () => {
+    const keys = ["k0", "k1", "k2"];
+    expect(rotateKeysForSlot(keys, 0)).toEqual(["k0", "k1", "k2"]);
+    expect(rotateKeysForSlot(keys, 1)).toEqual(["k1", "k2", "k0"]);
+    expect(rotateKeysForSlot(keys, 4)).toEqual(["k1", "k2", "k0"]);
+    expect(rotateKeysForSlot([], 2)).toEqual([]);
+  });
+
+  it("should report ok when any parallel attempt succeeded and keep crashed attempts visible", () => {
+    const combined = combineCycleResults([
+      { status: "fulfilled", value: { ok: false, detail: "stage implement: turn budget" } },
+      { status: "rejected", reason: new Error("boom") },
+      { status: "fulfilled", value: { ok: true, detail: "candidate H1 → decision=promote" } },
+    ]);
+    expect(combined.ok).toBe(true);
+    expect(combined.detail).toContain("c1: attempt crashed: boom");
+    expect(combined.detail).toContain("c2: candidate H1");
   });
 });

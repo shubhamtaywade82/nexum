@@ -131,6 +131,8 @@ export interface KernelEvolutionAgentRuntimeOptions {
   systemPromptExtras?: string;
   /** Observability hook: fired once per completed turn (0-based, after its tool calls). */
   onTurn?: (turn: number, toolCalls: string[]) => void;
+  /** Transcript hook: every raw model response and every tool call with its args and result. */
+  onTrace?: (entry: MutationTraceEntry) => void;
   /** Kernel event sink for the run (execution-family events). */
   events?: EventSink;
   /** Cancellation: aborting unwinds the run → AgentMutationError. */
@@ -138,6 +140,10 @@ export interface KernelEvolutionAgentRuntimeOptions {
   /** Extra budget ceilings (deadline, maxModelCalls, ...) beyond the turn budget. */
   budgets?: ExecutionBudget;
 }
+
+export type MutationTraceEntry =
+  | { kind: "model"; turn: number; content: string; thinking?: string; toolCalls: unknown[] }
+  | { kind: "tool"; turn: number; name: string; args: Record<string, unknown>; ok: boolean; result: unknown };
 
 interface QueuedEdit {
   proposal: AgentEditProposal;
@@ -153,6 +159,7 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
   private readonly maxEditBytes: number;
   private readonly systemPromptExtras?: string;
   private readonly onTurn?: (turn: number, toolCalls: string[]) => void;
+  private readonly onTrace?: (entry: MutationTraceEntry) => void;
   private readonly events?: EventSink;
   private readonly signal?: AbortSignal;
   private readonly budgets?: ExecutionBudget;
@@ -169,6 +176,7 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
     this.maxEditBytes = opts.maxEditBytes ?? 512 * 1024;
     this.systemPromptExtras = opts.systemPromptExtras;
     this.onTurn = opts.onTurn;
+    this.onTrace = opts.onTrace;
     this.events = opts.events;
     this.signal = opts.signal;
     this.budgets = opts.budgets;
@@ -312,6 +320,14 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
         const response = await context.modelGateway.route("tools", turnInfo.messages as ChatMessage[], {
           tools: opts.tools as OllamaToolSchema[] | undefined,
         });
+        // Traced before the prose strip below, so the transcript shows what the model actually said.
+        this.onTrace?.({
+          kind: "model",
+          turn: turnInfo.turn,
+          content: response.message?.content ?? "",
+          thinking: (response.message as { thinking?: string } | undefined)?.thinking,
+          toolCalls: response.message?.tool_calls ?? [],
+        });
         if (extractToolCalls(response).length === 0 && (response.message?.content ?? "").length > 0) {
           return { ...response, message: { ...response.message, content: "" } };
         }
@@ -335,6 +351,14 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       // With onToolObserved installed, the hook OWNS the observation push.
       onToolObserved: (obs) => {
         turnInvocations.push(obs.name);
+        this.onTrace?.({
+          kind: "tool",
+          turn: obs.turn,
+          name: obs.name,
+          args: obs.args,
+          ok: obs.result.ok,
+          result: obs.result.ok ? obs.result.data : obs.result,
+        });
         conversation.pushToolResult(JSON.stringify(obs.result.data, null, 2));
         // finish/decline are the protocol's terminal tools: end the kernel
         // run right here (the legacy loop broke out of its for-loop).

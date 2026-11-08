@@ -6,8 +6,8 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { promisify } from "node:util";
 import { BenchmarkResult } from "../benchmark/types.js";
@@ -18,7 +18,7 @@ import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
 import { Provider } from "../models/adapters/provider.js";
 import { runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
 import { CandidateEvaluationOutcome, EvolutionEngine } from "./engine.js";
-import { ActivationResult, ClosedLoopEngine } from "./engine-v2.js";
+import { ActivationResult, ClosedLoopDiagnosis, ClosedLoopEngine } from "./engine-v2.js";
 import type { ActivationEvidence } from "./delivery/activation-gate.js";
 import { ExperienceStore } from "./experience/experience-store.js";
 import {
@@ -33,7 +33,11 @@ import { EvolutionMetricsTracker } from "./metrics.js";
 import { AgentMutationStrategy } from "./mutation/agent-mutation.js";
 import { GitWorktreeMutationExecutor, MutationStrategy } from "./mutation/mutation-executor.js";
 import { NexumEngineeringAgentRuntime, chatClientFromProvider } from "./mutation/nexum-agent-runtime.js";
-import { KernelEvolutionAgentRuntime, modelGatewayFromChatClient } from "./mutation/kernel-agent-runtime.js";
+import {
+  KernelEvolutionAgentRuntime,
+  MutationTraceEntry,
+  modelGatewayFromChatClient,
+} from "./mutation/kernel-agent-runtime.js";
 import { DefaultAgentRuntime } from "../runtime/agent/agent-runtime.js";
 import { EvolutionVerificationProfile, verificationProfileByName } from "./mutation/verification-profile.js";
 import { GitHubDeliveryAdapter } from "./delivery/github-adapter.js";
@@ -119,6 +123,8 @@ Options:
       --limit <n>        Limit number of episodes analyzed (default: 20;
                          experience ingestion always covers every episode)
       --max-turns <n>    Max turns for the engineering agent (default: 24, env: NEXUM_MUTATION_MAX_TURNS)
+      --parallel <n>     With --mutate: n independent candidate attempts per cycle, run
+                         concurrently (each prefers its own API key from the pool)
       --component <name> Target subsystem for candidate evaluation (default: execution)
       --hypothesis <txt> Remediation hypothesis statement for candidate
       --monitor          Evaluate post-activation health against the parent envelope
@@ -174,6 +180,7 @@ const CLI_OPTIONS = {
   experiment: { type: "string" as const },
   limit: { type: "string" as const },
   "max-turns": { type: "string" as const },
+  parallel: { type: "string" as const },
   component: { type: "string" as const },
   hypothesis: { type: "string" as const },
   "task-catalog": { type: "boolean" as const },
@@ -566,6 +573,7 @@ export function providerFromConfig(cfg: CliConfig): Provider {
     tier: cfg.tier,
     model: cfg.model,
     ...(cfg.apiKey ? { apiKey: cfg.apiKey } : {}),
+    ...(cfg.apiKeys?.length ? { apiKeys: cfg.apiKeys } : {}),
     ...(cfg.tier === "local" && cfg.host ? { host: cfg.host } : {}),
   });
 }
@@ -584,10 +592,41 @@ export const MUTATION_STRATEGIES = ["heuristic", "agent", "agent-legacy"] as con
  * Throws for unknown names so typos fail loudly instead of silently
  * downgrading to the heuristic planner.
  */
+/** Rotates the key pool so parallel slot `slot` prefers its own key; the others stay as 429 failover. */
+export function rotateKeysForSlot(keys: string[], slot: number): string[] {
+  if (keys.length === 0) return keys;
+  const start = slot % keys.length;
+  return [...keys.slice(start), ...keys.slice(0, start)];
+}
+
+/** Returns a trace sink that appends every agent step to `path` (JSONL) and echoes a one-line summary. */
+export function mutationTraceWriter(path: string, label = ""): (entry: MutationTraceEntry) => void {
+  let announced = false;
+  return (entry) => {
+    if (!announced) {
+      mkdirSync(dirname(path), { recursive: true });
+      console.log(`[Evolution] Agent transcript → ${path}`);
+      announced = true;
+    }
+    appendFileSync(path, JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n");
+    console.log(`[Agent ${label}t${entry.turn}] ${traceSummary(entry)}`);
+  };
+}
+
+function traceSummary(entry: MutationTraceEntry): string {
+  if (entry.kind === "model") {
+    const calls = entry.toolCalls.map((c) => (c as { function?: { name?: string } }).function?.name ?? "?");
+    const text = entry.content.replace(/\s+/g, " ").slice(0, 160);
+    return `model: ${text || "(no text)"}${calls.length ? ` → calls ${calls.join(", ")}` : ""}`;
+  }
+  const status = entry.ok ? "ok" : "ERROR";
+  return `tool ${entry.name}(${JSON.stringify(entry.args).slice(0, 120)}) → ${status}`;
+}
+
 export function buildMutationStrategy(
   name: string | undefined,
   cfg: CliConfig,
-  opts: { maxTurns?: number } = {},
+  opts: { maxTurns?: number; onTrace?: (entry: MutationTraceEntry) => void } = {},
 ): MutationStrategy | null {
   if (!name || name === "heuristic") return null;
   const chat = () => chatClientFromProvider(providerFromConfig(cfg));
@@ -596,6 +635,7 @@ export function buildMutationStrategy(
       runtime: new KernelEvolutionAgentRuntime({
         runtime: new DefaultAgentRuntime(),
         modelGateway: modelGatewayFromChatClient(chat()),
+        onTrace: opts.onTrace,
         ...(opts.maxTurns ? { maxTurns: opts.maxTurns } : {}),
       }),
     });
@@ -698,8 +738,9 @@ export async function runBenchmarkInDir(
   repoRoot: string,
   dir: string,
   categories: string[],
-  model?: string,
+  opts: { model?: string; apiKeys?: string[] } = {},
 ): Promise<TaskExecutionResult[]> {
+  const { model, apiKeys } = opts;
   const absRepoRoot = resolve(repoRoot);
   const tsxEntry = resolve(absRepoRoot, "node_modules", "tsx", "dist", "cli.mjs");
   if (!existsSync(tsxEntry)) {
@@ -727,7 +768,14 @@ export async function runBenchmarkInDir(
   const args = [tsxEntry, "src/benchmark/cli.ts", "--json", "--driver", "agent"];
   if (model) args.push("--model", model);
   for (const category of categories) args.push("--category", category);
-  const { stdout } = await execFileAsync("node", args, { cwd: dir, maxBuffer: 32 * 1024 * 1024 });
+  // The child's config puts OLLAMA_API_KEY first in its pool, so passing a rotated pool pins
+  // this run to its own key while keeping the rest as 429 failover.
+  const keyEnv = apiKeys?.length ? { OLLAMA_API_KEY: apiKeys[0], OLLAMA_API_KEYS: apiKeys.join(",") } : {};
+  const { stdout } = await execFileAsync("node", args, {
+    cwd: dir,
+    maxBuffer: 32 * 1024 * 1024,
+    env: { ...process.env, ...keyEnv },
+  });
   return parseBenchmarkJson(stdout);
 }
 
@@ -913,6 +961,17 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       return;
     }
   }
+  const parallel = values.parallel !== undefined ? parseInt(values.parallel as string, 10) : 1;
+  if (Number.isNaN(parallel) || parallel < 1) {
+    console.error("--parallel must be a positive integer.");
+    return;
+  }
+  const keyPool = cfg.apiKeys ?? (cfg.apiKey ? [cfg.apiKey] : []);
+  if (parallel > 1 && cfg.tier === "cloud" && keyPool.length < parallel) {
+    console.log(
+      `[Evolution] --parallel ${parallel} with ${keyPool.length} API key(s): attempts will share keys and may hit rate limits. Add keys via OLLAMA_API_KEYS.`,
+    );
+  }
   const stateDir = workspaceStateDir(root);
   const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
   // v2.3.2: the mutate path PERSISTS experiment provenance. Without a
@@ -928,7 +987,9 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   // gates executable inside the worktree. Explicit executor always wins over
   // the engine's agentRuntime auto-wiring, keeping gate control in one place.
   const maxTurns = values["max-turns"] ? parseInt(values["max-turns"] as string, 10) : undefined;
-  const strategy = buildMutationStrategy(strategyName, cfg, { maxTurns });
+  const runStamp = Date.now();
+  const slotSuffix = (slot: number): string => (parallel > 1 ? `-c${slot}` : "");
+  const slotKeys = (slot: number): string[] => rotateKeysForSlot(keyPool, slot);
   // v2.3.3: runtime activation is on by default. It wires the manifest-file
   // RuntimeActivationController plus the harness registry so the acceptance path
   // records real H0→Hn lineage. --no-activate-runtime keeps this run local.
@@ -937,18 +998,37 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   const activationController = activationRequested
     ? new ManifestRuntimeActivationController({ repoRoot, registry })
     : undefined;
-  const engine = new ClosedLoopEngine({
-    experienceStore,
-    experimentController: new ExperimentController({ store: experimentStore }),
-    ...(registry ? { registry } : {}),
-    ...(activationController ? { runtimeActivation: activationController } : {}),
-    generalizationPolicy: policy,
-    mutationExecutor: new GitWorktreeMutationExecutor({
-      verifyCommands: profile.commands,
-      linkNodeModulesFrom: repoRoot,
-      ...(strategy ? { strategy } : {}),
-    }),
-    ...(githubEnabled && githubCfg
+  // One engine per parallel slot: each owns its strategy (its own preferred key + transcript) and
+  // executor (its own worktree); the SQLite stores are shared.
+  const buildEngine = (slot: number): ClosedLoopEngine => {
+    const keys = slotKeys(slot);
+    const strategy = buildMutationStrategy(
+      strategyName,
+      { ...cfg, apiKeys: keys, ...(keys[0] ? { apiKey: keys[0] } : {}) },
+      {
+        maxTurns,
+        onTrace: mutationTraceWriter(
+          join(experimentDir, `mutation-${runStamp}${slotSuffix(slot)}.trace.jsonl`),
+          parallel > 1 ? `c${slot} ` : "",
+        ),
+      },
+    );
+    return new ClosedLoopEngine({
+      experienceStore,
+      experimentController: new ExperimentController({ store: experimentStore }),
+      ...(registry ? { registry } : {}),
+      ...(activationController ? { runtimeActivation: activationController } : {}),
+      generalizationPolicy: policy,
+      mutationExecutor: new GitWorktreeMutationExecutor({
+        verifyCommands: profile.commands,
+        linkNodeModulesFrom: repoRoot,
+        ...(strategy ? { strategy } : {}),
+      }),
+      ...githubDeliveryOption,
+    });
+  };
+  const githubDeliveryOption =
+    githubEnabled && githubCfg
       ? {
           githubDelivery: new GitHubDeliveryAdapter(
             {
@@ -960,8 +1040,9 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
             {},
           ),
         }
-      : {}),
-  });
+      : {};
+  const engines = Array.from({ length: parallel }, (_, slot) => buildEngine(slot));
+  const engine = engines[0];
 
   /**
    * v2.4: ONE full observe→mutate cycle as a reusable unit. Episode loading
@@ -969,7 +1050,8 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
    * completed episode feeds the experience store — not just the recent
    * diagnosis window — and (b) continuous mode picks up episodes recorded
    * while earlier cycles ran. `skipped` marks a no-target tick (idle, not a
-   * cycle failure).
+   * cycle failure). With --parallel, one observation and one baseline feed
+   * N concurrent candidate attempts against the same target.
    */
   const runCycle = async (): Promise<EvolutionCycleResult> => {
     const allEpisodes = loadAllEpisodes(root);
@@ -983,7 +1065,6 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
         detail: "no operationalizable target from recent episodes; refusing to mutate blind",
       };
     }
-    const diagnosis = observation.diagnoses[0];
     const categories = observation.plan?.recommendedBenchmarkCategories ?? [];
 
     // Baseline: the parent repository benchmarked in a subprocess BEFORE the
@@ -993,17 +1074,42 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     let baselineResults: TaskExecutionResult[] = [];
     if (values.benchmark && !values["skip-baseline"]) {
       console.log(`[Evolution] Benchmarking parent (baseline) across [${categories.join(", ") || "all"}]...`);
-      baselineResults = await runBenchmarkInDir(repoRoot, repoRoot, categories, cfg.model);
+      baselineResults = await runBenchmarkInDir(repoRoot, repoRoot, categories, {
+        model: cfg.model,
+        apiKeys: keyPool,
+      });
     }
+    if (parallel > 1) {
+      console.log(
+        `[Evolution] Running ${parallel} candidate attempts in parallel for ${observation.target.capability}.`,
+      );
+    }
+    const prepared = { observation, categories, baselineResults };
+    const settled = await Promise.allSettled(engines.map((_, slot) => runCandidate(slot, prepared)));
+    return combineCycleResults(settled);
+  };
+
+  const runCandidate = async (
+    slot: number,
+    prepared: { observation: ClosedLoopDiagnosis; categories: string[]; baselineResults: TaskExecutionResult[] },
+  ): Promise<EvolutionCycleResult> => {
+    const { categories, baselineResults } = prepared;
+    const observation = prepared.observation as ClosedLoopDiagnosis & {
+      target: NonNullable<ClosedLoopDiagnosis["target"]>;
+      mutationScope: NonNullable<ClosedLoopDiagnosis["mutationScope"]>;
+    };
+    const slotEngine = engines[slot];
+    const tag = parallel > 1 ? `[c${slot}] ` : "";
+    const diagnosis = observation.diagnoses[0];
     // Captured so the experiment artifact can carry the raw candidate runs.
     let candidateResults: TaskExecutionResult[] = [];
 
-    const experimentId = `exp-${Date.now()}`;
-    const outcome = await engine.runEvolutionCycle({
+    const experimentId = `exp-${Date.now()}${slotSuffix(slot)}`;
+    const outcome = await slotEngine.runEvolutionCycle({
       experimentId,
       parentHarnessId: "HEAD",
       parentCommit: parentRef,
-      candidateHarnessId: `H${Date.now().toString(36)}`,
+      candidateHarnessId: `H${Date.now().toString(36)}${slotSuffix(slot)}`,
       repoRoot,
       target: observation.target,
       diagnosis,
@@ -1015,16 +1121,19 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
             "Candidate evaluation requires --benchmark (subprocess benchmark of the mutated worktree); pass a custom evaluateCandidate for other suites.",
           );
         }
-        console.log(`[Evolution] Benchmarking candidate worktree across [${categories.join(", ") || "all"}]...`);
-        candidateResults = await runBenchmarkInDir(repoRoot, artifact.workspace.worktreePath, categories, cfg.model);
+        console.log(`[Evolution] ${tag}Benchmarking candidate worktree across [${categories.join(", ") || "all"}]...`);
+        candidateResults = await runBenchmarkInDir(repoRoot, artifact.workspace.worktreePath, categories, {
+          model: cfg.model,
+          apiKeys: slotKeys(slot),
+        });
         return candidateResults;
       },
       ...(githubEnabled && githubCfg ? { github: {} } : {}),
     });
-    console.log(formatMutationResult(outcome));
+    console.log(`${tag}${formatMutationResult(outcome)}`);
     // Runtime activation is enabled by default; the gate refuses without verified evidence.
     const activation = activationController
-      ? await activateRuntimeIfNeeded(engine, activationController, experimentId, outcome, activationRequested)
+      ? await activateRuntimeIfNeeded(slotEngine, activationController, experimentId, outcome, activationRequested)
       : null;
     writeCycleArtifact(outcome, {
       experimentId,
@@ -1089,6 +1198,18 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     experimentStore.close();
     registry?.close();
   }
+}
+
+/** Folds parallel candidate attempts into one cycle result: ok when any attempt succeeded. */
+export function combineCycleResults(settled: PromiseSettledResult<EvolutionCycleResult>[]): EvolutionCycleResult {
+  const results = settled.map((s) =>
+    s.status === "fulfilled" ? s.value : { ok: false, detail: `attempt crashed: ${(s.reason as Error)?.message}` },
+  );
+  if (results.length === 1) return results[0];
+  return {
+    ok: results.some((r) => r.ok),
+    detail: results.map((r, slot) => `c${slot}: ${r.detail}`).join(" | "),
+  };
 }
 
 /**

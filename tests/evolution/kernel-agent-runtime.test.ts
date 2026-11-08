@@ -14,6 +14,7 @@ import {
   KernelEvolutionAgentRuntime,
   EVOLUTION_AGENT_ID,
   modelGatewayFromChatClient,
+  type MutationTraceEntry,
 } from "../../src/evolution/mutation/kernel-agent-runtime.js";
 import { AgentMutationError, AgentMutationRequest } from "../../src/evolution/mutation/agent-mutation.js";
 import { DefaultAgentRuntime } from "../../src/runtime/agent/agent-runtime.js";
@@ -363,6 +364,25 @@ describe("KernelEvolutionAgentRuntime", () => {
     // The propose-only tool schemas were advertised to the model.
     const tools = firstTurn.tools as Array<{ function: { name: string } }>;
     expect(tools.map((t) => t.function.name)).toEqual(["list_files", "read_file", "propose_edit", "finish", "decline"]);
+  });
+
+  it("traces each model response (unstripped) and each tool call with args and result", async () => {
+    const trace: MutationTraceEntry[] = [];
+    const runtime = makeRuntime(
+      [
+        { content: "thinking out loud", tool_calls: [] },
+        { tool_calls: [{ function: { name: "read_file", arguments: { path: "src/thing.ts" } } }] },
+        { tool_calls: [{ function: { name: "finish", arguments: { summary: "s" } } }] },
+      ],
+      { onTrace: (entry) => trace.push(entry) },
+    );
+
+    await runtime.proposeMutation(mutationRequest());
+
+    expect(trace[0]).toMatchObject({ kind: "model", content: "thinking out loud" });
+    const read = trace.find((e) => e.kind === "tool" && e.name === "read_file");
+    expect(read).toMatchObject({ args: { path: "src/thing.ts" }, ok: true });
+    expect(trace.at(-1)).toMatchObject({ kind: "tool", name: "finish", ok: true });
   });
 
   it("fires the onTurn telemetry hook per completed turn (0-based)", async () => {

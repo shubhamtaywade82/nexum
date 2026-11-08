@@ -104,11 +104,18 @@ describe("ClosedLoopEngine (v2 integration)", () => {
       const ep = failureEpisode(id, "Something went wrong");
       return {
         ...ep,
-        terminal: "completed",
+        terminal: "answered",
         toolEvents: toolErrorRate > 0 ? ep.toolEvents : [],
         grade: {
           ...ep.grade!,
-          signals: { ...ep.grade!.signals, toolErrorRate, loopAborted: false, retriedSameToolMax: 0 },
+          signals: {
+            ...ep.grade!.signals,
+            toolErrorRate,
+            loopAborted: false,
+            retriedSameToolMax: 0,
+            testsRan: false,
+            testsPassed: null,
+          },
         },
       } as Episode;
     };
