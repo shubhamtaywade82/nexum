@@ -32,6 +32,8 @@ export interface ParallelCycleHooks<P> {
   release(run: SlotRun<P>): Promise<void>;
   /** Delivers and activates the champion. Called at most once per cycle. */
   deliverChampion(champion: SlotRun<P>): Promise<{ ok: boolean; detail: string }>;
+  /** Optional delay between launching each subsequent slot to avoid burst rate limits. */
+  staggerMs?: number;
 }
 
 export interface ParallelCycleResult<P> {
@@ -78,7 +80,16 @@ export async function runParallelCycle<P>(
   }
 
   // Every attempt runs concurrently. Selection happens only after all of them have settled.
-  const settled = await Promise.allSettled(Array.from({ length: slots }, (_, slot) => hooks.runSlot(slot)));
+  // Stagger launch slightly in production so parallel slots do not flood the API on the exact same millisecond.
+  const staggerMs = hooks.staggerMs ?? (process.env.NODE_ENV === "test" ? 0 : 1500);
+  const settled = await Promise.allSettled(
+    Array.from({ length: slots }, async (_, slot) => {
+      if (slot > 0 && staggerMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, slot * staggerMs));
+      }
+      return hooks.runSlot(slot);
+    }),
+  );
   const runs: SlotRun<P>[] = settled.map((outcome, slot) =>
     outcome.status === "fulfilled" ? outcome.value : crashedRun<P>(slot, outcome.reason),
   );

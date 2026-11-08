@@ -244,7 +244,21 @@ export class NexumEngineeringAgentRuntime implements EngineeringAgentRuntime {
     let declined: string | null = null;
 
     for (let turn = 1; turn <= this.maxTurns; turn++) {
-      const response = await this.chat.chat(messages, { tools: TOOLS });
+      let response: ChatResponse | undefined;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          response = await this.chat.chat(messages, { tools: TOOLS });
+          break;
+        } catch (err) {
+          lastError = err;
+          const isRateLimit = err instanceof Error && /rate limit|429/i.test(err.message);
+          if (!isRateLimit || attempt === 3) throw err;
+          const delayMs = (err as { retryAfterMs?: number | null }).retryAfterMs ?? 3000 * Math.pow(2, attempt);
+          await new Promise((res) => setTimeout(res, delayMs));
+        }
+      }
+      if (!response) throw lastError;
       const toolCalls = this.toolCallsOf(response);
 
       // A pure-text turn (no tool calls) cannot advance the protocol; nudge.

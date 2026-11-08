@@ -67,7 +67,8 @@ import { extractToolCalls } from "../../runtime/strategies/execution-strategy.js
 import type { AgentId, AgentRuntime, EventSink, ExecutionBudget, ExecutionRequest } from "../../core/types.js";
 import type { StrategyHooks } from "../../runtime/strategies/strategy-hooks.js";
 import type { Capability } from "../../models/catalog.js";
-import type { ChatMessage, OllamaToolSchema } from "../../models/adapters/provider.js";
+import { RateLimitError } from "../../models/errors.js";
+import type { ChatMessage, ChatResponse, OllamaToolSchema } from "../../models/adapters/provider.js";
 
 // ── Model gateway adapter ───────────────────────────────────────────────────
 
@@ -333,9 +334,24 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
       // legacy fail-closed shape (turn budget → AgentMutationError).
       callModel: async (turnInfo, opts) => {
         const messages = context.context.messages() as ChatMessage[];
-        const response = await context.modelGateway.route("tools", messages, {
-          tools: opts.tools as OllamaToolSchema[] | undefined,
-        });
+        let response: ChatResponse | undefined;
+        let lastError: unknown;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          try {
+            response = (await context.modelGateway.route("tools", messages, {
+              tools: opts.tools as OllamaToolSchema[] | undefined,
+            })) as ChatResponse;
+            break;
+          } catch (err) {
+            lastError = err;
+            const isRateLimit =
+              err instanceof RateLimitError || (err instanceof Error && /rate limit|429/i.test(err.message));
+            if (!isRateLimit || attempt === 3) throw err;
+            const delayMs = (err as { retryAfterMs?: number | null }).retryAfterMs ?? 3000 * Math.pow(2, attempt);
+            await new Promise((res) => setTimeout(res, delayMs));
+          }
+        }
+        if (!response) throw lastError;
         // Traced before the prose strip below, so the transcript shows what the model actually said.
         this.onTrace?.({
           kind: "model",
