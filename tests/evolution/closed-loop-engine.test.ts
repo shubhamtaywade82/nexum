@@ -125,6 +125,7 @@ describe("ClosedLoopEngine (v2 integration)", () => {
     expect(observation.target!.capability).toBe("tool_utilization");
     expect(observation.mutationScope!.components[0]).toBe(observation.target!.affectedComponents[0]);
     expect(observation.plan!.targetComponent).toBe(observation.target!.affectedComponents[0]);
+    expect(observation.plan!.recommendedBenchmarkCategories).toEqual(["tool-calling", "execution"]);
   });
 
   it("ingests graded episodes into the experience store with evidence", () => {

@@ -101,7 +101,9 @@ export class EvolutionPlanner {
     scope?: MutationScope,
   ): EvolutionPlan {
     const hypothesis = formulateHypothesisFromTarget(target);
-    const suites = [...new Set(target.evaluationPlan.steps.map((s) => s.suite))];
+    // Held-out steps are a split drawn from these same suites (heldout-split.ts), not a benchmark
+    // category of their own; passing "held-out-generalization" to the benchmark CLI aborts the run.
+    const suites = [...new Set(target.evaluationPlan.steps.filter((s) => s.split === "visible").map((s) => s.suite))];
     return {
       id: `plan-${target.capability}-${Date.now()}`,
       targetComponent: primaryComponent,
