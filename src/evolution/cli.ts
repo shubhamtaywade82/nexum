@@ -630,6 +630,14 @@ function traceSummary(entry: MutationTraceEntry): string {
   return `tool ${entry.name}(${JSON.stringify(entry.args).slice(0, 120)}) → ${status}`;
 }
 
+const MATT_POCOCK_ENGINEERING_DISCIPLINE = [
+  "Engineering Disciplines (Matt Pocock Skills / Deep Modules):",
+  "- Root Cause Locality (diagnosing-bugs & codebase-design): Trace the symptom to the implementing seam and fix it at the source so all callers succeed without changing caller signatures.",
+  "- Minimal Vertical Slice (tdd & implement): Propose ONLY the smallest atomic edit needed to solve the symptom. No speculative abstractions, wrappers, or extra parameters.",
+  "- Deep Modules: Keep interfaces small and implementations robust; hide complexity rather than leaking it to callers.",
+  "- Behavior Preservation (code-review): Ensure existing working functionality remains completely intact.",
+].join("\n");
+
 export function buildMutationStrategy(
   name: string | undefined,
   cfg: CliConfig,
@@ -643,6 +651,7 @@ export function buildMutationStrategy(
         runtime: new DefaultAgentRuntime(),
         modelGateway: modelGatewayFromChatClient(chat()),
         onTrace: opts.onTrace,
+        systemPromptExtras: MATT_POCOCK_ENGINEERING_DISCIPLINE,
         ...(opts.maxTurns ? { maxTurns: opts.maxTurns } : {}),
       }),
     });
