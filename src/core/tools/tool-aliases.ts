@@ -19,9 +19,9 @@ export const TOOL_ALIASES: Readonly<Record<string, string>> = {
   open_file: "read_file",
   cat_file: "read_file",
   view_file: "read_file",
-  print_tree: "list_dir",
-  tree: "list_dir",
-  ls: "list_dir",
+  print_tree: "list_directory",
+  tree: "list_directory",
+  ls: "list_directory",
   // search
   search_codebase: "search_code",
   find_code: "search_code",
@@ -55,4 +55,16 @@ export function canonicalToolName(rawName: string): string {
   }
   const clean = name.trim();
   return TOOL_ALIASES[clean] ?? TOOL_ALIASES[clean.toLowerCase()] ?? clean;
+}
+
+/** Market (instrument) normalization — maps common/aliased market strings to canonical 'usdm'|'coinm'|'spot'. */
+export function normalizeMarket(raw?: string): "usdm" | "coinm" | "spot" {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (!v || v === "spot") return "spot";
+  if (v === "futures" || v === "future" || v === "perp" || v === "perpetual" || v === "swap") return "usdm";
+  if (v === "usdm" || v === "usd-m" || v === "usd_m" || v === "usd futures" || v === "um") return "usdm";
+  if (v === "coinm" || v === "coin-m" || v === "coin_m" || v === "cm") return "coinm";
+  // preserve unknowns as-is? fall through to usdm for anything futures-ish
+  if (v.includes("futures")) return "usdm";
+  return "spot";
 }
