@@ -16,6 +16,12 @@
 - The process provider watches `close` rather than `exit`, so a response written just before the child exits is delivered.
 - The ACP provider posts a one-shot task in the background and returns the handle at once, matching the other providers. Previously `spawn()` waited for the whole remote task.
 
+### Prompt: edits compose, and a paste moves the cursor past itself
+
+- Two keystrokes delivered before a re-render now both apply. Two backspaces in one tick removed one character, because each read the cursor from the last render.
+- A paste moves the cursor past the text it inserted. Previously the next typed character landed before the paste.
+- The prompt's text, cursor and paste bursts live in `PromptSession` (`src/ui/input/prompt-session.ts`), tested without rendering. The App keeps key routing and rendering.
+
 ### Layering: the core plane depends on no plane above it
 
 - **Breaking for `@nemesis-oss/nexum/core` consumers:** the core entry point no longer re-exports runtime implementations (`DefaultAgentRuntime`, the strategies, `BudgetTracker` and the budget errors, the execution-context helpers, the registries). They are exported from `@nemesis-oss/nexum/runtime`, which is where they live.

@@ -20,6 +20,7 @@ import { ActivityStrip } from "./zones/ActivityStrip.js";
 import { ContextStrip } from "./zones/ContextStrip.js";
 import { PromptBar, promptBarRows } from "./zones/PromptBar.js";
 import { CompletionSurface } from "./input/CompletionSurface.js";
+import { PromptSession, type PromptState } from "./input/prompt-session.js";
 import { ConversationView, ViewProps } from "./views/ConversationView.js";
 import { PinnedDiffPanel } from "./components/PinnedDiffPanel.js";
 import { VDivider } from "./components/Section.js";
@@ -261,12 +262,12 @@ export function App({
   }, [state.theme]);
   const { width, height, listener: sizeListener } = useTerminalSize(columns, rows);
   const [ui, uiDispatch] = useReducer(uiReduce, undefined, initialUiState);
-  const [prompt, setPrompt] = useState("");
-  const [cursor, setCursor] = useState(0);
-  const promptRef = useRef(prompt);
-  promptRef.current = prompt;
-  const cursorRef = useRef(cursor);
-  cursorRef.current = cursor;
+  // The session owns the prompt text and cursor and applies each edit to its
+  // latest state; `editor` only mirrors it for rendering (see prompt-session.ts).
+  const [editor, setEditor] = useState<PromptState>({ text: "", cursor: 0 });
+  const [promptSession] = useState(() => new PromptSession({ onChange: setEditor }));
+  const prompt = editor.text;
+  const cursor = editor.cursor;
   const [busy, setBusy] = useState(false);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [history] = useState(() => {
@@ -291,72 +292,16 @@ export function App({
   const [modelAvailability, setModelAvailability] = useState<Record<string, boolean>>({});
   const [modelCapabilities, setModelCapabilities] = useState<Record<string, string[]>>({});
   const commandRegistry = useMemo(() => registry ?? builtinCommands(), [registry]);
-  const pasteCountRef = useRef(0);
   const focusReportRef = useRef(false);
   const lastCtrlCTimeRef = useRef(0);
 
-  // Burst detection: some terminals split a multi-line paste into one
-  // "data" event PER LINE, each ending in a lone \r that Ink reads as a
-  // real Enter keypress — without this, every pasted line gets individually
-  // submitted as its own message before the user ever sees the full paste.
-  // No human presses Enter faster than FAST_INPUT_MS after the previous
-  // keystroke; anything faster is the terminal dumping a paste, so a fast
-  // Enter becomes a newline within the prompt instead of a submit.
-  const FAST_INPUT_MS = 20;
-  const BURST_IDLE_MS = 60;
-  const lastInputAtRef = useRef(0);
-  const burstActiveRef = useRef(false);
-  const burstStartPromptRef = useRef("");
-  const burstTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Snapshot of prompt right before the current "typing session" (any run of
-  // input with no long idle gap) began. A burst is only detected on its 2nd
-  // event (the first fast Enter), by which point the first line's plain
-  // characters already landed in `prompt` — anchoring to this instead of the
-  // live prompt at burst-detection time reaches back to include that first
-  // line in the eventual collapse too.
-  const sessionStartPromptRef = useRef("");
-
-  useEffect(
-    () => () => {
-      if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
-    },
-    [],
-  );
-
-  // Shared by both paste paths (bracketed-paste markers, and the plain
-  // useInput fallback below for terminals that don't emit them): collapse
-  // multi-line content into a "[Pasted text #N +K lines]" placeholder, but
-  // keep the real content right after it so submitPrompt still sends it in
-  // full. Single-line "pastes" are just appended — no placeholder needed.
-  const appendPasted = useCallback((prev: string, pasted: string): string => {
-    const lineCount = pasted.split("\n").length;
-    if (lineCount <= 1) return prev + pasted;
-    pasteCountRef.current += 1;
-    const prefix = prev ? prev + "\n" : "";
-    return `${prefix}[Pasted text #${pasteCountRef.current} +${lineCount} lines]\n${pasted}`;
-  }, []);
-
-  // Collapses whatever raw text a rapid-Enter burst added to the prompt
-  // (see FAST_INPUT_MS above) into the same placeholder as other paste
-  // paths, once the burst goes idle.
-  const finalizeBurst = useCallback(() => {
-    burstActiveRef.current = false;
-    burstTimerRef.current = null;
-    setPrompt((current) => {
-      const start = burstStartPromptRef.current;
-      if (!current.startsWith(start)) return current; // state diverged; leave it alone
-      const added = current.slice(start.length).replace(/^\n/, "");
-      if (added.split("\n").length <= 1) return current;
-      return appendPasted(start, added);
-    });
-  }, [appendPasted]);
-
-  // Termina handles bracketed paste markers natively via usePaste.
-  // Normalize \r\n and bare \r to \n so line counting/collapsing sees them properly.
+  // Termina handles bracketed paste markers natively. The session normalizes
+  // line breaks, collapses multi-line content, and moves the cursor past it.
   usePaste((text) => {
-    const pasted = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    setPrompt((p) => appendPasted(p, pasted));
+    promptSession.paste(text);
   });
+
+  useEffect(() => () => promptSession.dispose(), [promptSession]);
 
   // Terminal focus tracking (DECSET 1004): most modern terminals (iTerm2,
   // kitty, WezTerm, Alacritty, Windows Terminal) report window focus in/out
@@ -487,7 +432,7 @@ export function App({
       if (!trimmed) return;
       const slash = parseSlashInput(trimmed);
       if (slash) {
-        setPrompt("");
+        promptSession.clear();
         setCompletionIndex(0);
         const command = commandRegistry.find(slash.name);
         applyEffect(command ? command.execute(slash.args) : { kind: "error", text: `Unknown command: /${slash.name}` });
@@ -504,7 +449,7 @@ export function App({
       } catch {
         // ignore
       }
-      setPrompt("");
+      promptSession.clear();
       setCompletionIndex(0);
 
       // Dashboard is a live cockpit in its own right (Activity Feed shows the
@@ -528,7 +473,7 @@ export function App({
           bus.publish({ type: "mode.changed", mode: "idle" });
         });
     },
-    [agent, applyEffect, bus, commandRegistry, history, ui.activeView, uiDispatch],
+    [agent, applyEffect, bus, commandRegistry, history, promptSession, ui.activeView, uiDispatch],
   );
 
   const initialTriggered = useRef(false);
@@ -576,23 +521,17 @@ export function App({
           return;
         }
         case "cancel":
-          if (activeCompletion) {
-            // Dismiss completion by clearing the trigger prefix
-            setPrompt("");
-            setCursor(0);
-            setCompletionIndex(0);
-          } else {
-            setPrompt("");
-            setCursor(0);
-            setCompletionIndex(0);
-            history.stopBrowsing();
-          }
+          // Dismissing a completion and cancelling the prompt both clear it; only
+          // the latter leaves history browsing.
+          promptSession.clear();
+          setCompletionIndex(0);
+          if (!activeCompletion) history.stopBrowsing();
           return;
         default:
           uiDispatch(command);
       }
     },
-    [bus, exit, history, store, ui.overlay],
+    [activeCompletion, bus, exit, history, promptSession, store, ui.overlay],
   );
 
   useInput((input, key) => {
@@ -607,9 +546,8 @@ export function App({
         return;
       }
       lastCtrlCTimeRef.current = now;
-      if (prompt.length > 0) {
-        setPrompt("");
-        setCursor(0);
+      if (promptSession.text.length > 0) {
+        promptSession.clear();
         setCompletionIndex(0);
         history.stopBrowsing();
       }
@@ -621,12 +559,9 @@ export function App({
       return;
     }
 
-    const now = Date.now();
-    const gapSincePrev = now - lastInputAtRef.current;
-    lastInputAtRef.current = now;
-    if (gapSincePrev >= FAST_INPUT_MS) sessionStartPromptRef.current = prompt;
+    promptSession.touch();
 
-    const ctx = { overlay: ui.overlay, promptHasText: prompt.length > 0, mode: state.mode };
+    const ctx = { overlay: ui.overlay, promptHasText: promptSession.text.length > 0, mode: state.mode };
     const command = resolveKey(input, key, ctx);
     if (command) {
       handleCommand(command);
@@ -634,40 +569,18 @@ export function App({
     }
     if (ui.overlay || state.clarification != null || state.mcpElicitation != null) return; // remaining keys belong to the overlay's own handler
 
-    // Prompt editing.
+    // Prompt editing. Each edit lands on the session's latest state, so keys
+    // delivered before a re-render still compose.
     if (key.return && key.shift) {
-      setPrompt((p) => {
-        const next = p.slice(0, cursor) + "\n" + p.slice(cursor);
-        setCursor(cursor + 1);
-        return next;
-      });
+      promptSession.newline();
       return;
-    }
-    if (key.return && gapSincePrev < FAST_INPUT_MS) {
-      // Too fast to be a deliberate keypress — the terminal is dumping a
-      // multi-line paste one line at a time. Treat as a newline within the
-      // paste, not a submit; collapse into a placeholder once it goes idle.
-      if (!burstActiveRef.current) {
-        burstActiveRef.current = true;
-        burstStartPromptRef.current = sessionStartPromptRef.current;
-      }
-      if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
-      burstTimerRef.current = setTimeout(finalizeBurst, BURST_IDLE_MS);
-      const next = promptRef.current + "\n";
-      promptRef.current = next;
-      cursorRef.current = next.length;
-      setPrompt(next);
-      setCursor(next.length);
-      return;
-    }
-    if (key.return && burstActiveRef.current) {
-      // A deliberate Enter arrived before the idle debounce fired — cancel
-      // the pending collapse and submit the raw (still fully correct) text.
-      if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
-      burstActiveRef.current = false;
     }
     if (key.return) {
-      const isExplicitTrigger = prompt.startsWith("/") || prompt.startsWith("@");
+      // A fast Enter is the terminal delivering a paste line by line: a newline in the
+      // burst, not a submit. Anything deliberate falls through to completion or submit.
+      if (promptSession.enter() === "newline") return;
+      const text = promptSession.text;
+      const isExplicitTrigger = text.startsWith("/") || text.startsWith("@");
       const hasUserNavigated = completionIndex > 0;
       const item =
         (isExplicitTrigger || hasUserNavigated) && activeCompletion
@@ -677,110 +590,72 @@ export function App({
       // an exact command and a prefix of others (e.g. "/test" alongside
       // "/tests"), which would otherwise leave Enter permanently stuck on the
       // no-op entry.
-      if (item && !isNoOpCompletion(prompt, item)) {
-        setPrompt(item.insert);
-        setCursor(item.insert.length);
+      if (item && !isNoOpCompletion(text, item)) {
+        promptSession.replace(item.insert);
         setCompletionIndex(0);
         return;
       }
-      submitPrompt(prompt);
-      setCursor(0);
+      submitPrompt(text);
       return;
     }
     if (key.backspace) {
-      if (cursor > 0) {
-        setPrompt((p) => p.slice(0, cursor - 1) + p.slice(cursor));
-        setCursor((c) => Math.max(0, c - 1));
-      }
+      promptSession.backspace();
       setCompletionIndex(0);
       history.stopBrowsing();
       return;
     }
     if (key.delete) {
-      if (cursor < prompt.length) {
-        setPrompt((p) => p.slice(0, cursor) + p.slice(cursor + 1));
-      }
+      promptSession.deleteForward();
       setCompletionIndex(0);
       history.stopBrowsing();
       return;
     }
     // Home / Ctrl+A: jump to start of line
     if ((key.ctrl && input === "a") || input === "\x1b[H" || input === "\x1b[1~") {
-      setCursor(0);
+      promptSession.moveHome();
       return;
     }
     // End / Ctrl+E: jump to end of line
     if ((key.ctrl && input === "e") || input === "\x1b[F" || input === "\x1b[4~") {
-      setCursor(prompt.length);
+      promptSession.moveEnd();
       return;
     }
     if (key.leftArrow) {
-      setCursor((c) => Math.max(0, c - 1));
+      promptSession.moveLeft();
       return;
     }
     if (key.rightArrow) {
-      if (cursor === prompt.length && ghost) {
-        const accepted = acceptWord(ghost).accepted;
-        setPrompt((p) => p + accepted);
-        setCursor((c) => c + accepted.length);
+      if (promptSession.cursor === promptSession.text.length && ghost) {
+        promptSession.append(acceptWord(ghost).accepted);
       } else {
-        setCursor((c) => Math.min(prompt.length, c + 1));
+        promptSession.moveRight();
       }
       return;
     }
     if (key.tab) {
       if (activeCompletion) {
         const item = completionItems[Math.min(completionIndex, completionItems.length - 1)];
-        setPrompt(item.insert);
-        setCursor(item.insert.length);
+        promptSession.replace(item.insert);
         setCompletionIndex(0);
       } else if (ghost) {
-        setPrompt(prompt + ghost);
-        setCursor(prompt.length + ghost.length);
+        promptSession.append(ghost);
       }
       return;
     }
     if (key.upArrow) {
       if (activeCompletion) setCompletionIndex((i) => Math.max(0, i - 1));
-      else {
-        const next = history.up(prompt);
-        setPrompt(next);
-        setCursor(next.length);
-      }
+      else promptSession.replace(history.up(promptSession.text));
       return;
     }
     if (key.downArrow) {
       if (activeCompletion) setCompletionIndex((i) => Math.min(completionItems.length - 1, i + 1));
-      else {
-        const next = history.down(prompt);
-        setPrompt(next);
-        setCursor(next.length);
-      }
+      else promptSession.replace(history.down(promptSession.text));
       return;
     }
     if (input && !key.ctrl && !key.meta) {
-      // Real keystrokes arrive one character at a time; a chunk containing
-      // an embedded line break can only be a paste the terminal delivered
-      // without bracketed-paste markers (not all terminals emit them), and
-      // some encode that break as bare \r rather than \n — normalize (not
-      // strip) so it's still detected and collapses the same way.
-      const cleaned = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      if (cleaned.includes("\n")) {
-        const next = appendPasted(promptRef.current, cleaned);
-        promptRef.current = next;
-        cursorRef.current = next.length;
-        setPrompt(next);
-        setCursor(next.length);
-      } else {
-        const curPrompt = promptRef.current;
-        const curCursor = cursorRef.current;
-        const next = curPrompt.slice(0, curCursor) + cleaned + curPrompt.slice(curCursor);
-        const nextCursor = curCursor + cleaned.length;
-        promptRef.current = next;
-        cursorRef.current = nextCursor;
-        setPrompt(next);
-        setCursor(nextCursor);
-      }
+      // Real keystrokes arrive one character at a time; a chunk containing a
+      // line break is an unmarked paste, which the session collapses.
+      promptSession.insert(input);
       setCompletionIndex(0);
     }
   });
