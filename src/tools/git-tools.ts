@@ -127,6 +127,15 @@ function configuredRemotes(root: string): Set<string> {
  * context window. */
 const MAX_OUTPUT_BYTES = 32 * 1024;
 
+/**
+ * Prepended to every host git call. `.git/hooks/*` and `core.fsmonitor` run on
+ * the HOST, and a planted hook or fsmonitor in the repository is exactly what
+ * the sandbox's read-only git mounts exist to prevent. Host git ignores them
+ * regardless of what the workspace (or a sandbox run) left behind.
+ */
+const NULL_DEVICE = process.platform === "win32" ? "NUL" : "/dev/null";
+const HOST_GIT_HARDENING = ["-c", `core.hooksPath=${NULL_DEVICE}`, "-c", "core.fsmonitor=false"];
+
 export class GitTool extends Tool {
   constructor(private readonly root: string) {
     super();
@@ -185,7 +194,7 @@ export class GitTool extends Tool {
     }
 
     return new Promise((resolvePromise) => {
-      const child = spawn("git", gitArgs, { cwd: this.root });
+      const child = spawn("git", [...HOST_GIT_HARDENING, ...gitArgs], { cwd: this.root });
       // Buffers, decoded once at the end: concatenating per-chunk toString()
       // corrupts multi-byte characters split across a chunk boundary, which
       // shows up as mojibake in diffs and commit messages.
