@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, bigserial } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, bigserial, index } from "drizzle-orm/pg-core";
 import { sessions } from "./session.js";
 
 /**
@@ -10,15 +10,22 @@ import { sessions } from "./session.js";
  * back on resumeSessionById); this table is additive durability + the
  * read path for the host's session/message API, not a replacement yet.
  */
-export const messages = pgTable("messages", {
-  seq: bigserial("seq", { mode: "number" }).primaryKey(),
-  sessionId: text("session_id")
-    .notNull()
-    .references(() => sessions.id, { onDelete: "cascade" }),
-  role: text("role").notNull(), // system | user | assistant | tool
-  content: text("content").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const messages = pgTable(
+  "messages",
+  {
+    seq: bigserial("seq", { mode: "number" }).primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    role: text("role").notNull(), // system | user | assistant | tool
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // A session's transcript is read in seq order; the FK alone does not index it.
+    index("messages_session_seq_idx").on(t.sessionId, t.seq),
+  ],
+);
 
 export type MessageRow = typeof messages.$inferSelect;
 export type NewMessageRow = typeof messages.$inferInsert;
