@@ -307,6 +307,12 @@ export class GitWorktreeMutationExecutor implements HarnessMutationExecutor {
       await mkdir(dirname(abs), { recursive: true });
       const content = edit.content.endsWith("\n") ? edit.content : `${edit.content}\n`;
       await writeFile(abs, content, "utf8");
+      // Format with prettier so minor whitespace/quote differences pass fast verification gates.
+      try {
+        await this.run(["npx", "prettier", "--write", abs], workspace.worktreePath);
+      } catch {
+        // Non-fatal if prettier is unavailable or unsupported for this file type.
+      }
       applied.push(edit);
     }
     const diffStat = await this.diffStat(workspace);
