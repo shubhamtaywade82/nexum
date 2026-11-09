@@ -58,7 +58,7 @@ describe("loadSkillMeta / discoverSkills", () => {
     writeSkill(homeDir, "global-only", "name: Global Only");
     writeSkill(workspaceRoot, "shared", "name: Workspace Version\ndescription: from workspace");
 
-    const found = discoverSkills({ workspaceRoot, homeDir });
+    const found = discoverSkills({ workspaceRoot, homeDir, workspaceTrusted: true });
     const byId = new Map(found.map((s) => [s.id, s]));
 
     expect(byId.get("shared")).toMatchObject({ name: "Workspace Version", scope: "workspace" });
@@ -69,12 +69,31 @@ describe("loadSkillMeta / discoverSkills", () => {
   it("skips a directory with no SKILL.md rather than throwing", () => {
     mkdirSync(join(workspaceRoot, ".devagent", "skills", "empty-dir"), { recursive: true });
     writeSkill(workspaceRoot, "valid", "name: Valid");
-    expect(() => discoverSkills({ workspaceRoot, homeDir })).not.toThrow();
-    expect(discoverSkills({ workspaceRoot, homeDir }).map((s) => s.id)).toEqual(["valid"]);
+    expect(() => discoverSkills({ workspaceRoot, homeDir, workspaceTrusted: true })).not.toThrow();
+    expect(discoverSkills({ workspaceRoot, homeDir, workspaceTrusted: true }).map((s) => s.id)).toEqual(["valid"]);
   });
 
   it("returns an empty list when no skills directories exist", () => {
-    expect(discoverSkills({ workspaceRoot, homeDir })).toEqual([]);
+    expect(discoverSkills({ workspaceRoot, homeDir, workspaceTrusted: true })).toEqual([]);
+  });
+  it("withholds workspace skills unless the caller establishes trust (fail closed by default)", () => {
+    writeSkill(workspaceRoot, "repo-skill", "name: Repo Skill");
+    writeSkill(homeDir, "global-skill", "name: Global Skill");
+
+    expect(discoverSkills({ workspaceRoot, homeDir }).map((s) => s.id)).toEqual(["global-skill"]);
+    expect(
+      discoverSkills({ workspaceRoot, homeDir, workspaceTrusted: true })
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual(["global-skill", "repo-skill"]);
+  });
+
+  it("reads disable-model-invocation instead of ignoring it", () => {
+    const manual = writeSkill(workspaceRoot, "manual", "name: Manual\ndisable-model-invocation: true");
+    const auto = writeSkill(workspaceRoot, "auto", "name: Auto");
+
+    expect(loadSkillMeta(manual, "workspace")?.disableModelInvocation).toBe(true);
+    expect(loadSkillMeta(auto, "workspace")?.disableModelInvocation).toBeUndefined();
   });
 });
 
@@ -113,7 +132,7 @@ describe("loadSkillContent", () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "SKILL.md"), "---\nname: Nexum Skill\ndescription: canonical location\n---\nbody");
 
-      const found = discoverSkills({ workspaceRoot: ws, homeDir: home });
+      const found = discoverSkills({ workspaceRoot: ws, homeDir: home, workspaceTrusted: true });
       expect(found.map((s) => s.id)).toContain("nexum-skill");
     } finally {
       rmSync(ws, { recursive: true, force: true });
@@ -129,7 +148,7 @@ describe("loadSkillContent", () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "SKILL.md"), "---\nname: Legacy Skill\ndescription: legacy location\n---\nbody");
 
-      const found = discoverSkills({ workspaceRoot: ws, homeDir: home });
+      const found = discoverSkills({ workspaceRoot: ws, homeDir: home, workspaceTrusted: true });
       expect(found.map((s) => s.id)).toContain("legacy-skill");
     } finally {
       rmSync(ws, { recursive: true, force: true });
@@ -149,7 +168,7 @@ describe("loadSkillContent", () => {
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, "SKILL.md"), `---\nname: ${skillName}\ndescription: d\n---\nbody`);
       }
-      const found = discoverSkills({ workspaceRoot: ws, homeDir: home });
+      const found = discoverSkills({ workspaceRoot: ws, homeDir: home, workspaceTrusted: true });
       expect(found.find((s) => s.id === "dupe")?.name).toBe("Canonical Version");
     } finally {
       rmSync(ws, { recursive: true, force: true });

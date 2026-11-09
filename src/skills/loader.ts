@@ -15,6 +15,14 @@ export interface DiscoverOptions {
   workspaceRoot: string;
   /** Override for tests; defaults to os.homedir(). */
   homeDir?: string;
+  /**
+   * Whether the workspace's own skills may load. A skill is instructions the
+   * model follows, so a repository that ships one must not get it injected
+   * into the system prompt until the workspace is trusted (the caller decides;
+   * see the workspace trust gate in cli/workspace-trust.ts). Defaults to false:
+   * fail closed. Global skills under homeDir always load.
+   */
+  workspaceTrusted?: boolean;
 }
 
 function skillsDirs(root: string): string[] {
@@ -75,6 +83,8 @@ export function loadSkillMeta(skillDir: string, scope: SkillScope): SkillMeta | 
       scope,
       dir: skillDir,
       path,
+      // Honored, not ignored: such a skill is loaded only by an explicit pin, never selected for a prompt.
+      ...(data["disable-model-invocation"] === true ? { disableModelInvocation: true } : {}),
     };
   } catch {
     return null;
@@ -95,9 +105,12 @@ export function discoverSkills(opts: DiscoverOptions): SkillMeta[] {
   const global = listSkillDirs(home)
     .map((dir) => loadSkillMeta(dir, "global"))
     .filter((s): s is SkillMeta => s != null);
-  const workspace = listSkillDirs(opts.workspaceRoot)
-    .map((dir) => loadSkillMeta(dir, "workspace"))
-    .filter((s): s is SkillMeta => s != null);
+  const workspace =
+    opts.workspaceTrusted === true
+      ? listSkillDirs(opts.workspaceRoot)
+          .map((dir) => loadSkillMeta(dir, "workspace"))
+          .filter((s): s is SkillMeta => s != null)
+      : [];
 
   const byId = new Map<string, SkillMeta>();
   // First-wins per id per scope: canonical roots are listed before legacy, so

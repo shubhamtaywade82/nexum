@@ -164,6 +164,8 @@ type AgentEventHandler<E extends AgentEventName> = NonNullable<AgentEvents[E]>;
 
 export interface AgentOptions {
   config?: Partial<CliConfig>;
+  /** Trust decisions for the workspace's own skills. Defaults to the global store. */
+  trustStore?: WorkspaceTrustStore;
   /** Inject a Decision Plane gateway (tests); honored only when enableDecision is on. */
   decisionGateway?: import("../models/decision/index.js").DecisionGateway;
   events?: AgentEvents;
@@ -364,7 +366,9 @@ export class Agent {
     // WorkspaceManager, the single owner of that decision (docs/REBRANDING.md §4).
     // (the one-time .devagent → .nexum migration copies config.json: keep a
     // trusted workspace trusted across it, never trust an untrusted one)
-    const statePaths = preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), () =>
+    // One trust store for every decision this agent makes about the workspace (the global one unless injected).
+    const trustStore = opts.trustStore ?? WorkspaceTrustStore.global();
+    const statePaths = preservingTrust(cfg.workspaceRoot, trustStore, () =>
       new WorkspaceManager(cfg.workspaceRoot).ensure(),
     );
 
@@ -378,7 +382,7 @@ export class Agent {
           // content: ignore them (servers needing approval then ask)
           approvals: cfg.workspaceTrust?.trusted
             ? new McpApprovalStore(join(statePaths.dir, "mcp-trust.json"), (write) =>
-                preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), write),
+                preservingTrust(cfg.workspaceRoot, trustStore, write),
               )
             : undefined,
         })
@@ -423,6 +427,7 @@ export class Agent {
       provider: this.stack.provider,
       memory: this.memory,
       skillsHomeDir: opts.skillsHomeDir,
+      trustStore: opts.trustStore,
       projectLanguage,
       executorModel: cfg.model ?? this.stack.provider.currentModel,
     });
@@ -801,6 +806,8 @@ export class Agent {
 
     const learnings = this.learning.getLearnings();
     const activatedSkills = this.learning.resolveForPrompt(userMessage);
+    const skillsNotice = this.learning.takeWithheldNotice();
+    if (skillsNotice) this.emit("onStatus", skillsNotice);
 
     if (this.conversation.isEmpty()) {
       const cfg = loadConfig();

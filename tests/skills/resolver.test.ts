@@ -25,6 +25,16 @@ describe("resolveSkills", () => {
     expect(results[0].matchedTags).toEqual(["rails", "api"]);
   });
 
+  it("never selects a disable-model-invocation skill for a prompt", () => {
+    const manual = {
+      ...meta("deploy-prod", ["rails", "api"], "Ruby on Rails API deploy"),
+      disableModelInvocation: true,
+    };
+    const results = resolveSkills("help me build a rails api", [...catalog, manual]);
+    expect(results.map((r) => r.meta.id)).not.toContain("deploy-prod");
+    expect(results[0].meta.id).toBe("rails-api");
+  });
+
   it("excludes skills below minScore", () => {
     const results = resolveSkills("help me build a rails api", catalog, { minScore: 100 });
     expect(results).toEqual([]);

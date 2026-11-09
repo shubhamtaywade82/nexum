@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
+import { trustWorkspace, WorkspaceTrustStore } from "../../src/cli/workspace-trust.js";
 import { jest } from "@jest/globals";
 
 jest.unstable_mockModule("node:child_process", () => ({
@@ -211,6 +212,9 @@ describe("Agent skills activation", () => {
   // into resolution alongside the fixture skill below.
   let skillsHomeDir: string;
 
+  /** Trust decisions for these fixtures live in the isolated home dir, never the real global store. */
+  const trustStore = () => WorkspaceTrustStore.at(join(skillsHomeDir, "trusted-workspaces.json"));
+
   beforeEach(async () => {
     skillsHomeDir = await mkdtemp(join(tmpdir(), "home-"));
   });
@@ -218,8 +222,13 @@ describe("Agent skills activation", () => {
   it("injects a matching skill's body as a system message before the user message", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     writeSkill(dir, "rails-api", "name: Rails API\ndescription: REST APIs\ntags: [rails]", "Rails skill body");
+    trustWorkspace(dir, trustStore());
     mockChatOnce("ok");
-    const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" }, skillsHomeDir });
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      skillsHomeDir,
+      trustStore: trustStore(),
+    });
 
     await agent.runUserMessage("help me build a rails endpoint");
 
@@ -234,12 +243,14 @@ describe("Agent skills activation", () => {
   it("emits onSkillsActivated when a skill is injected", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     writeSkill(dir, "rails-api", "name: Rails API\ndescription: REST APIs\ntags: [rails]", "Rails skill body");
+    trustWorkspace(dir, trustStore());
     mockChatOnce("ok");
     const onSkillsActivated = jest.fn();
     const agent = new Agent({
       config: { workspaceRoot: dir, tier: "local", model: "test-model" },
       events: { onSkillsActivated },
       skillsHomeDir,
+      trustStore: trustStore(),
     });
 
     await agent.runUserMessage("help me build a rails endpoint");
@@ -250,8 +261,13 @@ describe("Agent skills activation", () => {
   it("does not inject anything when no skill matches the prompt", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     writeSkill(dir, "rails-api", "name: Rails API\ndescription: REST APIs\ntags: [rails]", "Rails skill body");
+    trustWorkspace(dir, trustStore());
     mockChatOnce("ok");
-    const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" }, skillsHomeDir });
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      skillsHomeDir,
+      trustStore: trustStore(),
+    });
 
     await agent.runUserMessage("completely unrelated request");
 
@@ -262,8 +278,13 @@ describe("Agent skills activation", () => {
   it("pinSkill bypasses scoring on the next call", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     writeSkill(dir, "rails-api", "name: Rails API\ndescription: REST APIs\ntags: [rails]", "Rails skill body");
+    trustWorkspace(dir, trustStore());
     mockChatOnce("ok");
-    const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" }, skillsHomeDir });
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      skillsHomeDir,
+      trustStore: trustStore(),
+    });
 
     agent.pinSkill("rails-api");
     await agent.runUserMessage("completely unrelated request");
@@ -275,13 +296,38 @@ describe("Agent skills activation", () => {
   it("records a skill_usage entry via MemoryStore after an activated turn", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     writeSkill(dir, "rails-api", "name: Rails API\ndescription: REST APIs\ntags: [rails]", "Rails skill body");
+    trustWorkspace(dir, trustStore());
     mockChatOnce("ok");
-    const agent = new Agent({ config: { workspaceRoot: dir, tier: "local", model: "test-model" }, skillsHomeDir });
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      skillsHomeDir,
+      trustStore: trustStore(),
+    });
 
     await agent.runUserMessage("help me build a rails endpoint");
 
     const store = new MemoryStore(join(dir, ".nexum", "memory.db"));
     expect(store.getSkillUsage("rails-api")).toMatchObject({ useCount: 1, successCount: 1 });
     store.close();
+  });
+  it("withholds a repository's skill until its workspace is trusted, and says why", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    writeSkill(dir, "rails-api", "name: Rails API\ndescription: REST APIs\ntags: [rails]", "Rails skill body");
+    mockChatOnce("ok");
+    const onSkillsActivated = jest.fn();
+    const onStatus = jest.fn();
+    const agent = new Agent({
+      config: { workspaceRoot: dir, tier: "local", model: "test-model" },
+      events: { onSkillsActivated, onStatus },
+      skillsHomeDir,
+      trustStore: trustStore(),
+    });
+
+    await agent.runUserMessage("help me build a rails endpoint");
+
+    expect(onSkillsActivated).not.toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledWith(expect.stringMatching(/workspace skills withheld.*nexum trust/));
+    const messages = firstRequestMessages();
+    expect(messages.some((m) => m.content.includes("Rails skill body"))).toBe(false);
   });
 });
