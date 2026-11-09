@@ -13,7 +13,7 @@
  * evicts one mid-run.
  */
 
-import type { Agent } from "../cli/agent.js";
+import type { AgentPort } from "./agent-port.js";
 import type { MessageRepository } from "../persistence/repositories/message-repository.js";
 import { RunEventBridge } from "./event-bridge.js";
 import { McpHub } from "./mcp-hub.js";
@@ -24,13 +24,13 @@ import type { NexumMcpServerInfo } from "../protocol/types.js";
 export const DISCOVERY_SESSION_ID = "__capabilities__";
 
 export interface AgentEntry {
-  agent: Agent;
+  agent: AgentPort;
   bridge: RunEventBridge;
   lastUsedAt: number;
 }
 
 export interface HostAgentRegistryOptions {
-  createAgent: () => Agent;
+  createAgent: () => AgentPort;
   /** Canonical PostgreSQL message repository to hydrate conversation turns */
   messages?: MessageRepository;
   /** Idle time before an unused session's Agent is torn down. Default 30 min. */
@@ -119,7 +119,7 @@ export class HostAgentRegistry {
    * and every agent registers their tools (waiting for the connect attempt to settle, so a session
    * never starts with a half-connected tool set).
    */
-  private async attachMcp(agent: Agent): Promise<void> {
+  private async attachMcp(agent: AgentPort): Promise<void> {
     if (!this.mcpHub) {
       const { servers, trust, credentials } = agent.mcpHostConfig();
       this.mcpHub = new McpHub(servers, trust, credentials);

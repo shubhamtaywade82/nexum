@@ -1,4 +1,4 @@
-import type { Agent } from "../cli/agent.js";
+import type { AgentPort } from "./agent-port.js";
 import type { RedisEventBus } from "../infrastructure/redis/pubsub.js";
 import { runChannel } from "../infrastructure/redis/channels.js";
 import type { EventRepository } from "../persistence/repositories/event-repository.js";
@@ -83,7 +83,7 @@ export function cancelRun({ agent, bridge }: AgentEntry): boolean {
 }
 
 async function runAgentInBackground(
-  agent: Agent,
+  agent: AgentPort,
   bridge: RunEventBridge,
   { goal, presentation, interactive, approvalMode, modelTier }: CreateRunRequest,
   ctx: {

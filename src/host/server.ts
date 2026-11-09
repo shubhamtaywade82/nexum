@@ -27,7 +27,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Agent } from "../cli/agent.js";
+import type { AgentPort } from "./agent-port.js";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { DISCOVERY_SESSION_ID, HostAgentRegistry } from "./agent-registry.js";
 import {
@@ -69,7 +69,7 @@ import { runChannel } from "../infrastructure/redis/channels.js";
 import { prometheusMetrics } from "../observability/process-telemetry.js";
 
 export interface NexumHostOptions {
-  createAgent: () => Agent;
+  createAgent: () => AgentPort;
   workspaceRoot: string;
   db: Database;
   eventBus: RedisEventBus;

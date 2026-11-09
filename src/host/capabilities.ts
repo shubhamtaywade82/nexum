@@ -1,4 +1,4 @@
-import type { Agent } from "../cli/agent.js";
+import type { AgentPort } from "./agent-port.js";
 import type { NexumCapabilities } from "../protocol/types.js";
 import { isUiInvocable } from "./ui-tools.js";
 
@@ -11,7 +11,7 @@ const MODEL_LIST_TIMEOUT_MS = 5_000;
  * Metadata only: no file paths, commands, arguments, environment or keys.
  */
 export async function discoverCapabilities(
-  agent: Agent,
+  agent: AgentPort,
   opts: { mcp: DiscoveredCapabilities["mcp"]; modelListTimeoutMs?: number },
 ): Promise<DiscoveredCapabilities> {
   return {
@@ -35,7 +35,7 @@ export async function discoverCapabilities(
 }
 
 /** Model discovery calls out to Ollama; a slow or unreachable provider must not stall the whole response. */
-async function listModels(agent: Agent, timeoutMs: number): Promise<DiscoveredCapabilities["models"]> {
+async function listModels(agent: AgentPort, timeoutMs: number): Promise<DiscoveredCapabilities["models"]> {
   let timer: NodeJS.Timeout | undefined;
   const timedOut = new Promise<string[]>((resolve) => {
     timer = setTimeout(() => resolve([]), timeoutMs);
