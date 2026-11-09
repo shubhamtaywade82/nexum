@@ -45,7 +45,7 @@ function legacyRiskFor(category: string, toolName: string): ToolRisk {
   if (toolName === "run_shell") return "high";
   if (toolName === "delete_file") return "high";
   if (toolName === "git" || toolName === "github") return "high";
-  if (toolName === "paper_trade") return "critical";
+  if (toolName === "binance_paper_trade") return "critical";
   if (category === "Filesystem" || category === "Git" || category === "Docker") return "medium";
   return "read";
 }

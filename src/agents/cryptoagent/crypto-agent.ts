@@ -8,7 +8,7 @@
  *   - the TradingExecutionPipeline (review item 30): LLM proposals are
  *     advisory; deterministic validation + risk + policy execute.
  *
- * The LLM never routes an order directly: the paper_trade tool and the
+ * The LLM never routes an order directly: the binance_paper_trade tool and the
  * pipeline both pass through the deterministic gate chain.
  */
 
@@ -51,7 +51,7 @@ export function cryptoAgentDescriptor(mode: TradingExecutionMode = "paper"): Age
     defaultCapability: "tools",
     defaultStrategy: "react",
     capabilities: ["market", "trading", "analysis"],
-    requiredTools: ["paper_trade"],
+    requiredTools: ["binance_paper_trade"],
     allowedPolicies: [`trading:${mode}`],
     supportedStrategies: ["react", "plan_execute", "graph"],
     allowedPackIds: ["trading"],

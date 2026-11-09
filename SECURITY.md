@@ -12,25 +12,25 @@ contained by **isolation** (what code can physically reach), not merely by
 
 ## 1. Trust Surfaces
 
-| Surface                                | Runs where                   | Network              | Sees secrets              | Can mutate                       |
-| -------------------------------------- | ---------------------------- | -------------------- | ------------------------- | -------------------------------- |
-| `run_shell` (sandbox, default)         | Docker container             | none                 | no (masked)               | workspace (or write scope) only  |
-| Project/Ruby script runners            | same sandbox                 | none                 | no (masked)               | workspace (or write scope) only  |
-| `run_shell` / runners, sandbox **off** | **host**                     | yes                  | **yes**                   | **anything your user can**       |
-| Filesystem tools                       | host, via WorkspaceGuard     | no                   | no                        | workspace (or write scope) only  |
-| `search_code`, `sqlite_query`, LSP     | host, via WorkspaceGuard     | no                   | no                        | no                               |
-| `git`                                  | host                         | configured remotes   | uses your git credentials | repo + configured remotes        |
-| `github` (`gh`)                        | host                         | GitHub               | uses your `gh` token      | issues/PRs only (§6)             |
-| `docker` (trusted workspaces by default) | host daemon, root-equivalent | bridge egress by default in trusted workspaces | no | agent-labelled containers/images |
-| Browser (Playwright)                   | host Chromium                | yes                  | no                        | remote sites                     |
-| Web fetch                              | host                         | public internet only | no                        | no                               |
-| Webhook ingress                        | host                         | inbound              | HMAC secrets              | triggers agent handlers          |
-| MCP servers                            | host subprocesses            | depends              | depends                   | depends (trusted code)           |
-| External-agent subagents               | host subprocesses            | yes                  | API key passed via env    | anything the agent CLI can       |
-| Trading tools                          | host                         | exchanges            | exchange keys             | **financial** (orders)           |
-| Workspace settings (`.nexum/`, `.env`) | configure Nexum itself       | —                    | —                         | apply only once trusted (§8)     |
-| Marketplace plugins (`activate`)       | Node process, `--permission` | none (§7)            | no (own files, empty env) | nothing on disk; bridge only     |
-| Plugins registered in code             | host process                 | yes                  | yes                       | anything (trusted code)          |
+| Surface                                  | Runs where                   | Network                                        | Sees secrets              | Can mutate                       |
+| ---------------------------------------- | ---------------------------- | ---------------------------------------------- | ------------------------- | -------------------------------- |
+| `run_shell` (sandbox, default)           | Docker container             | none                                           | no (masked)               | workspace (or write scope) only  |
+| Project/Ruby script runners              | same sandbox                 | none                                           | no (masked)               | workspace (or write scope) only  |
+| `run_shell` / runners, sandbox **off**   | **host**                     | yes                                            | **yes**                   | **anything your user can**       |
+| Filesystem tools                         | host, via WorkspaceGuard     | no                                             | no                        | workspace (or write scope) only  |
+| `search_code`, `sqlite_query`, LSP       | host, via WorkspaceGuard     | no                                             | no                        | no                               |
+| `git`                                    | host                         | configured remotes                             | uses your git credentials | repo + configured remotes        |
+| `github` (`gh`)                          | host                         | GitHub                                         | uses your `gh` token      | issues/PRs only (§6)             |
+| `docker` (trusted workspaces by default) | host daemon, root-equivalent | bridge egress by default in trusted workspaces | no                        | agent-labelled containers/images |
+| Browser (Playwright)                     | host Chromium                | yes                                            | no                        | remote sites                     |
+| Web fetch                                | host                         | public internet only                           | no                        | no                               |
+| Webhook ingress                          | host                         | inbound                                        | HMAC secrets              | triggers agent handlers          |
+| MCP servers                              | host subprocesses            | depends                                        | depends                   | depends (trusted code)           |
+| External-agent subagents                 | host subprocesses            | yes                                            | API key passed via env    | anything the agent CLI can       |
+| Trading tools                            | host                         | exchanges                                      | exchange keys             | **financial** (orders)           |
+| Workspace settings (`.nexum/`, `.env`)   | configure Nexum itself       | —                                              | —                         | apply only once trusted (§8)     |
+| Marketplace plugins (`activate`)         | Node process, `--permission` | none (§7)                                      | no (own files, empty env) | nothing on disk; bridge only     |
+| Plugins registered in code               | host process                 | yes                                            | yes                       | anything (trusted code)          |
 
 ## 2. Filesystem boundary (WorkspaceGuard)
 
@@ -277,7 +277,7 @@ approve`, `nexum marketplace keys add`, runtime MCP approvals) re-stamp
 - **MCP servers, external-agent subagents, trading:** trusted host code.
   External agents (`claude -p`, `codex exec`, configured binaries) run as
   host processes with your account. The order-placing trading tool
-  (`paper_trade`) is marked financial and always requires confirmation;
+  (`binance_paper_trade`) is marked financial and always requires confirmation;
   market-data tools are read-only.
 
 ## 10. Policy engine

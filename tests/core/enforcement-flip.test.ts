@@ -130,7 +130,7 @@ describe("policy postures", () => {
   const del = def({ id: "delete_file", risk: "high", sideEffects: { filesystem: true } });
   const dockerish = def({ id: "docker", risk: "high" });
   const paperTrade = def({
-    id: "paper_trade",
+    id: "binance_paper_trade",
     risk: "critical",
     sideEffects: { financial: true, externalMutation: true },
     policy: { confirmation: "required" },
