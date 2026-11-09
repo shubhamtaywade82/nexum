@@ -11,3 +11,4 @@ dist/
 .devagent_history
 __pycache__
 .omc
+coverage/

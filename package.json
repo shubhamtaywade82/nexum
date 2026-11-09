@@ -46,6 +46,7 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs",
     "db:generate": "drizzle-kit generate",
     "test": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:coverage": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:server": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand tests/server tests/protocol",
     "test:docker": "NEXUM_DOCKER_TESTS=1 NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js tests/integration",
     "start": "node dist/ui/index.js",

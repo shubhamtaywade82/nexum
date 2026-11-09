@@ -73,7 +73,8 @@ jobs:
         run: npm run docs:build
 
       - name: Run Test Suite
-        run: npm test -- --runInBand
+        # Coverage is measured in the same single serial pass, and the global thresholds in jest.config.js fail it.
+        run: npm run test:coverage -- --runInBand
         env:
           CI: true
           SKIP_NETWORK_TESTS: true

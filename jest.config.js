@@ -31,6 +31,15 @@ export default {
   // forceExit ensures the Jest process exits cleanly.
   forceExit: true,
   extensionsToTreatAsEsm: [".ts", ".tsx"],
+  // Coverage is a CI gate over all of src, so untested files count against it. Thresholds sit about two
+  // points below the measured baseline (statements 78.4, branches 67.1, functions 79.4, lines 80.7 at
+  // the time of writing). Raise them as coverage grows; never lower them to make a change pass.
+  collectCoverageFrom: ["src/**/*.{ts,tsx}", "!src/**/*.d.ts"],
+  coverageDirectory: "coverage",
+  coverageReporters: ["text-summary", "lcov"],
+  coverageThreshold: {
+    global: { statements: 77, branches: 65, functions: 78, lines: 79 },
+  },
   // Source imports use explicit .js extensions (required for the real ESM
   // build); strip them back off so Jest's resolver finds the .ts source.
   moduleNameMapper: {
