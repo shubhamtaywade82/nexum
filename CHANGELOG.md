@@ -22,6 +22,11 @@
 - A paste moves the cursor past the text it inserted. Previously the next typed character landed before the paste.
 - The prompt's text, cursor and paste bursts live in `PromptSession` (`src/ui/input/prompt-session.ts`), tested without rendering. The App keeps key routing and rendering.
 
+### Agent: configuration follows its own workspace and trust store
+
+- An agent built with an explicit `config.workspaceRoot` now reloads that workspace's config on every turn. Previously each turn read the config of the process's current directory.
+- An agent built with an injected `trustStore` decides its workspace config with that store. Previously the constructor and each turn consulted the global store.
+
 ### Layering: the core plane depends on no plane above it
 
 - **Breaking for `@nemesis-oss/nexum/core` consumers:** the core entry point no longer re-exports runtime implementations (`DefaultAgentRuntime`, the strategies, `BudgetTracker` and the budget errors, the execution-context helpers, the registries). They are exported from `@nemesis-oss/nexum/runtime`, which is where they live.

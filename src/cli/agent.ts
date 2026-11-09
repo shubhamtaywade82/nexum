@@ -243,6 +243,8 @@ export class Agent {
 
   readonly workspaceRoot: string;
   private readonly mcpServerConfigs: McpCliServerConfig[];
+  /** The one trust store behind every config and workspace decision this agent makes (injected, else global). */
+  private readonly trustStore: WorkspaceTrustStore;
   /** >0 while a plan is executing, so its steps (which re-enter runUserMessage) never trigger the /plan hint. */
   private planDepth = 0;
   /** Times the user declined the "run as a plan?" offer this session; after two the offer stops. */
@@ -287,8 +289,12 @@ export class Agent {
   }
 
   constructor(opts: AgentOptions = {}) {
+    this.trustStore = opts.trustStore ?? WorkspaceTrustStore.global();
     const cfg = {
-      ...loadConfig(opts.config?.workspaceRoot ? { workspaceRoot: opts.config.workspaceRoot } : {}),
+      ...loadConfig({
+        trustStore: this.trustStore,
+        ...(opts.config?.workspaceRoot ? { workspaceRoot: opts.config.workspaceRoot } : {}),
+      }),
       ...(opts.config ?? {}),
     };
     this.workspaceRoot = cfg.workspaceRoot;
@@ -369,9 +375,7 @@ export class Agent {
     // WorkspaceManager, the single owner of that decision (docs/REBRANDING.md §4).
     // (the one-time .devagent → .nexum migration copies config.json: keep a
     // trusted workspace trusted across it, never trust an untrusted one)
-    // One trust store for every decision this agent makes about the workspace (the global one unless injected).
-    const trustStore = opts.trustStore ?? WorkspaceTrustStore.global();
-    const statePaths = preservingTrust(cfg.workspaceRoot, trustStore, () =>
+    const statePaths = preservingTrust(cfg.workspaceRoot, this.trustStore, () =>
       new WorkspaceManager(cfg.workspaceRoot).ensure(),
     );
 
@@ -385,7 +389,7 @@ export class Agent {
           // content: ignore them (servers needing approval then ask)
           approvals: cfg.workspaceTrust?.trusted
             ? new McpApprovalStore(join(statePaths.dir, "mcp-trust.json"), (write) =>
-                preservingTrust(cfg.workspaceRoot, trustStore, write),
+                preservingTrust(cfg.workspaceRoot, this.trustStore, write),
               )
             : undefined,
         })
@@ -430,7 +434,7 @@ export class Agent {
       provider: this.stack.provider,
       memory: this.memory,
       skillsHomeDir: opts.skillsHomeDir,
-      trustStore: opts.trustStore,
+      trustStore: this.trustStore,
       projectLanguage,
       executorModel: cfg.model ?? this.stack.provider.currentModel,
     });
@@ -812,12 +816,13 @@ export class Agent {
     const skillsNotice = this.learning.takeWithheldNotice();
     if (skillsNotice) this.emit("onStatus", skillsNotice);
 
+    // Reloaded every turn so a changed config takes effect, through this agent's own
+    // workspace and trust store (never the process cwd or the global store).
+    const turnConfig = loadConfig({ workspaceRoot: this.workspaceRoot, trustStore: this.trustStore });
     if (this.conversation.isEmpty()) {
-      const cfg = loadConfig();
-      this.conversation.init(cfg, learnings, activatedSkills);
+      this.conversation.init(turnConfig, learnings, activatedSkills);
     } else {
-      const cfg = loadConfig();
-      this.conversation.refreshSystemPrompt(cfg, learnings, activatedSkills);
+      this.conversation.refreshSystemPrompt(turnConfig, learnings, activatedSkills);
     }
 
     for (const skill of activatedSkills) {
