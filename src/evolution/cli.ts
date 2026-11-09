@@ -18,7 +18,7 @@ import { Episode } from "../learning/types.js";
 import { LessonStore } from "../learning/lesson-store.js";
 import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
 import { Provider } from "../models/adapters/provider.js";
-import { runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
+import { EVOLUTION_BENCHMARK_REPEATS, runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
 import { CandidateEvaluationOutcome, EvolutionEngine } from "./engine.js";
 import { ActivationResult, ClosedLoopDiagnosis, ClosedLoopEngine } from "./engine-v2.js";
 import type { ActivationEvidence } from "./delivery/activation-gate.js";
@@ -753,9 +753,9 @@ export async function runBenchmarkInDir(
   repoRoot: string,
   dir: string,
   categories: string[],
-  opts: { model?: string; apiKeys?: string[] } = {},
+  opts: { model?: string; apiKeys?: string[]; repeats?: number } = {},
 ): Promise<TaskExecutionResult[]> {
-  const { model, apiKeys } = opts;
+  const { model, apiKeys, repeats = EVOLUTION_BENCHMARK_REPEATS } = opts;
   const absRepoRoot = resolve(repoRoot);
   const tsxEntry = resolve(absRepoRoot, "node_modules", "tsx", "dist", "cli.mjs");
   if (!existsSync(tsxEntry)) {
@@ -783,6 +783,7 @@ export async function runBenchmarkInDir(
   const args = [tsxEntry, "src/benchmark/cli.ts", "--json", "--driver", "agent"];
   if (model) args.push("--model", model);
   for (const category of categories) args.push("--category", category);
+  args.push("--repeats", String(repeats));
   // The child's config puts OLLAMA_API_KEY first in its pool, so passing a rotated pool pins
   // this run to its own key while keeping the rest as 429 failover.
   const keyEnv = apiKeys?.length ? { OLLAMA_API_KEY: apiKeys[0], OLLAMA_API_KEYS: apiKeys.join(",") } : {};

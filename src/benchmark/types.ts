@@ -81,6 +81,8 @@ export interface BenchmarkResult {
   toolCalls?: number;
   /** Executed tool calls whose result carried an `error`. Same absence rule as `toolCalls`. */
   toolErrors?: number;
+  /** Which repeat of the case this run is. Present only when the run repeats each case. */
+  sample?: number;
   error?: string;
 }
 

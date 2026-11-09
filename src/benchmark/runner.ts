@@ -70,6 +70,12 @@ export interface RunBenchmarkOptions {
    * including a multi-turn agentic case's several sequential calls.
    */
   timeoutMs?: number;
+  /**
+   * Runs of each case. A single run is one sample: its pass or fail says little about a model that
+   * passes some runs and not others. Each repeat rebuilds the case list through the factory, so
+   * stateful cases do not carry state from one repeat into the next. Default 1.
+   */
+  repeats?: number;
   onProgress?: (event: BenchmarkProgressEvent) => void;
   /** Fires per tool call inside an agentic case, as it resolves — the only way
    * to see what's happening mid-case before it either finishes or times out. */
@@ -101,14 +107,20 @@ export async function runBenchmark(
     target.provider.setModel(target.model);
     target.provider.setTier(target.tier);
 
-    const allCases = typeof cases === "function" ? cases() : cases;
-    const caseList = opts.agentDriver ? allCases.filter((c) => c.kind === "agentic") : allCases;
+    const repeats = Math.max(1, Math.floor(opts.repeats ?? 1));
+    const plan: Array<{ testCase: BenchmarkCase; sample: number }> = [];
+    for (let sample = 0; sample < repeats; sample++) {
+      const allCases = typeof cases === "function" ? cases() : cases;
+      const caseList = opts.agentDriver ? allCases.filter((c) => c.kind === "agentic") : allCases;
+      for (const testCase of caseList) plan.push({ testCase, sample });
+    }
     const driver: BenchmarkResult["driver"] = opts.agentDriver ? "agent" : "model";
-    const total = caseList.length;
+    const total = plan.length;
     let modelUnavailableError: string | null = null;
 
-    for (let index = 0; index < caseList.length; index++) {
-      const testCase = caseList[index];
+    for (let index = 0; index < plan.length; index++) {
+      const { testCase, sample } = plan[index];
+      const sampleTag = repeats > 1 ? { sample } : {};
 
       if (modelUnavailableError) {
         results.push({
@@ -117,6 +129,7 @@ export async function runBenchmark(
           caseId: testCase.id,
           category: testCase.category,
           driver,
+          ...sampleTag,
           pass: false,
           latencyMs: 0,
           tokensPerSec: null,
@@ -164,6 +177,7 @@ export async function runBenchmark(
           caseId: testCase.id,
           category: testCase.category,
           driver,
+          ...sampleTag,
           latencyMs,
           ...outcome,
         });
@@ -190,6 +204,7 @@ export async function runBenchmark(
           caseId: testCase.id,
           category: testCase.category,
           driver,
+          ...sampleTag,
           pass: false,
           latencyMs,
           tokensPerSec: null,

@@ -1,6 +1,7 @@
 import {
   filterCasesByCategory,
   getAllBenchmarkCases,
+  EVOLUTION_BENCHMARK_REPEATS,
   runHarnessBenchmark,
   toTaskExecutionResult,
 } from "../../src/evolution/benchmarks.js";
@@ -107,9 +108,11 @@ describe("Evolution Benchmarks Bridge", () => {
       validate: (resp) => ({ pass: resp.message?.content === "pong" }),
     };
 
+    // The evolution measurement repeats every case; each repeat is one sample of the same task.
     const results = await runHarnessBenchmark(mockProvider, ["output-format"], [mockCase]);
-    expect(results).toHaveLength(1);
-    expect(results[0].taskId).toBe("test-ping");
-    expect(results[0].success).toBe(true);
+    expect(results).toHaveLength(EVOLUTION_BENCHMARK_REPEATS);
+    expect(results.map((r) => r.taskId)).toEqual(Array(EVOLUTION_BENCHMARK_REPEATS).fill("test-ping"));
+    expect(results.map((r) => r.sample)).toEqual([0, 1, 2]);
+    expect(results.every((r) => r.success)).toBe(true);
   });
 });

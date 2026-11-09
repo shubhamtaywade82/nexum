@@ -41,6 +41,7 @@ export function toTaskExecutionResult(res: BenchmarkResult): TaskExecutionResult
     // Recorded by the runner from the trajectory; undefined when it was not recorded.
     toolCalls: res.toolCalls,
     toolErrors: res.toolErrors,
+    ...(res.sample !== undefined ? { sample: res.sample } : {}),
     tokens: res.tokens,
     tokensEstimated: res.tokensEstimated,
     latencyMs: res.latencyMs,
@@ -49,11 +50,18 @@ export function toTaskExecutionResult(res: BenchmarkResult): TaskExecutionResult
   };
 }
 
+/**
+ * Runs per case in every evolution measurement. One run is one sample, and a candidate that wins one
+ * run out of one is not evidence. Baseline and candidate both use this count, so they are compared fairly.
+ */
+export const EVOLUTION_BENCHMARK_REPEATS = 3;
+
 /** Executes benchmark cases against a target provider and returns evaluation results. */
 export async function runHarnessBenchmark(
   provider: Provider,
   categories: string[] = [],
   cases?: BenchmarkCase[],
+  repeats: number = EVOLUTION_BENCHMARK_REPEATS,
 ): Promise<TaskExecutionResult[]> {
   const target: BenchmarkTarget = {
     model: provider.currentModel,
@@ -63,6 +71,6 @@ export async function runHarnessBenchmark(
 
   const caseList = cases ?? (await getAllBenchmarkCases());
   const selectedCases = filterCasesByCategory(caseList, categories);
-  const benchmarkResults = await runBenchmark([target], selectedCases, { timeoutMs: 30_000 });
+  const benchmarkResults = await runBenchmark([target], selectedCases, { timeoutMs: 30_000, repeats });
   return benchmarkResults.map(toTaskExecutionResult);
 }

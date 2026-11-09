@@ -52,7 +52,7 @@ import {
   MutationResult,
   MutationVerification,
 } from "../mutation/mutation-executor.js";
-import { TaskExecutionResult } from "../evaluator.js";
+import { TaskExecutionResult, flakyTaskIds } from "../evaluator.js";
 import { ImprovementTarget } from "../targets/target-engine.js";
 import { HarnessDiagnosis } from "../types.js";
 import { MutationScope } from "../mutation/mutation-scope.js";
@@ -62,6 +62,8 @@ export const EXPERIMENT_ARTIFACT_SCHEMA_VERSION = 1;
 /** Compact aggregate over one benchmark side (baseline or candidate). */
 export interface ExperimentMetricsSummary {
   runs: number;
+  /** Tasks whose repeated runs disagreed. Non-empty means the measurement itself is noisy. */
+  flakyTasks: string[];
   taskSuccessRate: number;
   verificationPassRate: number;
   toolErrorRate: number;
@@ -280,6 +282,7 @@ export function summarizeExperimentRuns(results: TaskExecutionResult[]): Experim
   const latency = results.reduce((acc, r) => acc + r.latencyMs, 0);
   return {
     runs: total,
+    flakyTasks: flakyTaskIds(results),
     taskSuccessRate: total === 0 ? 0 : successes / total,
     verificationPassRate: total === 0 ? 0 : verified / total,
     toolErrorRate: toolCalls === 0 ? 0 : toolErrors / toolCalls,
@@ -295,6 +298,7 @@ export function summarizeExperimentRuns(results: TaskExecutionResult[]): Experim
       loopAborted: r.loopAborted,
       toolCalls: r.toolCalls,
       toolErrors: r.toolErrors,
+      ...(r.sample !== undefined ? { sample: r.sample } : {}),
       tokens: r.tokens,
       latencyMs: r.latencyMs,
     })),

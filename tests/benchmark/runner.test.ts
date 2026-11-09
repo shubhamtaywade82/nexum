@@ -140,6 +140,49 @@ describe("runBenchmark — agentic cases", () => {
     expect(results[0].category).toBeUndefined();
   });
 
+  it("runs each case the requested number of times, rebuilding the case factory for each repeat", async () => {
+    const provider = new Provider({ tier: "local", model: "x" });
+    jest.spyOn(provider, "chat").mockResolvedValue(response("ok"));
+    let factoryCalls = 0;
+    const buildCases = (): BenchmarkCase[] => {
+      factoryCalls += 1;
+      return [
+        {
+          id: "repeated",
+          kind: "single",
+          description: "one turn",
+          messages: [{ role: "user", content: "hi" }],
+          tools: [],
+          validate: () => ({ pass: true }),
+        } as SingleTurnBenchmarkCase,
+      ];
+    };
+
+    const results = await runBenchmark([{ model: "qwen3:8b", tier: "local", provider }], buildCases, { repeats: 3 });
+
+    expect(results.map((r) => r.sample)).toEqual([0, 1, 2]);
+    expect(factoryCalls).toBe(3);
+  });
+
+  it("leaves results unlabelled by sample when the case runs once", async () => {
+    const provider = new Provider({ tier: "local", model: "x" });
+    jest.spyOn(provider, "chat").mockResolvedValue(response("ok"));
+    const [result] = await runBenchmark(
+      [{ model: "qwen3:8b", tier: "local", provider }],
+      [
+        {
+          id: "once",
+          kind: "single",
+          description: "one turn",
+          messages: [{ role: "user", content: "hi" }],
+          tools: [],
+          validate: () => ({ pass: true }),
+        } as SingleTurnBenchmarkCase,
+      ],
+    );
+    expect(result).not.toHaveProperty("sample");
+  });
+
   it("records the tool calls it executed and how many returned an error, from the trajectory", async () => {
     const provider = new Provider({ tier: "local", model: "x" });
     let call = 0;
