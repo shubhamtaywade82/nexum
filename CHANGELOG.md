@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Layering: the core plane depends on no plane above it
+
+- **Breaking for `@nemesis-oss/nexum/core` consumers:** the core entry point no longer re-exports runtime implementations (`DefaultAgentRuntime`, the strategies, `BudgetTracker` and the budget errors, the execution-context helpers, the registries). They are exported from `@nemesis-oss/nexum/runtime`, which is where they live.
+- Kernel contracts now live in core: `PlanStep`, `StepStatus`, `StepOutcome`, `HistoryEntry` (`core/plan`), `LoopDetector` (`core/loop`), `StrategyHooks` (`core/strategies`), and the `KernelEvent` and `BudgetMeter` ports. `EventSink.publish` accepts any event with a `type`, so the runtime's event unions are no longer a kernel dependency.
+- `tests/architecture/layering.test.ts` enforces the documented plane rules on the import graph.
+
 ### Sandbox image runs as a non-root user
 
 - `docker/nexum-sandbox` now sets `USER node`. The shell tool already passes the host uid at run time, so model-issued commands are unaffected.

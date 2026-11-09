@@ -45,24 +45,6 @@ export type {
   StrategyExecuteOptions,
 } from "./types.js";
 
-// Budgets
-export {
-  BudgetTracker,
-  WallClockBudgetError,
-  ToolCallBudgetError,
-  ModelCallBudgetError,
-  TokenBudgetError,
-  CostBudgetError,
-} from "../runtime/budget/budget-tracker.js";
-
-// Execution context
-export {
-  createExecutionContext,
-  TransientContextManager,
-  nullEventSink,
-  taskFrom,
-} from "../runtime/context/execution-context.js";
-
 // Tool layer
 export { ToolCatalog, type ToolCatalogEntry, type LegacyToolMetadata } from "../tools/gateway/tool-catalog.js";
 export {
@@ -169,7 +151,6 @@ export {
   type EventFamily,
   type KernelEventSink,
 } from "./events/families.js";
-export type { ExecutionEvent, DomainEvent, StateEvent, PresentationEvent } from "../runtime/events/index.js";
 export {
   type EventEnvelope,
   type PersistedEventRecord,
@@ -226,15 +207,7 @@ export {
   type LinkedSignal,
 } from "./cancellation/cancellation.js";
 
-// Strategies + runtime
-export type { ExecutionStrategy } from "../runtime/strategies/execution-strategy.js";
-export {
-  type StrategyRunRequest,
-  ReActStrategy,
-  runGuarded,
-  extractToolCalls,
-  type LoopOutcome,
-} from "../runtime/strategies/execution-strategy.js";
+// Strategy hooks: the product-side policy contract for the loop (a kernel contract; the runtime implements the loop).
 export type {
   StrategyHooks,
   StrategyTurnInfo,
@@ -244,15 +217,5 @@ export type {
   ToolObservationAction,
   ToolFailureInfo,
   ConfirmationRequest,
-} from "../runtime/strategies/strategy-hooks.js";
-export { PlanExecuteStrategy } from "../runtime/strategies/plan-execute-strategy.js";
-export {
-  AgentRegistry,
-  StrategyRegistry,
-  DefaultAgentRuntime,
-  defaultStrategyRegistry,
-  devAgentDescriptor,
-  runId,
-  type AgentDescriptor,
-  type DefaultAgentRuntimeOptions,
-} from "../runtime/agent/agent-runtime.js";
+} from "./strategies/strategy-hooks.js";
+export type { KernelEvent, BudgetMeter } from "./types.js";
