@@ -32,3 +32,13 @@ Model- or user-reachable (rich trigger phrasing so the model can reach for them)
 - **[code-review](./code-review/SKILL.md)**: Two-axis review of the diff since a fixed point: **Standards** (does it follow the repo's coding standards, plus a Fowler smell baseline?) and **Spec** (does it faithfully implement the originating issue/spec?), run as parallel sub-agents.
 - **[pr](./pr/SKILL.md)**: The shape a pull request body should take: a summary as the smallest visual that makes the change clear, before/after evidence that it works, and a merge-danger call (one-way or two-way door, plus blast radius).
 - **[wizard](./wizard/SKILL.md)**: Generate an interactive bash wizard that walks a human through steps only they can perform: provisioning infrastructure, setting up credentials or CI secrets, walking an unfamiliar third-party dashboard, or running a one-off migration or cutover.
+
+## Attribution
+
+The skills below are copied from [mattpocock/skills](https://github.com/mattpocock/skills) (`skills/engineering`), released under the MIT License, Copyright (c) 2026 Matt Pocock. Their directory names match upstream; their content may have been adapted for this repository, so upstream is the reference for the original wording.
+
+`ask-matt`, `code-review`, `codebase-design`, `diagnosing-bugs`, `domain-modeling`, `grill-with-docs`, `implement`, `implement-spec`, `improve-codebase-architecture`, `pr`, `prototype`, `research`, `retro`, `setup-matt-pocock-skills`, `tdd`, `to-spec`, `to-tickets`, `triage`, `wayfinder`, `wizard`.
+
+`pr` also reproduces parts of Dex Horthy's `show-me` skill; see [pr/CREDITS.md](./pr/CREDITS.md).
+
+The remaining directories (`crypto-futures-ta`, `dhanhq`, `nexum-architecture`) are written for this repository and are covered by its license.
