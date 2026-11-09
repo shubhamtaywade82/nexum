@@ -54,9 +54,16 @@ export function readVerified(guard: WorkspaceGuard, op: FsOperation, path: strin
 /**
  * Atomically replace the file `resolve()` approves, without following a
  * swapped parent: exclusive empty temp file → prove it sits at the approved
- * location → write through the descriptor → rename.
+ * location → write through the descriptor → `beforeCommit` → rename. A throw
+ * from `beforeCommit` abandons the write and removes the temp file; it is the
+ * hook compare-and-swap callers use to re-check the target just before it changes.
  */
-export async function writeVerifiedWith(resolve: () => string, label: string, content: string | Buffer): Promise<void> {
+export async function writeVerifiedWith(
+  resolve: () => string,
+  label: string,
+  content: string | Buffer,
+  beforeCommit?: () => Promise<void>,
+): Promise<void> {
   const resolved = resolve();
   const dir = dirname(resolved);
   const tmp = join(dir, `.${basename(resolved)}.tmp-${randomBytes(6).toString("hex")}`);
@@ -77,6 +84,7 @@ export async function writeVerifiedWith(resolve: () => string, label: string, co
     if (!written) await unlink(tmp).catch(() => {});
   }
   try {
+    await beforeCommit?.();
     await rename(tmp, resolved);
   } catch (e) {
     await unlink(tmp).catch(() => {});

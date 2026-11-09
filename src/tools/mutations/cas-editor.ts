@@ -203,6 +203,28 @@ export class CasEditor {
     return { absolute, content, hash };
   }
 
+  /**
+   * Throws ExpectedHashMismatchError unless the file still holds `expectedHash`.
+   * A file that does not exist is the empty content, which is what an edit computed
+   * against a missing file expects.
+   */
+  private async assertStillAt(relativePath: string, expectedHash: string): Promise<void> {
+    const current = await readVerifiedWith(
+      () => this.opts.guard.requireAllowed("write", relativePath),
+      relativePath,
+    ).then(
+      (buf) => buf.toString("utf8"),
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return "";
+        throw error;
+      },
+    );
+    const currentHash = contentHash(current);
+    if (currentHash !== expectedHash) {
+      throw new ExpectedHashMismatchError(relativePath, expectedHash, currentHash);
+    }
+  }
+
   /** dry-run (in memory) → apply atomically (temp + rename) → diff. */
   private async applyAtomic(
     relativePath: string,
@@ -215,7 +237,14 @@ export class CasEditor {
     const syntaxWarning = enforceEditSyntax(relativePath, before, after);
     if (!dryRun) {
       await mkdir(dirname(absolute), { recursive: true });
-      await writeVerifiedWith(() => this.opts.guard.requireAllowed("write", relativePath), relativePath, after);
+      await writeVerifiedWith(
+        () => this.opts.guard.requireAllowed("write", relativePath),
+        relativePath,
+        after,
+        // Compare-and-swap at the commit point: the target must still hold the version this edit was computed
+        // from. Without this, a change made after the read and before the rename was silently overwritten.
+        () => this.assertStillAt(relativePath, previousHash),
+      );
     }
     return {
       path: relativePath,

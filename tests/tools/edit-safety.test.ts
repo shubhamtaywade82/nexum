@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceGuard } from "../../src/core/fs/workspace-guard.js";
-import { CasEditor, contentHash } from "../../src/tools/mutations/cas-editor.js";
+import { CasEditor, contentHash, ExpectedHashMismatchError } from "../../src/tools/mutations/cas-editor.js";
 import { ApplyPatchTool, AppendTool, EditFileLinesTool, PatchTool } from "../../src/tools/edit-tools.js";
 import { WriteFileTool } from "../../src/tools/filesystem.js";
 import { checkEditSyntax } from "../../src/validation/edit-check.js";
@@ -66,6 +66,26 @@ describe("CAS tools", () => {
     expect(res.dry_run).toBe(true);
     expect(res.diff).toContain("+TWO");
     expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("one\ntwo\n");
+  });
+
+  it("refuses to overwrite a change another writer made between the read and the commit", async () => {
+    const dir = ws();
+    writeFileSync(join(dir, "a.txt"), "one\ntwo\n");
+    const expected = contentHash("one\ntwo\n");
+    const patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n";
+    // A concurrent writer lands after CasEditor has read and verified the file, and before it commits.
+    const guard = new WorkspaceGuard({ root: dir });
+    const requireAllowed = guard.requireAllowed.bind(guard);
+    let writeChecks = 0;
+    guard.requireAllowed = (op, path) => {
+      if (op === "write" && writeChecks++ === 0) writeFileSync(join(dir, "a.txt"), "concurrent edit\n");
+      return requireAllowed(op, path);
+    };
+
+    await expect(new CasEditor({ guard }).applyUnifiedDiff("a.txt", expected, patch)).rejects.toThrow(
+      ExpectedHashMismatchError,
+    );
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("concurrent edit\n");
   });
 
   it("edit_file_lines dry_run does not write; a real edit that breaks JSON is refused", async () => {
