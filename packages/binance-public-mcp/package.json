@@ -1,0 +1,21 @@
+{
+  "name": "binance-public-mcp",
+  "version": "1.0.0",
+  "description": "Credential-free Binance USD-M Futures Public Market Data MCP Server",
+  "type": "module",
+  "bin": {
+    "binance-public-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
