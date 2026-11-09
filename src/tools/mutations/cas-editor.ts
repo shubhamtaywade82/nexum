@@ -21,6 +21,7 @@
  * find/replace remain convenience wrappers on top of this module.
  */
 
+import { withFileLock } from "./file-lock.js";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -99,7 +100,7 @@ export class CasEditor {
    * lines and returns the new lines; the current file must still hash to
    * `expectedHash` when the edit applies.
    */
-  async editLines(
+  private async editLinesUnlocked(
     relativePath: string,
     expectedHash: string,
     edit: (lines: string[]) => string[],
@@ -128,7 +129,7 @@ export class CasEditor {
    * content; `expectedHash` pins the version the diff was generated
    * against.
    */
-  async applyUnifiedDiff(
+  private async applyUnifiedDiffUnlocked(
     relativePath: string,
     expectedHash: string,
     patch: string,
@@ -153,7 +154,11 @@ export class CasEditor {
    * Replace whole-file content with CAS (the write primitive used by
    * write_file when it wants version safety).
    */
-  async writeContent(relativePath: string, expectedHash: string | null, nextContent: string): Promise<MutationResult> {
+  private async writeContentUnlocked(
+    relativePath: string,
+    expectedHash: string | null,
+    nextContent: string,
+  ): Promise<MutationResult> {
     const absolute = this.opts.guard.requireAllowed("write", relativePath);
     let current = "";
     if (expectedHash !== null) {
@@ -187,6 +192,37 @@ export class CasEditor {
   }
 
   // ── internals ──────────────────────────────────────────────────────────
+
+  /**
+   * Each write runs under the file's lock, so Nexum's own edits to one file are serialized. The commit-time
+   * hash check still applies: it is what catches a writer outside Nexum.
+   */
+  editLines(
+    relativePath: string,
+    expectedHash: string,
+    edit: (lines: string[]) => string[],
+    opts: { dryRun?: boolean } = {},
+  ): Promise<MutationResult> {
+    return this.locked(relativePath, () => this.editLinesUnlocked(relativePath, expectedHash, edit, opts));
+  }
+
+  applyUnifiedDiff(
+    relativePath: string,
+    expectedHash: string,
+    patch: string,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<MutationResult> {
+    return this.locked(relativePath, () => this.applyUnifiedDiffUnlocked(relativePath, expectedHash, patch, opts));
+  }
+
+  writeContent(relativePath: string, expectedHash: string | null, nextContent: string): Promise<MutationResult> {
+    return this.locked(relativePath, () => this.writeContentUnlocked(relativePath, expectedHash, nextContent));
+  }
+
+  private locked<T>(relativePath: string, fn: () => Promise<T>): Promise<T> {
+    const target = this.opts.guard.requireAllowed("write", relativePath);
+    return withFileLock(target, fn);
+  }
 
   private async readIfCurrent(
     relativePath: string,

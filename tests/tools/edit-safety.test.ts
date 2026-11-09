@@ -68,6 +68,22 @@ describe("CAS tools", () => {
     expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("one\ntwo\n");
   });
 
+  it("lets exactly one of several concurrent edits from the same version land", async () => {
+    const dir = ws();
+    writeFileSync(join(dir, "a.txt"), "one\ntwo\n");
+    const expected = contentHash("one\ntwo\n");
+    const patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n";
+    const editor = new CasEditor({ guard: new WorkspaceGuard({ root: dir }) });
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, () => editor.applyUnifiedDiff("a.txt", expected, patch)),
+    );
+
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected")).toHaveLength(4);
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("one\nTWO\n");
+  });
+
   it("refuses to overwrite a change another writer made between the read and the commit", async () => {
     const dir = ws();
     writeFileSync(join(dir, "a.txt"), "one\ntwo\n");
