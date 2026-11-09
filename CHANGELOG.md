@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Sandbox image runs as a non-root user
+
+- `docker/nexum-sandbox` now sets `USER node`. The shell tool already passes the host uid at run time, so model-issued commands are unaffected.
+- **Breaking for images built FROM `nexum-sandbox`:** a `RUN` step now runs as `node` unless the derived Dockerfile says `USER root`. Add that line before any step that needs root (package installs, writes outside the workspace).
+
+### Trust covers skills, and learned skills keep trust
+
+- A workspace's `.nexum/skills` are part of its trust digest. Workspace skills load only once the workspace is trusted, so an existing trusted workspace with skills needs one `nexum trust` after upgrading. Until then its workspace settings are withheld as well, down to the safe keys.
+- Nexum's own writes into the skill tree (learned skills, the legacy migration) keep an existing trust decision and never create one.
+
 ### Evolution: one champion per cycle
 
 - `--parallel n` now runs n candidate attempts concurrently and selects one champion. The champion is chosen only from attempts that passed the engine's own eligibility gate, ranked by development deltas (capability, then reliability, then efficiency), with a deterministic tie-break on slot. Held-out results can only veto an attempt; they never rank one.

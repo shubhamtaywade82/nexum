@@ -219,7 +219,10 @@ describeIfDocker("sandbox boundary against a real Docker daemon", () => {
       "builds without network",
       async () => {
         mkdirSync(join(root, "img"), { recursive: true });
-        writeFileSync(join(root, "img", "Dockerfile"), `FROM ${IMAGE}\nRUN node -e "${probe}" > /probe.txt\n`);
+        writeFileSync(
+          join(root, "img", "Dockerfile"),
+          `FROM ${IMAGE}\nUSER root\nRUN node -e "${probe}" > /probe.txt\n`,
+        );
         const build = await tool().call({ args: ["build", "--no-cache", "-t", "nx-it-img", "img"] });
         expect(build.exitCode).toBe(0);
         const out = await tool().call({ args: ["run", "--rm", "nx-it-img", "cat", "/probe.txt"] });
