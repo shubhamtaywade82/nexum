@@ -5,7 +5,7 @@
  * views only change what is observed, never what is running.
  */
 
-import { PlanStep } from "../orchestration/types.js";
+import { PlanStep } from "../core/plan/plan-contracts.js";
 import type { McpElicitationRequest } from "../core/user-input.js";
 
 /** The always-alive actors. Every subsystem is one of these. */

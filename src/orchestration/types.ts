@@ -1,49 +1,11 @@
-export type StepStatus =
-  | "pending"
-  | "analyzing"
-  | "planning"
-  | "implementing"
-  | "testing"
-  | "reviewing"
-  | "completed"
-  | "failed"
-  | "skipped"
-  | "blocked"
-  | "paused"
-  | "cancelled"
-  | "rejected"
-  | "rolledback"
-  | "running"; // running kept for compatibility if needed
+import type { HistoryEntry, PlanStep, StepOutcome } from "../core/plan/plan-contracts.js";
 
-export interface PlanStep {
-  id: string;
-  description: string;
-  status: StepStatus;
-  dependencies: string[];
-  rollbackCommand?: string;
-  /**
-   * Shell command that exits 0 only when this step is actually done (e.g. a
-   * focused test run). When present, the step completes only through the
-   * verification gate — the model saying it finished is not enough.
-   */
-  verify?: string;
-  retryCount: number;
-  priority?: "low" | "medium" | "high" | "critical";
-}
-
-export type StepOutcome =
-  | { kind: "success"; output: Record<string, unknown> }
-  | { kind: "retryable"; error: string }
-  | { kind: "blocking"; error: string };
+// The plan-step contracts moved to core/plan (the runtime depends on them, so they cannot live in
+// the control plane). Re-exported here so existing control-plane imports keep working.
+export type { HistoryEntry, PlanStep, StepOutcome, StepStatus } from "../core/plan/plan-contracts.js";
 
 export interface StepRunner {
   run(step: PlanStep): Promise<StepOutcome>;
-}
-
-export interface HistoryEntry {
-  stepId: string;
-  outcome: StepOutcome;
-  at: number;
 }
 
 export interface Planner {

@@ -19,7 +19,7 @@
 import type { ChatMessage, OllamaToolSchema } from "../../models/adapters/provider.js";
 import { Capability } from "../../models/catalog.js";
 import type { ExecutionResult, ExecutionContext, ExecutionStatus, StrategyName } from "../../core/types.js";
-import { LoopDetector } from "../../orchestration/loop-detector.js";
+import { LoopDetector } from "../../core/loop/loop-detector.js";
 import type { PreparedToolCall, StrategyHooks, StrategyModelCallOptions } from "./strategy-hooks.js";
 import { CriticService, type CriticSeverity } from "../critic/critic.js";
 import { SelfCorrectionLoop, type SelfCorrectionResult } from "../critic/reflection.js";
