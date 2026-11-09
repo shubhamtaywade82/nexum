@@ -26,6 +26,7 @@ import type { ChatMessage } from "../../models/adapters/provider.js";
 import type { ModelGateway } from "../../models/gateway/model-gateway.js";
 import { extractJson } from "../../rag/reranker.js";
 import { builtinRubrics, criterionWeight, normalizeScore, type Rubric } from "./rubric.js";
+import { screenJudgeInputs } from "./injection-screen.js";
 import {
   InMemoryJudgeHistory,
   JudgeVerdict,
@@ -138,13 +139,16 @@ export class LlmJudge {
     const model = target.labelOf(response);
     const criteriaScores = this.scoreCriteria(rubric, raw, scaleMax);
     const overall = weightedOverall(rubric, criteriaScores);
+    // A judged text that instructs the judge is not evidence of quality, whatever the scores say.
+    const injectionFindings = screenJudgeInputs(subject);
     const verdict: JudgeVerdict = {
       id: newVerdictId(),
       rubricId,
       subjectDigest: subjectDigest([subject.input, subject.output, subject.context, subject.reference]),
       criteriaScores,
       overall,
-      pass: overall >= passThreshold,
+      pass: overall >= passThreshold && injectionFindings.length === 0,
+      ...(injectionFindings.length > 0 ? { injectionFindings } : {}),
       explanation: raw.explanation?.trim() || "(no explanation provided)",
       judgeModel: model,
       ts: Date.now(),
