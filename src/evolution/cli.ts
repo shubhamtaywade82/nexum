@@ -1597,18 +1597,19 @@ async function executeMonitorCommand(root: string, values: Record<string, unknow
     // closed-loop engine, which drives ACTIVE → REGRESSED → ROLLBACK
     // automatically; with only --harness it is reporting-only.
     const stateDir = workspaceStateDir(findWorkspaceRoot(process.cwd()));
-    const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
+    // The bench is the single assembly point for the engine; the monitor only adds its own telemetry view.
+    const bench = openEvolutionBench(stateDir);
     const monitor = new ActivationMonitor();
     let engine: ClosedLoopEngine | null = null;
     if (experimentId) {
-      const controller = new ExperimentController({ store: experimentStore });
-      engine = new ClosedLoopEngine({ experimentController: controller, monitor });
+      const controller = new ExperimentController({ store: bench.experiments });
+      engine = bench.engineSharing(controller, { monitor });
       const hydrated = controller.hydrate(experimentId);
       if (!hydrated) {
         console.error(
           `[Monitor] Unknown experiment "${experimentId}" in ${join(stateDir, "experiments.db")} — run "nexum evolve --experiments" to list ids.`,
         );
-        experimentStore.close();
+        bench.close();
         return;
       }
       console.log(
@@ -1620,7 +1621,7 @@ async function executeMonitorCommand(root: string, values: Record<string, unknow
       intervalMs = parseInt(values.interval as string, 10);
       if (Number.isNaN(intervalMs) || intervalMs <= 0) {
         console.error("--interval must be a positive number of milliseconds.");
-        experimentStore.close();
+        bench.close();
         return;
       }
     }
@@ -1636,7 +1637,7 @@ async function executeMonitorCommand(root: string, values: Record<string, unknow
       await service.start();
     } finally {
       process.removeListener("SIGINT", onSigint);
-      experimentStore.close();
+      bench.close();
     }
     return;
   }
