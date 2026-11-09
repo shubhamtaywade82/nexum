@@ -232,12 +232,9 @@ export class WorkspaceGuard {
       };
     }
 
-    // a hardlink is the secret under another name: content-revealing ops on one are sensitive too
-    if (
-      this.opts.protectSensitiveReads === true &&
-      CONTENT_REVEALING.includes(op) &&
-      this.isHardlinkedSecret(resolvedPath)
-    ) {
+    // a hardlink is the secret under another name: a write through it changes the secret itself,
+    // and a content-revealing read exposes it. Same gate as the path check above.
+    if (sensitiveGated && this.isHardlinkedSecret(resolvedPath)) {
       return {
         allowed: false,
         code: "sensitive_path",

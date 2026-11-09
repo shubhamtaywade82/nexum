@@ -9,3 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # it's the blast radius for anything a model-issued command runs.
 
 WORKDIR /workspace
+
+# Model-issued commands run as this unprivileged user. The shell tool also passes the host uid at run time
+# (--user), which takes precedence. An image built FROM this one whose RUN steps need root must say so
+# with its own `USER root` line.
+USER node

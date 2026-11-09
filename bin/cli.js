@@ -5,6 +5,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
+// package.json "engines" declares Node >= 22, but npm only warns on other runtimes.
+// Fail here with the reason instead of crashing later on an unsupported API.
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+if (nodeMajor < 22) {
+  process.stderr.write(`nexum requires Node.js 22 or newer (this is ${process.versions.node}).\n`);
+  process.exit(1);
+}
+
 // --yolo: approve every destructive tool call without prompting (sets
 // NEXUM_AUTO_APPROVE, same as the env var). Stripped from argv before command
 // parsing so it can appear anywhere, e.g. `nexum --yolo "task"` or `nexum fix --yolo "issue"`.

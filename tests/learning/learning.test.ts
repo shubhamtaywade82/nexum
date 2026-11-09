@@ -160,6 +160,24 @@ describe("SkillSynthesizer", () => {
     expect(store.promotable()).toHaveLength(0);
   });
 
+  it("routes every write and delete in the skill tree through the guard", () => {
+    const guard = jest.fn((write: () => void) => write());
+    const result = {
+      lessons: [{ text: "Always delete node_modules before building", tags: ["build"], kind: "procedure" as const }],
+    };
+    store.absorb(result, "ep-1", 0.4);
+    store.absorb(result, "ep-2", 0.4);
+    store.absorb(result, "ep-3", 0.4);
+    const synth = new SkillSynthesizer(dir, store, silent, guard);
+
+    synth.synthesize();
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(dir, ".nexum", "skills", "learned-build", "SKILL.md"))).toBe(true);
+
+    synth.prune([{ skillId: "learned-build", useCount: 6, successCount: 1, lastUsedAt: Date.now() }]);
+    expect(guard).toHaveBeenCalledTimes(2);
+  });
+
   it("demotes a learned skill whose measured success rate is poor", () => {
     const result = {
       lessons: [{ text: "Always delete node_modules before building", tags: ["build"], kind: "procedure" as const }],

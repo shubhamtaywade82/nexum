@@ -6,7 +6,7 @@ import { EpisodeRecorder } from "./episode-recorder.js";
 import { gradeEpisode } from "./grader.js";
 import { LessonStore } from "./lesson-store.js";
 import { reflect } from "./reflector.js";
-import { SkillSynthesizer } from "./skill-synthesizer.js";
+import { SkillSynthesizer, SkillTreeWrite } from "./skill-synthesizer.js";
 import { Episode } from "./types.js";
 import { workspaceStateDir } from "../platform/paths.js";
 
@@ -17,6 +17,8 @@ export interface LearningEngineOptions {
   /** Reflect on at most every Nth episode when the episode was a clean success. */
   reflectSuccessEveryN?: number;
   logger?: Pick<Console, "info" | "warn">;
+  /** Guards Nexum's own writes into the workspace skill tree (see SkillTreeWrite). */
+  guardSkillWrite?: SkillTreeWrite;
   /**
    * Optional experience-layer ingestor; called once per persisted episode, on
    * the serialized `inFlight` chain (so it never blocks the user-facing turn
@@ -53,7 +55,7 @@ export class LearningEngine {
     const dbPath = join(workspaceStateDir(opts.workspaceRoot), "lessons.db");
     mkdirSync(dirname(dbPath), { recursive: true });
     this.lessons = new LessonStore(dbPath);
-    this.synthesizer = new SkillSynthesizer(opts.workspaceRoot, this.lessons, opts.logger);
+    this.synthesizer = new SkillSynthesizer(opts.workspaceRoot, this.lessons, opts.logger, opts.guardSkillWrite);
     this.reflectSuccessEveryN = opts.reflectSuccessEveryN ?? 4;
     this.logger = opts.logger ?? console;
     this.onEpisodePersisted = opts.onEpisodePersisted;

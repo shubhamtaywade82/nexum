@@ -1,6 +1,7 @@
 import { Provider, ChatMessage, ChatResponse, Tier } from "../models/adapters/provider.js";
 import {
   AgenticBenchmarkCase,
+  AgenticToolCall,
   AgenticTrajectory,
   BenchmarkCase,
   BenchmarkResult,
@@ -21,6 +22,13 @@ export interface CaseRunOutcome {
   tokensEstimated: boolean;
   /** Models the harness actually called. Only the agent driver sets it: its router may pick models besides the target. */
   modelsUsed?: string[];
+  toolCalls?: number;
+  toolErrors?: number;
+}
+
+/** A tool result is an error when it carries a non-empty `error` string (the convention every case tool follows). */
+export function countToolErrors(calls: AgenticToolCall[]): number {
+  return calls.filter((call) => typeof call.result.error === "string" && call.result.error.length > 0).length;
 }
 
 /**
@@ -62,6 +70,12 @@ export interface RunBenchmarkOptions {
    * including a multi-turn agentic case's several sequential calls.
    */
   timeoutMs?: number;
+  /**
+   * Runs of each case. A single run is one sample: its pass or fail says little about a model that
+   * passes some runs and not others. Each repeat rebuilds the case list through the factory, so
+   * stateful cases do not carry state from one repeat into the next. Default 1.
+   */
+  repeats?: number;
   onProgress?: (event: BenchmarkProgressEvent) => void;
   /** Fires per tool call inside an agentic case, as it resolves — the only way
    * to see what's happening mid-case before it either finishes or times out. */
@@ -93,14 +107,20 @@ export async function runBenchmark(
     target.provider.setModel(target.model);
     target.provider.setTier(target.tier);
 
-    const allCases = typeof cases === "function" ? cases() : cases;
-    const caseList = opts.agentDriver ? allCases.filter((c) => c.kind === "agentic") : allCases;
+    const repeats = Math.max(1, Math.floor(opts.repeats ?? 1));
+    const plan: Array<{ testCase: BenchmarkCase; sample: number }> = [];
+    for (let sample = 0; sample < repeats; sample++) {
+      const allCases = typeof cases === "function" ? cases() : cases;
+      const caseList = opts.agentDriver ? allCases.filter((c) => c.kind === "agentic") : allCases;
+      for (const testCase of caseList) plan.push({ testCase, sample });
+    }
     const driver: BenchmarkResult["driver"] = opts.agentDriver ? "agent" : "model";
-    const total = caseList.length;
+    const total = plan.length;
     let modelUnavailableError: string | null = null;
 
-    for (let index = 0; index < caseList.length; index++) {
-      const testCase = caseList[index];
+    for (let index = 0; index < plan.length; index++) {
+      const { testCase, sample } = plan[index];
+      const sampleTag = repeats > 1 ? { sample } : {};
 
       if (modelUnavailableError) {
         results.push({
@@ -109,6 +129,7 @@ export async function runBenchmark(
           caseId: testCase.id,
           category: testCase.category,
           driver,
+          ...sampleTag,
           pass: false,
           latencyMs: 0,
           tokensPerSec: null,
@@ -156,6 +177,7 @@ export async function runBenchmark(
           caseId: testCase.id,
           category: testCase.category,
           driver,
+          ...sampleTag,
           latencyMs,
           ...outcome,
         });
@@ -182,6 +204,7 @@ export async function runBenchmark(
           caseId: testCase.id,
           category: testCase.category,
           driver,
+          ...sampleTag,
           pass: false,
           latencyMs,
           tokensPerSec: null,
@@ -240,6 +263,9 @@ async function runSingleTurn(target: BenchmarkTarget, testCase: SingleTurnBenchm
     reason,
     tokensPerSec: estimateTokensPerSec(response, Date.now() - start),
     ...usageFor(response),
+    // A single turn emits tool calls but executes none.
+    toolCalls: 0,
+    toolErrors: 0,
   };
 }
 
@@ -310,6 +336,8 @@ async function runAgenticTurn(
     tokensPerSec: lastResponse ? estimateTokensPerSec(lastResponse, Date.now() - start) : null,
     tokens,
     tokensEstimated,
+    toolCalls: toolCallsMade.length,
+    toolErrors: countToolErrors(toolCallsMade),
   };
 }
 

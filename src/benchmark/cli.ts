@@ -31,8 +31,15 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
       json: { type: "boolean" },
       // "agent" runs agentic cases through the harness's own Agent; "model" (default) calls the model directly.
       driver: { type: "string" },
+      // Runs per case. One run is one sample; the evolution loop uses several so a flaky case shows as flaky.
+      repeats: { type: "string" },
     },
   });
+  const repeats = values.repeats === undefined ? 1 : Number(values.repeats);
+  if (!Number.isInteger(repeats) || repeats < 1) {
+    console.error(`--repeats must be a positive integer (got "${values.repeats}").`);
+    return 2;
+  }
   const driverName = values.driver ?? "model";
   if (driverName !== "model" && driverName !== "agent") {
     console.error(`Unknown --driver "${driverName}" (expected "model" or "agent").`);
@@ -111,6 +118,7 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
 
   const results = await runBenchmark(targets, buildCases, {
     timeoutMs,
+    repeats,
     agentDriver,
     onProgress: values.json
       ? undefined

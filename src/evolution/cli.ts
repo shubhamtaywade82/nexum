@@ -12,17 +12,19 @@ import { parseArgs } from "node:util";
 import { promisify } from "node:util";
 import { BenchmarkResult } from "../benchmark/types.js";
 import { loadConfig, CliConfig } from "../cli/config.js";
+import { workspaceSkillGate, WorkspaceTrustStore } from "../cli/workspace-trust.js";
+import { loadMutationSkillGuidance } from "./mutation/skill-guidance.js";
 import { Episode } from "../learning/types.js";
 import { LessonStore } from "../learning/lesson-store.js";
 import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
 import { Provider } from "../models/adapters/provider.js";
-import { runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
+import { EVOLUTION_BENCHMARK_REPEATS, runHarnessBenchmark, toTaskExecutionResult } from "./benchmarks.js";
 import { CandidateEvaluationOutcome, EvolutionEngine } from "./engine.js";
 import { ActivationResult, ClosedLoopDiagnosis, ClosedLoopEngine } from "./engine-v2.js";
 import type { ActivationEvidence } from "./delivery/activation-gate.js";
 import type { ChampionCandidate } from "./parallel/champion.js";
 import { runParallelCycle, type SlotRun } from "./parallel/orchestrator.js";
-import { ExperienceStore } from "./experience/experience-store.js";
+import { openEvolutionBench } from "./bench.js";
 import {
   buildExperimentArtifact,
   writeExperimentArtifact,
@@ -630,18 +632,15 @@ function traceSummary(entry: MutationTraceEntry): string {
   return `tool ${entry.name}(${JSON.stringify(entry.args).slice(0, 120)}) → ${status}`;
 }
 
-const MATT_POCOCK_ENGINEERING_DISCIPLINE = [
-  "Engineering Disciplines (Matt Pocock Skills / Deep Modules):",
-  "- Root Cause Locality (diagnosing-bugs & codebase-design): Trace the symptom to the implementing seam and fix it at the source so all callers succeed without changing caller signatures.",
-  "- Minimal Vertical Slice (tdd & implement): Propose ONLY the smallest atomic edit needed to solve the symptom. No speculative abstractions, wrappers, or extra parameters.",
-  "- Deep Modules: Keep interfaces small and implementations robust; hide complexity rather than leaking it to callers.",
-  "- Behavior Preservation (code-review): Ensure existing working functionality remains completely intact.",
-].join("\n");
-
 export function buildMutationStrategy(
   name: string | undefined,
   cfg: CliConfig,
-  opts: { maxTurns?: number; onTrace?: (entry: MutationTraceEntry) => void } = {},
+  opts: {
+    maxTurns?: number;
+    onTrace?: (entry: MutationTraceEntry) => void;
+    /** Process guidance for the agent, from the repository's skill files (see loadMutationSkillGuidance). */
+    skillGuidance?: string;
+  } = {},
 ): MutationStrategy | null {
   if (!name || name === "heuristic") return null;
   const chat = () => chatClientFromProvider(providerFromConfig(cfg));
@@ -651,7 +650,7 @@ export function buildMutationStrategy(
         runtime: new DefaultAgentRuntime(),
         modelGateway: modelGatewayFromChatClient(chat()),
         onTrace: opts.onTrace,
-        systemPromptExtras: MATT_POCOCK_ENGINEERING_DISCIPLINE,
+        ...(opts.skillGuidance ? { systemPromptExtras: opts.skillGuidance } : {}),
         ...(opts.maxTurns ? { maxTurns: opts.maxTurns } : {}),
       }),
     });
@@ -754,9 +753,9 @@ export async function runBenchmarkInDir(
   repoRoot: string,
   dir: string,
   categories: string[],
-  opts: { model?: string; apiKeys?: string[] } = {},
+  opts: { model?: string; apiKeys?: string[]; repeats?: number } = {},
 ): Promise<TaskExecutionResult[]> {
-  const { model, apiKeys } = opts;
+  const { model, apiKeys, repeats = EVOLUTION_BENCHMARK_REPEATS } = opts;
   const absRepoRoot = resolve(repoRoot);
   const tsxEntry = resolve(absRepoRoot, "node_modules", "tsx", "dist", "cli.mjs");
   if (!existsSync(tsxEntry)) {
@@ -784,6 +783,7 @@ export async function runBenchmarkInDir(
   const args = [tsxEntry, "src/benchmark/cli.ts", "--json", "--driver", "agent"];
   if (model) args.push("--model", model);
   for (const category of categories) args.push("--category", category);
+  args.push("--repeats", String(repeats));
   // The child's config puts OLLAMA_API_KEY first in its pool, so passing a rotated pool pins
   // this run to its own key while keeping the rest as 429 failover.
   const keyEnv = apiKeys?.length ? { OLLAMA_API_KEY: apiKeys[0], OLLAMA_API_KEYS: apiKeys.join(",") } : {};
@@ -906,6 +906,11 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   const rawRepo = (values.repo as string | undefined) ?? ".";
   const repoRoot = resolve(root, rawRepo);
   const cfg = loadConfig();
+  // The agent is told the process in the skill files of the repository it mutates, and only once that
+  // repository is trusted: its skills are repository content, which must not steer the model before trust.
+  const skillGuidance = loadMutationSkillGuidance(repoRoot, {
+    workspaceTrusted: workspaceSkillGate(repoRoot, WorkspaceTrustStore.global()).allowed,
+  });
   // --agent is an alias for --strategy agent; an explicit --strategy wins.
   // In cloud environments or when configured via env, default to the production engineering agent.
   const defaultStrategy = process.env.NEXUM_MUTATION_STRATEGY ?? (cfg.tier === "cloud" ? "agent" : undefined);
@@ -991,11 +996,11 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     );
   }
   const stateDir = workspaceStateDir(root);
-  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
+  const bench = openEvolutionBench(stateDir);
   // v2.3.2: the mutate path PERSISTS experiment provenance. Without a
   // store-backed controller the full lifecycle ran in-memory and was lost at
   // process exit, while --experiments read an empty database.
-  const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
+  const experimentStore = bench.experiments;
   const experimentDir = (values["experiment-dir"] as string | undefined) ?? join(stateDir, "experiments");
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
   const parentRef = (values.parent as string) || "HEAD";
@@ -1030,15 +1035,14 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       { ...cfg, apiKeys: keys, ...(keys[0] ? { apiKey: keys[0] } : {}) },
       {
         maxTurns,
+        skillGuidance: skillGuidance.text,
         onTrace: mutationTraceWriter(
           join(experimentDir, `mutation-${runStamp}${slotSuffix(slot)}.trace.jsonl`),
           parallel > 1 ? `c${slot} ` : "",
         ),
       },
     );
-    return new ClosedLoopEngine({
-      experienceStore,
-      experimentController: sharedExperiments,
+    return bench.engineSharing(sharedExperiments, {
       ...(registry ? { registry } : {}),
       ...(role === "solo" && activationController ? { runtimeActivation: activationController } : {}),
       generalizationPolicy: policy,
@@ -1072,9 +1076,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   // receives only the selected champion. It has no mutation executor, because it never generates.
   const coordinator =
     parallel > 1
-      ? new ClosedLoopEngine({
-          experienceStore,
-          experimentController: sharedExperiments,
+      ? bench.engineSharing(sharedExperiments, {
           ...(registry ? { registry } : {}),
           ...(activationController ? { runtimeActivation: activationController } : {}),
           generalizationPolicy: policy,
@@ -1378,8 +1380,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       }
     }
   } finally {
-    experienceStore.close();
-    experimentStore.close();
+    bench.close();
     registry?.close();
   }
 }
@@ -1534,12 +1535,9 @@ async function executeAutonomousCommand(root: string, values: Record<string, unk
     return;
   }
   const stateDir = workspaceStateDir(root);
-  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
-  const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
-  const engine = new ClosedLoopEngine({
-    experienceStore,
-    experimentController: new ExperimentController({ store: experimentStore }),
-  });
+  const bench = openEvolutionBench(stateDir);
+  const experienceStore = bench.experience;
+  const engine = bench.engine();
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
 
   try {
@@ -1577,8 +1575,7 @@ async function executeAutonomousCommand(root: string, values: Record<string, unk
     console.log("");
     console.log(formatExperienceText(engine.digestExperience()));
   } finally {
-    experienceStore.close();
-    experimentStore.close();
+    bench.close();
   }
 }
 
@@ -1659,9 +1656,9 @@ async function executeMonitorCommand(root: string, values: Record<string, unknow
 
 async function executeClosedLoopCommand(root: string, values: Record<string, unknown>): Promise<void> {
   const stateDir = workspaceStateDir(root);
-  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
-  const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
-  const engine = new ClosedLoopEngine({ experienceStore });
+  const bench = openEvolutionBench(stateDir);
+  const experimentStore = bench.experiments;
+  const engine = bench.engine();
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
 
   try {
@@ -1688,8 +1685,7 @@ async function executeClosedLoopCommand(root: string, values: Record<string, unk
       console.log(formatTargetText(observation));
     }
   } finally {
-    experienceStore.close();
-    experimentStore.close();
+    bench.close();
   }
 }
 

@@ -12,12 +12,24 @@ export type Unsubscribe = () => Promise<void>;
  * only (no backlog) — durability lives in Postgres (execution_events),
  * this class is purely the live fan-out layer.
  */
+export interface RedisEventBusOptions {
+  /**
+   * How long a publish may wait for Redis before it fails. The publisher queues commands while Redis is
+   * down (maxRetriesPerRequest is null), so without a bound a single publish can hold a run open forever.
+   * Durability does not depend on this: events and status are persisted before they are published.
+   */
+  publishTimeoutMs?: number;
+}
+
+const DEFAULT_PUBLISH_TIMEOUT_MS = 1_000;
+
 export class RedisEventBus {
   private readonly subscriptions = new Map<string, Set<RedisEventHandler<unknown>>>();
 
   constructor(
     private readonly publisher: Redis,
     private readonly subscriber: Redis,
+    private readonly opts: RedisEventBusOptions = {},
   ) {
     this.subscriber.on("message", (channel: string, raw: string) => {
       const handlers = this.subscriptions.get(channel);
@@ -33,7 +45,20 @@ export class RedisEventBus {
   }
 
   async publish<T>(channel: string, event: T): Promise<void> {
-    await this.publisher.publish(channel, JSON.stringify(event));
+    const timeoutMs = this.opts.publishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Redis publish to ${channel} timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+      timer.unref?.();
+    });
+    try {
+      await Promise.race([this.publisher.publish(channel, JSON.stringify(event)), timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Subscribes `handler` to `channel`; resolves once the SUBSCRIBE is acked

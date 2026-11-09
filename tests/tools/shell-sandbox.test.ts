@@ -128,6 +128,54 @@ describe("workspace mounts", () => {
     );
   });
 
+  it("binds .git itself before the read-only hooks and config, so it cannot be renamed aside", () => {
+    mkdirSync(join(root, ".git", "hooks"), { recursive: true });
+    writeFileSync(join(root, ".git", "config"), "[core]\n");
+    const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
+    const gitMount = `type=bind,source=${join(root, ".git")},target=/workspace/.git`;
+    const hooksMount = `type=bind,source=${join(root, ".git", "hooks")},target=/workspace/.git/hooks,readonly`;
+    expect(m).toContain(gitMount);
+    expect(m.indexOf(gitMount)).toBeLessThan(m.indexOf(hooksMount));
+  });
+
+  it("creates a missing hooks dir and config so their read-only mounts exist", () => {
+    mkdirSync(join(root, ".git"));
+    const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
+    expect(existsSync(join(root, ".git", "hooks"))).toBe(true);
+    expect(existsSync(join(root, ".git", "config"))).toBe(true);
+    expect(m).toEqual(
+      expect.arrayContaining([
+        `type=bind,source=${join(root, ".git", "hooks")},target=/workspace/.git/hooks,readonly`,
+        `type=bind,source=${join(root, ".git", "config")},target=/workspace/.git/config,readonly`,
+      ]),
+    );
+  });
+
+  it("refuses to start when .git/hooks or .git/config is a symbolic link", () => {
+    mkdirSync(join(root, ".git"));
+    symlinkSync(join(root, "elsewhere"), join(root, ".git", "hooks"));
+    expect(() => dockerArgs(new ShellTool({ workspaceRoot: root }))).toThrow(/symbolic link/);
+  });
+
+  it("refuses to start when .git itself is a symbolic link", () => {
+    mkdirSync(join(root, "real-git"));
+    symlinkSync(join(root, "real-git"), join(root, ".git"));
+    expect(() => dockerArgs(new ShellTool({ workspaceRoot: root }))).toThrow(/symbolic link/);
+  });
+
+  it("binds a .git pointer file (worktree or submodule) read-only", () => {
+    writeFileSync(join(root, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n");
+    const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
+    expect(m).toContain(`type=bind,source=${join(root, ".git")},target=/workspace/.git,readonly`);
+  });
+
+  it("under a narrower write scope the .git directory is read-only as well", () => {
+    mkdirSync(join(root, ".git", "hooks"), { recursive: true });
+    mkdirSync(join(root, "src"));
+    const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root, writeScope: join(root, "src") })));
+    expect(m).toContain(`type=bind,source=${join(root, ".git")},target=/workspace/.git,readonly`);
+  });
+
   it("mounts .nexum (created if missing) and .devagent read-only", () => {
     mkdirSync(join(root, ".devagent"));
     const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));

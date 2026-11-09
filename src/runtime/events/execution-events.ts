@@ -26,7 +26,7 @@ import type {
   Task,
   ToolCallStatus,
 } from "../types.js";
-import type { PlanStep } from "../../orchestration/types.js";
+import type { PlanStep } from "../../core/plan/plan-contracts.js";
 import type { TestFailure } from "../types.js";
 
 export type ExecutionEvent =

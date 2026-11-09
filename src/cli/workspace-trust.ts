@@ -3,18 +3,21 @@
  *
  * A workspace carries files Nexum treats as configuration: `.nexum/config.json`
  * (and legacy `.devagent/config.json`), the MCP approval and publisher trust
- * stores next to it, and the `.env` files Nexum loads into its own process.
- * Anyone who can commit to the repository can author them, so a freshly
- * cloned repo could otherwise turn the sandbox off, register MCP server
- * commands, point the model at its own endpoint, or set PATH/NODE_OPTIONS so
- * the next `git` or Node child Nexum spawns is theirs.
+ * stores next to it, the `.env` files Nexum loads into its own process, and
+ * the skills under `.nexum/skills/` (every file, since a skill is instructions
+ * the model follows). Anyone who can commit to the repository can author them,
+ * so a freshly cloned repo could otherwise turn the sandbox off, register MCP
+ * server commands, point the model at its own endpoint, set PATH/NODE_OPTIONS
+ * so the next `git` or Node child Nexum spawns is theirs, or inject a skill
+ * into the system prompt.
  *
  * Trust is recorded OUTSIDE every workspace (`~/.nexum/trusted-workspaces.json`)
  * and bound to a digest of those files' exact contents, like `direnv allow`:
  * any change — a `git pull`, a teammate's commit — makes the workspace
  * untrusted again until the user reviews it. Until then only the keys in
  * `WORKSPACE_SAFE_KEYS` apply from the workspace config, the workspace `.env`
- * files are not loaded, and the workspace MCP approvals are ignored.
+ * files are not loaded, the workspace MCP approvals are ignored, and the
+ * workspace's skills are withheld (see `workspaceSkillGate`).
  *
  * Nexum's own writes to these files (saving config from the UI, `nexum mcp
  * trust approve`, `nexum marketplace keys add`) go through `preservingTrust`,
@@ -28,6 +31,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -161,6 +165,55 @@ function realRoot(root: string): string {
   }
 }
 
+/**
+ * Upper bound on skill-tree entries the digest covers. Past it (or past the
+ * depth bound) part of the tree cannot be bound, so the workspace's skills are
+ * withheld even when the workspace is trusted.
+ */
+export const SKILL_TREE_ENTRY_LIMIT = 2_000;
+const SKILL_TREE_DEPTH_LIMIT = 8;
+
+/**
+ * Every entry under the workspace's skill directories (canonical and legacy).
+ * `complete` is false when a bound was hit or a directory exists but cannot be
+ * read: the tree then cannot be fully covered by a trust decision.
+ */
+export function workspaceSkillTree(root: string): { files: string[]; complete: boolean } {
+  const files: string[] = [];
+  let complete = true;
+  const walk = (dir: string, depth: number): void => {
+    if (!existsSync(dir)) return;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      complete = false;
+      return;
+    }
+    for (const entry of entries) {
+      if (files.length >= SKILL_TREE_ENTRY_LIMIT) {
+        complete = false;
+        return;
+      }
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (depth >= SKILL_TREE_DEPTH_LIMIT) {
+          complete = false;
+          continue;
+        }
+        walk(path, depth + 1);
+      } else {
+        // Files, symlinks and other entries alike: the digest binds each one's
+        // contents, or its link target when it is a link.
+        files.push(path);
+      }
+    }
+  };
+  walk(join(workspaceStateDir(root), "skills"), 0);
+  walk(join(legacyWorkspaceStateDir(root), "skills"), 0);
+  return { files, complete };
+}
+
 /** Every file whose contents configure Nexum for this workspace. */
 export function trustBearingFiles(root: string, cwd: string = process.cwd()): string[] {
   const files = [
@@ -169,6 +222,7 @@ export function trustBearingFiles(root: string, cwd: string = process.cwd()): st
     join(workspaceStateDir(root), "mcp-trust.json"),
     join(workspaceStateDir(root), "publisher-trust.json"),
     join(root, ".env"),
+    ...workspaceSkillTree(root).files,
   ];
   // loadConfig also reads <cwd>/.env; cwd sits inside the workspace (the root
   // is found by walking up from it)
@@ -212,6 +266,35 @@ export function workspaceDigest(root: string, cwd?: string): { digest: string; p
   return { digest: h.digest("hex"), present: entries.filter((e) => e.fp !== undefined).map((e) => e.rel) };
 }
 
+/** Whether this workspace's own skills may load, and why not when they may not. */
+export interface WorkspaceSkillGate {
+  allowed: boolean;
+  /** Present when `allowed` is false: a status-line explanation. */
+  reason?: string;
+}
+
+/**
+ * Skills load from a workspace only when its whole skill tree is covered by
+ * the digest and the workspace is trusted (or has nothing to trust). A skill
+ * edited after trust makes the workspace "changed", which withholds it again.
+ */
+export function workspaceSkillGate(root: string, store: WorkspaceTrustStore, cwd?: string): WorkspaceSkillGate {
+  const tree = workspaceSkillTree(root);
+  if (!tree.complete) {
+    return {
+      allowed: false,
+      reason: `workspace skills withheld: the skill tree is unreadable or exceeds ${SKILL_TREE_ENTRY_LIMIT} entries`,
+    };
+  }
+  if (tree.files.length === 0) return { allowed: true };
+  const state = workspaceTrustState(root, store, cwd);
+  if (state.trusted) return { allowed: true };
+  return {
+    allowed: false,
+    reason: `workspace skills withheld: this workspace is ${state.status}; run \`nexum trust\` to load them`,
+  };
+}
+
 export function workspaceTrustState(root: string, store: WorkspaceTrustStore, cwd?: string): WorkspaceTrustState {
   const key = realRoot(root);
   const { digest, present } = workspaceDigest(root, cwd);
@@ -245,6 +328,19 @@ export function preservingTrust<T>(root: string, store: WorkspaceTrustStore, fn:
   const result = fn();
   if (before.trusted) trustWorkspace(root, store, cwd);
   return result;
+}
+
+/**
+ * Nexum's own writes into the skill tree (learned skills) keep a trust decision the user
+ * already made, and never create one: a workspace that was never trusted, or was empty,
+ * stays untrusted after Nexum writes a skill into it. The user reviews it with `nexum trust`.
+ */
+export function keepTrustForNexumWrite(root: string, store: WorkspaceTrustStore): (write: () => void) => void {
+  return (write) => {
+    const before = workspaceTrustState(root, store);
+    write();
+    if (before.status === "trusted") trustWorkspace(root, store);
+  };
 }
 
 /** Split a workspace config into what applies untrusted and what is withheld. */

@@ -14,8 +14,7 @@ import { workspaceStateDir } from "../../platform/paths.js";
 import { saveWorkspaceConfig } from "../../cli/config.js";
 import { EvolutionEngine } from "../../evolution/engine.js";
 import { HarnessRegistry } from "../../evolution/registry.js";
-import { ClosedLoopEngine } from "../../evolution/engine-v2.js";
-import { ExperienceStore } from "../../evolution/experience/experience-store.js";
+import { openEvolutionBench } from "../../evolution/bench.js";
 import { formatDiagnosesText, formatHistory, formatTargetText, loadAllEpisodes } from "../../evolution/cli.js";
 import type { AgentMode } from "../../runtime/types.js";
 import { THEME_ORDER } from "../../runtime/types.js";
@@ -432,8 +431,8 @@ async function handleEvolveEffect(
   // diagnose/benchmark run the v2.4 closed-loop pipeline: failure diagnoser
   // AND success analyzer over the full episode feed, then Aspire target
   // formation — not just the v1 failure-only diagnosis.
-  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
-  const engine = new ClosedLoopEngine({ experienceStore });
+  const bench = openEvolutionBench(stateDir);
+  const engine = bench.engine();
   try {
     const episodes = loadAllEpisodes(root).slice(0, 20);
     const observation = engine.observe(episodes);
@@ -458,7 +457,7 @@ async function handleEvolveEffect(
       formatTargetText(observation);
     bus.publish({ type: "conversation.message", role: "assistant", text });
   } finally {
-    experienceStore.close();
+    bench.close();
   }
 }
 

@@ -26,7 +26,7 @@ describe("SkillsRegistry", () => {
   });
 
   it("discover() wraps the loader and list() returns metadata", () => {
-    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir });
+    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir, workspaceTrusted: true });
     expect(
       registry
         .list()
@@ -36,25 +36,25 @@ describe("SkillsRegistry", () => {
   });
 
   it("get() finds a known skill and returns undefined for an unknown one", () => {
-    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir });
+    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir, workspaceTrusted: true });
     expect(registry.get("rails-api")?.name).toBe("Rails API");
     expect(registry.get("nope")).toBeUndefined();
   });
 
   it("resolveForPrompt lazily loads full content for the winning skills", () => {
-    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir });
+    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir, workspaceTrusted: true });
     const resolved = registry.resolveForPrompt("help me with rails api design");
     expect(resolved).toHaveLength(1);
     expect(resolved[0]).toMatchObject({ id: "rails-api", body: "Rails body" });
   });
 
   it("resolveForPrompt returns nothing when no skill matches", () => {
-    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir });
+    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir, workspaceTrusted: true });
     expect(registry.resolveForPrompt("completely unrelated text")).toEqual([]);
   });
 
   it("activate(id) bypasses scoring and returns full content", () => {
-    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir });
+    const registry = SkillsRegistry.discover({ workspaceRoot, homeDir, workspaceTrusted: true });
     expect(registry.activate("docker")).toMatchObject({ id: "docker", body: "Docker body" });
     expect(registry.activate("unknown-id")).toBeUndefined();
   });

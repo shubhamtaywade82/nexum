@@ -382,17 +382,24 @@ export class DefaultToolGateway implements ToolGateway {
           `an execution with the same idempotency key for "${entry.definition.id}" is already in flight`,
         );
       }
-      if (keyMode === "required" && check.status === "new") {
+      // "new", or "failed" by an earlier attempt: record the intent before executing. "auto" differs
+      // from "required" only in where the key comes from (derived from the arguments). Both must dedupe
+      // concurrent calls the same way, which "auto" did not: its key was computed and never recorded.
+      if (check.status === "new" || check.status === "failed") {
         idemKey = this.idempotency.record(entry.definition.id, args, ctx.runId);
-      } else if (keyMode === "auto") {
-        idemKey = this.idempotency.keyFor(entry.definition.id, args);
       }
     }
 
     // ── stage 6: execute under concurrency lease + timeout + signal ────────
     const gate = this.gateFor(entry);
+    // The handler's signal aborts on a timeout as well as on run cancellation. Without that, a timed-out
+    // tool keeps running (and mutating) after the gateway has reported Timeout and freed its lease.
+    const callAbort = new AbortController();
+    const onRunAbort = () => callAbort.abort(ctx.signal?.reason);
+    if (ctx.signal?.aborted) onRunAbort();
+    else ctx.signal?.addEventListener("abort", onRunAbort, { once: true });
     const callCtx: ToolCallContext = {
-      signal: ctx.signal,
+      signal: callAbort.signal,
       invocation: { id: invocationId, name: entry.definition.id, args },
       runId: ctx.runId,
       agentId: ctx.agentId,
@@ -401,7 +408,7 @@ export class DefaultToolGateway implements ToolGateway {
     };
 
     try {
-      const data = await gate.run(() => this.withTimeout(entry, args, callCtx), "normal", ctx.signal);
+      const data = await gate.run(() => this.withTimeout(entry, args, callCtx, callAbort), "normal", ctx.signal);
       const result: Record<string, unknown> = data;
       if (idemKey && this.idempotency) this.idempotency.complete(idemKey, result);
       return { ok: true, data: result };
@@ -412,6 +419,8 @@ export class DefaultToolGateway implements ToolGateway {
       if (e instanceof GateSaturatedError) return failure("ConcurrencyDenied", e.message);
       const err = e instanceof Error ? e : new Error(String(e));
       return failure(err.constructor.name, err.message);
+    } finally {
+      ctx.signal?.removeEventListener("abort", onRunAbort);
     }
   }
 
@@ -443,6 +452,7 @@ export class DefaultToolGateway implements ToolGateway {
     entry: ToolCatalogEntry,
     args: Record<string, unknown>,
     callCtx: ToolCallContext,
+    callAbort: AbortController,
   ): Promise<Record<string, unknown>> {
     const timeoutMs = entry.definition.execution.timeoutMs;
     // cancellation reaches tool code (review item 16)
@@ -450,13 +460,19 @@ export class DefaultToolGateway implements ToolGateway {
 
     if (!timeoutMs || timeoutMs <= 0) return task;
 
-    return Promise.race([
-      task,
-      new Promise<never>((_, reject) => {
-        const timer = setTimeout(() => reject(new ToolTimeoutError(entry.definition.id, timeoutMs)), timeoutMs);
-        if (typeof timer.unref === "function") timer.unref();
-      }),
-    ]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const timeout = new ToolTimeoutError(entry.definition.id, timeoutMs);
+        // Reject first: a handler that honors the signal rejects in response to the abort, and that
+        // rejection must not win the race and be reported as a generic error instead of Timeout.
+        reject(timeout);
+        callAbort.abort(timeout);
+      }, timeoutMs);
+      if (typeof timer.unref === "function") timer.unref();
+    });
+    // The timer is cleared as soon as the handler settles, so a finished call never aborts later.
+    return Promise.race([task, timedOut]).finally(() => clearTimeout(timer));
   }
 }
 

@@ -97,17 +97,6 @@ export class DefaultModelGateway implements ModelGateway {
     return response;
   }
 
-  /** Mirrors Router semantics but keeps the tier gate around the Router's own failover. */
-  async routeGated(capability: Capability, messages: ChatMessage[], opts?: ChatOptions): Promise<ChatResponse> {
-    // The Router already walks candidates across tiers; wrapping the whole
-    // walk in the local gate would misattribute cloud calls. Instead both
-    // gates bound concurrency per tier inside route(): here we just use the
-    // local gate as a global model-call limiter for strategy-level calls.
-    const response = await this.router.route(capability, messages, opts);
-    this.record(response);
-    return response;
-  }
-
   profiles(): ModelCapabilityRegistry {
     return this.registry;
   }

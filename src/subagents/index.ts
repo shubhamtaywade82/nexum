@@ -7,97 +7,36 @@
  *
  *   InProcessProvider     ← wraps the existing Delegator
  *   ProcessProvider       ← spawns a child Nexum process
- *   ACPProvider           ← Agent Client Protocol (external agent runtime)
+ *   ACPProvider           ← HTTP task API (Nexum-specific, not the ACP wire protocol)
  *   SDKProvider           ← drives another Nexum SDK instance
- *   ExternalAgentProvider ← generic HTTP/RPC agent (Claude Code, Codex, …)
+ *   ExternalAgentProvider ← runs an external agent CLI (Claude Code, Codex, …)
  *
  * All providers implement the same SubagentProvider interface, so the agent
  * sees a uniform spawn/send/interrupt/resume/fork/inspect API regardless of
- * where the child actually runs.
+ * where the child actually runs. Lifecycle state lives in SubagentSession
+ * (session.ts): every provider reports through it, so a terminal state never
+ * changes and every child frees its slot when its session terminates.
  *
  * Continuable children: a child session can be paused and resumed later with
  * new messages or interruptions. This is critical for long-running autonomous
  * agents that need to interact with subagents over multiple turns.
  */
 
-import type { AgentRuntime, ExecutionContext, ExecutionResult } from "../core/types.js";
+import { spawn, type ChildProcess } from "node:child_process";
+import type { AgentRuntime, ExecutionContext } from "../core/types.js";
 import type { AgentRegistry } from "../runtime/agent/agent-runtime.js";
-import { newDelegationId, newRunId } from "../core/identity.js";
 import { Delegator, type DelegationPolicy } from "../orchestration/delegation/delegator.js";
+import type {
+  SubagentHandle,
+  SubagentProvider,
+  SubagentProviderType,
+  SubagentResult,
+  SubagentSpawnRequest,
+  SubagentState,
+} from "./contracts.js";
+import { SubagentSession, isLiveState } from "./session.js";
 
-// ── Contracts ───────────────────────────────────────────────────────────────
-
-export type SubagentProviderType = "in-process" | "process" | "acp" | "sdk" | "external";
-
-export interface SubagentSpawnRequest {
-  /** Which provider backend to use. */
-  provider: SubagentProviderType;
-  /** Goal for the child (one-shot) or initial message (continuable). */
-  goal: string;
-  /** Capabilities the child must have. */
-  requiredCapabilities?: string[];
-  /** Pin a specific child agent id. */
-  childAgentId?: string;
-  /** Context handoff (seed transcript). */
-  contextHandoff?: string[];
-  /** Fraction of parent budget (default 0.5). */
-  budgetShare?: number;
-  /** Max tool turns for one-shot runs. */
-  maxToolTurns?: number;
-  /** Whether the child should be continuable (default false = one-shot). */
-  continuable?: boolean;
-  /** Metadata propagated to the provider. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface SubagentHandle {
-  /** Unique id for this spawned subagent. */
-  subagentId: string;
-  /** The delegation/run id assigned by the provider. */
-  providerRunId: string;
-  /** Which provider is hosting this child. */
-  provider: SubagentProviderType;
-  /** Whether the child is continuable (persistent session). */
-  continuable: boolean;
-  /** Current state of the child. */
-  state: SubagentState;
-  /** The original spawn request (for inspection). */
-  request: SubagentSpawnRequest;
-  /** Promise that resolves when a one-shot child completes. */
-  promise?: Promise<SubagentResult>;
-  /** Send a new message to a continuable child. */
-  send(message: string): Promise<SubagentResult>;
-  /** Interrupt a running child (graceful). */
-  interrupt(reason?: string): Promise<void>;
-  /** Resume a paused child. */
-  resume(): Promise<SubagentResult>;
-  /** Fork the child into a new independent session. */
-  fork(): Promise<SubagentHandle>;
-}
-
-export type SubagentState = "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
-
-export interface SubagentResult {
-  subagentId: string;
-  status: ExecutionResult["status"];
-  output: string;
-  error?: string;
-  /** Provider-specific metadata (token usage, cost, duration). */
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * Provider interface — each backend implements this.
- * The service routes spawn() to the right provider based on request.provider.
- */
-export interface SubagentProvider {
-  readonly type: SubagentProviderType;
-  spawn(request: SubagentSpawnRequest, parent: ExecutionContext | undefined): Promise<SubagentHandle>;
-  /** List active children for this provider (for inspect()). */
-  list(): SubagentHandle[];
-  /** Stop all children for this provider (host shutdown). */
-  stopAll(): Promise<void>;
-}
+export * from "./contracts.js";
 
 // ── Service ─────────────────────────────────────────────────────────────────
 
@@ -175,12 +114,10 @@ export class SubagentService {
     }
     this.handles.set(handle.subagentId, handle);
 
-    // One-shot children free their slot on settlement; continuable ones hold it until cancel()/stopAll().
-    // then(f, f) rather than finally(): finally() re-rejects into an unhandled promise.
-    if (handle.promise) {
-      const release = () => this.release(handle.subagentId);
-      handle.promise.then(release, release);
-    }
+    // Every child frees its slot when its session reaches a terminal state, whether it
+    // finished, failed, was cancelled, or (for a continuable child) its process died.
+    const release = () => this.release(handle.subagentId);
+    void handle.terminated.then(release);
 
     return handle;
   }
@@ -207,30 +144,57 @@ export class SubagentService {
     return state ? all.filter((h) => h.state === state) : all;
   }
 
-  /** Cancel a specific subagent. */
+  /** Cancel a specific subagent. Terminal children are left exactly as they ended. */
   async cancel(subagentId: string, reason?: string): Promise<void> {
     const handle = this.handles.get(subagentId);
     if (!handle) return;
-    const terminal = handle.state === "completed" || handle.state === "failed" || handle.state === "cancelled";
     try {
-      if (!terminal) await handle.interrupt(reason ?? "cancelled by parent");
+      await handle.interrupt(reason ?? "cancelled by parent");
     } finally {
-      if (!terminal) handle.state = "cancelled";
       this.release(subagentId);
     }
   }
 
   /** Stop all subagents (host shutdown). */
   async stopAll(): Promise<void> {
-    const stopps = [...this.providers.values()].map((p) => p.stopAll());
-    await Promise.allSettled(stopps);
+    await Promise.allSettled([...this.providers.values()].map((p) => p.stopAll()));
     for (const handle of this.handles.values()) {
-      if (handle.state === "running" || handle.state === "pending") {
-        handle.state = "cancelled";
-      }
       this.release(handle.subagentId);
     }
     this.perSessionCount.clear();
+  }
+}
+
+// ── Shared provider bookkeeping ─────────────────────────────────────────────
+
+/**
+ * What every provider shares: the handles it spawned, and a shutdown that
+ * interrupts only the children that are still live.
+ */
+abstract class BaseSubagentProvider implements SubagentProvider {
+  abstract readonly type: SubagentProviderType;
+  protected readonly handles = new Map<string, SubagentHandle>();
+
+  abstract spawn(request: SubagentSpawnRequest, parent?: ExecutionContext): Promise<SubagentHandle>;
+
+  protected track(handle: SubagentHandle): SubagentHandle {
+    this.handles.set(handle.subagentId, handle);
+    return handle;
+  }
+
+  list(): SubagentHandle[] {
+    return [...this.handles.values()];
+  }
+
+  async stopAll(): Promise<void> {
+    for (const handle of this.handles.values()) {
+      if (!isLiveState(handle.state)) continue;
+      try {
+        await handle.interrupt("host shutdown");
+      } catch {
+        /* best-effort: shutdown must reach every child */
+      }
+    }
   }
 }
 
@@ -246,12 +210,6 @@ const SERVICE_GOVERNED_POLICY: DelegationPolicy = {
   maxConcurrentChildren: Number.MAX_SAFE_INTEGER,
   maxTotalChildren: Number.MAX_SAFE_INTEGER,
 };
-
-function stateForStatus(status: ExecutionResult["status"]): SubagentState {
-  if (status === "completed") return "completed";
-  if (status === "cancelled") return "cancelled";
-  return "failed";
-}
 
 /**
  * Run a one-shot child through a Delegator: isolated child context (own runId,
@@ -270,7 +228,6 @@ function spawnDelegated(
   if (request.continuable) {
     throw new Error(`${type} subagents are one-shot; continuable sessions are not supported by this provider`);
   }
-  const subagentId = newDelegationId();
   const child = delegator.delegate(
     parent,
     {
@@ -284,54 +241,35 @@ function spawnDelegated(
     },
     SERVICE_GOVERNED_POLICY,
   );
+  const session = new SubagentSession({ provider: type, request, providerRunId: child.childRunId });
 
-  let state: SubagentState = "running";
-  const promise = child.promise.then(
-    (result): SubagentResult => {
-      if (state === "running") state = stateForStatus(result.status);
-      return {
-        subagentId,
+  // The child settles the handle with its real result; a child that honours a cancel reports "cancelled".
+  void child.promise.then(
+    (result) =>
+      session.complete({
+        subagentId: session.subagentId,
         status: result.status,
         output: result.output,
         error: result.error,
         metadata: { runId: result.runId, agentId: result.agentId, usage: result.usage },
-      };
-    },
-    (e: unknown) => {
-      if (state === "running") state = "failed";
-      throw e instanceof Error ? e : new Error(String(e));
-    },
+      }),
+    (e: unknown) => session.fail(e instanceof Error ? e : new Error(String(e))),
   );
-  promise.catch(() => {});
 
-  return {
-    subagentId,
-    providerRunId: child.childRunId,
-    provider: type,
-    continuable: false,
-    get state() {
-      return state;
-    },
-    set state(next: SubagentState) {
-      state = next;
-    },
-    request,
-    promise,
+  return session.toHandle({
     async send(): Promise<SubagentResult> {
       throw new Error(`one-shot ${type} subagent does not support send() — spawn a new one`);
     },
     async interrupt(): Promise<void> {
-      if (state !== "running") return;
-      state = "cancelled";
+      // The runtime reports the cancelled result, so the one-shot promise settles with it.
+      if (!session.markCancelled()) return;
       child.cancel();
     },
     async resume(): Promise<SubagentResult> {
       throw new Error(`one-shot ${type} subagent cannot be resumed`);
     },
-    async fork(): Promise<SubagentHandle> {
-      return respawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` });
-    },
-  };
+    fork: () => respawn({ ...request, goal: `${request.goal} (forked from ${session.subagentId})` }),
+  });
 }
 
 /**
@@ -339,37 +277,21 @@ function spawnDelegated(
  * AgentRuntime via the Delegator (capability matching, derived budget,
  * cancellation). Requires the parent ExecutionContext.
  */
-export class InProcessSubagentProvider implements SubagentProvider {
+export class InProcessSubagentProvider extends BaseSubagentProvider {
   readonly type = "in-process" as const;
-  private readonly handles = new Map<string, SubagentHandle>();
   private readonly delegator: Delegator;
 
   constructor(opts: InProcessProviderOptions) {
+    super();
     this.delegator = new Delegator({ runtime: opts.runtime, agents: opts.agents });
   }
 
   async spawn(request: SubagentSpawnRequest, parent?: ExecutionContext): Promise<SubagentHandle> {
-    const handle = spawnDelegated("in-process", this.delegator, request, parent, (r) => this.spawn(r, parent));
-    this.handles.set(handle.subagentId, handle);
-    return handle;
-  }
-
-  list(): SubagentHandle[] {
-    return [...this.handles.values()];
-  }
-
-  async stopAll(): Promise<void> {
-    for (const handle of this.handles.values()) {
-      if (handle.state === "running" || handle.state === "pending") {
-        await handle.interrupt("host shutdown");
-      }
-    }
+    return this.track(spawnDelegated("in-process", this.delegator, request, parent, (r) => this.spawn(r, parent)));
   }
 }
 
 // ── Process provider (spawns a child Nexum process) ─────────────────────────
-
-import { spawn, type ChildProcess } from "node:child_process";
 
 export interface ProcessProviderOptions {
   /** Path to the Nexum CLI binary (default: process.argv[1]). */
@@ -384,6 +306,11 @@ export interface ProcessProviderOptions {
   startupTimeoutMs?: number;
 }
 
+interface PendingRpc {
+  resolve: (r: SubagentResult) => void;
+  reject: (e: Error) => void;
+}
+
 /**
  * ProcessSubagentProvider — spawns a child `nexum rpc` process for each
  * subagent, communicating via newline-delimited JSON-RPC 2.0 over stdio.
@@ -396,63 +323,52 @@ export interface ProcessProviderOptions {
  * children terminate after the first response.
  *
  * Failure modes handled:
- *   - Child process exits before responding → promise rejects with exit code
- *   - Parent calls interrupt() → SIGTERM the child + reject the promise
+ *   - Child process exits before responding → the session fails with the exit code
+ *   - Parent calls interrupt() → the session is cancelled and the child is stopped
+ *   - Continuable child dies while live → its session fails, freeing its slot
  *   - Child stderr output → captured as `metadata.stderr` in SubagentResult
- *   - Child startup timeout → reject with "child did not start"
  */
-export class ProcessSubagentProvider implements SubagentProvider {
+export class ProcessSubagentProvider extends BaseSubagentProvider {
   readonly type = "process" as const;
-  private readonly handles = new Map<string, SubagentHandle>();
   private readonly children = new Map<string, ChildProcess>();
   private readonly opts: ProcessProviderOptions;
 
   constructor(opts: ProcessProviderOptions = {}) {
+    super();
     this.opts = opts;
   }
 
-  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
-    const subagentId = newDelegationId();
-    const providerRunId = newRunId();
+  async spawn(request: SubagentSpawnRequest, parent?: ExecutionContext): Promise<SubagentHandle> {
     const continuable = request.continuable ?? false;
     const binaryPath = this.opts.binaryPath ?? process.argv[1];
     if (!binaryPath) {
       throw new Error("ProcessSubagentProvider: no binaryPath and no process.argv[1]");
     }
 
-    let resolveResult: ((r: SubagentResult) => void) | undefined;
-    let rejectResult: ((e: Error) => void) | undefined;
-    const resultPromise = new Promise<SubagentResult>((resolve, reject) => {
-      resolveResult = resolve;
-      rejectResult = reject;
-    });
-    resultPromise.catch(() => {});
+    const session = new SubagentSession({ provider: "process", request, continuable });
+    const subagentId = session.subagentId;
 
-    // Forward-ref holder for the handle's mutable state so that child
-    // event handlers (registered below) can mutate it without referencing
-    // `handle` before it's declared.
-    const handleRef: { state: SubagentState } = { state: "running" };
-
-    // Spawn `nexum rpc` (the JSON-RPC agent server). For continuable
-    // children, the process stays alive between messages; for one-shot,
-    // it terminates after the first response.
-    const args = ["rpc", ...(this.opts.extraArgs ?? [])];
-    const child = spawn(binaryPath, args, {
+    // `nexum rpc` is the JSON-RPC agent server. Continuable children stay alive between
+    // messages; one-shot children exit after their first response.
+    const child = spawn(binaryPath, ["rpc", ...(this.opts.extraArgs ?? [])], {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: this.opts.cwd,
       env: { ...process.env, ...this.opts.env },
     });
     this.children.set(subagentId, child);
 
-    // Attach error listeners to all streams — without these, an EPIPE
-    // (e.g. writing to a child that has already exited) would crash the
-    // parent process with an unhandled stream error.
-    child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
-      // EPIPE is expected when the child exits before we finish writing.
-      if (err.code !== "EPIPE") {
-        if (rejectResult) rejectResult(new Error(`stdin error: ${err.message}`));
-        handleRef.state = "failed";
+    const pendingRequests = new Map<number | string | null, PendingRpc>();
+    let nextRequestId = 1;
+    const rejectPending = (error: Error): void => {
+      for (const [id, pending] of pendingRequests) {
+        pendingRequests.delete(id);
+        pending.reject(error);
       }
+    };
+
+    // Stream errors must not crash the host: an EPIPE from a child that already exited is expected.
+    child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "EPIPE") session.fail(new Error(`stdin error: ${err.message}`));
     });
     child.stdout?.on("error", () => {
       /* best-effort — stdout closed */
@@ -461,66 +377,51 @@ export class ProcessSubagentProvider implements SubagentProvider {
       /* best-effort — stderr closed */
     });
     child.on("error", (err) => {
-      // Spawn errors (e.g. ENOENT for missing binary).
-      if (rejectResult) {
-        rejectResult(new Error(`child spawn error: ${err.message}`));
-        handleRef.state = "failed";
-      }
+      this.children.delete(subagentId);
+      session.fail(new Error(`child spawn error: ${err.message}`));
     });
 
-    // Buffer stderr (for diagnostics) and set up JSON-RPC line parsing.
     const stderrBuffer: string[] = [];
-    const pendingRequests = new Map<
-      number | string | null,
-      { resolve: (r: SubagentResult) => void; reject: (e: Error) => void }
-    >();
-    let nextRequestId = 1;
     let stdoutBuffer = "";
-
-    // handleRef was declared above (before the child spawn) so that stream
-    // error listeners can reference it. Don't redeclare it here.
-
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
       stdoutBuffer += chunk;
-      // Process complete lines (newline-delimited JSON-RPC).
       let newlineIdx: number;
       while ((newlineIdx = stdoutBuffer.indexOf("\n")) >= 0) {
         const line = stdoutBuffer.slice(0, newlineIdx).trim();
         stdoutBuffer = stdoutBuffer.slice(newlineIdx + 1);
         if (!line) continue;
+        let msg: {
+          id?: number | string | null;
+          result?: unknown;
+          error?: { code: number; message: string; data?: unknown };
+        };
         try {
-          const msg = JSON.parse(line) as {
-            id?: number | string | null;
-            result?: unknown;
-            error?: { code: number; message: string; data?: unknown };
-          };
-          if (msg.id !== undefined) {
-            const pending = pendingRequests.get(msg.id);
-            if (pending) {
-              pendingRequests.delete(msg.id);
-              if (msg.error) {
-                pending.reject(new Error(`JSON-RPC error ${msg.error.code}: ${msg.error.message}`));
-              } else {
-                const result = msg.result as {
-                  status?: string;
-                  output?: string;
-                  error?: string;
-                  metadata?: Record<string, unknown>;
-                };
-                pending.resolve({
-                  subagentId,
-                  status: (result?.status as SubagentResult["status"]) ?? "completed",
-                  output: result?.output ?? "",
-                  error: result?.error,
-                  metadata: { ...result?.metadata, stderr: stderrBuffer.join("").slice(-2000) },
-                });
-              }
-            }
-          }
+          msg = JSON.parse(line);
         } catch {
-          // not JSON or malformed — skip
+          continue; // not JSON — skip
         }
+        if (msg.id === undefined) continue;
+        const pending = pendingRequests.get(msg.id);
+        if (!pending) continue;
+        pendingRequests.delete(msg.id);
+        if (msg.error) {
+          pending.reject(new Error(`JSON-RPC error ${msg.error.code}: ${msg.error.message}`));
+          continue;
+        }
+        const result = msg.result as {
+          status?: string;
+          output?: string;
+          error?: string;
+          metadata?: Record<string, unknown>;
+        };
+        pending.resolve({
+          subagentId,
+          status: (result?.status as SubagentResult["status"]) ?? "completed",
+          output: result?.output ?? "",
+          error: result?.error,
+          metadata: { ...result?.metadata, stderr: stderrBuffer.join("").slice(-2000) },
+        });
       }
     });
 
@@ -529,27 +430,53 @@ export class ProcessSubagentProvider implements SubagentProvider {
       stderrBuffer.push(chunk);
     });
 
-    child.on("exit", (code, signal) => {
-      // Reject any still-pending requests.
-      for (const [id, pending] of pendingRequests.entries()) {
-        pendingRequests.delete(id);
-        pending.reject(new Error(`child process exited (code=${code}, signal=${signal})`));
-      }
-      // If the one-shot promise hasn't resolved and there were still pending
-      // requests, treat the exit as a failure.
-      if (handleRef.state === "running" && rejectResult && !continuable) {
-        if (pendingRequests.size > 0) {
-          rejectResult(new Error(`child process exited unexpectedly (code=${code}, signal=${signal})`));
-          handleRef.state = "failed";
-        }
-      }
+    // 'close' rather than 'exit': it fires after stdout is drained, so a response written just before
+    // the child exits is still delivered instead of racing the exit.
+    child.on("close", (code, signal) => {
       this.children.delete(subagentId);
+      const reason = new Error(`child process exited (code=${code}, signal=${signal})`);
+      rejectPending(reason);
+      // A session still live when its child goes away can no longer be served.
+      session.fail(reason);
     });
 
-    // For one-shot: send agent.execute immediately.
-    if (!continuable) {
+    // Every terminal transition stops the child, including a failed one.
+    void session.terminated.then(() => this.stopChild(subagentId));
+
+    const send = async (message: string): Promise<SubagentResult> => {
+      if (!continuable) {
+        throw new Error("one-shot process subagent does not support send() — spawn a new one");
+      }
+      const proc = this.children.get(subagentId);
+      if (!session.live || !proc) {
+        throw new Error("child process is no longer running");
+      }
       const requestId = nextRequestId++;
-      const requestPayload = {
+      const payload = {
+        jsonrpc: "2.0" as const,
+        id: requestId,
+        method: "agent.execute",
+        params: { goal: message },
+      };
+      return new Promise<SubagentResult>((resolve, reject) => {
+        pendingRequests.set(requestId, { resolve, reject });
+        try {
+          proc.stdin?.write(`${JSON.stringify(payload)}\n`);
+        } catch (err) {
+          pendingRequests.delete(requestId);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      });
+    };
+
+    if (!continuable) {
+      // One-shot: the first (and only) request carries the goal; its response settles the session.
+      const requestId = nextRequestId++;
+      pendingRequests.set(requestId, {
+        resolve: (r) => session.complete(r),
+        reject: (e) => session.fail(e),
+      });
+      const payload = {
         jsonrpc: "2.0" as const,
         id: requestId,
         method: "agent.execute",
@@ -561,169 +488,59 @@ export class ProcessSubagentProvider implements SubagentProvider {
           maxToolTurns: request.maxToolTurns,
         },
       };
-      pendingRequests.set(requestId, {
-        resolve: (r) => {
-          if (resolveResult) {
-            resolveResult(r);
-            handleRef.state = r.status === "completed" ? "completed" : "failed";
-          }
-        },
-        reject: (e) => {
-          if (rejectResult) {
-            rejectResult(e);
-            handleRef.state = "failed";
-          }
-        },
-      });
       try {
-        child.stdin?.write(`${JSON.stringify(requestPayload)}\n`);
+        child.stdin?.write(`${JSON.stringify(payload)}\n`);
       } catch (err) {
-        const e = err instanceof Error ? err : new Error(String(err));
-        if (rejectResult) {
-          rejectResult(e);
-          handleRef.state = "failed";
-        }
+        session.fail(err instanceof Error ? err : new Error(String(err)));
       }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
-    const self = this;
-    const handle: SubagentHandle = {
-      subagentId,
-      providerRunId,
-      provider: "process",
-      continuable,
-      get state() {
-        return handleRef.state;
-      },
-      set state(next: SubagentState) {
-        handleRef.state = next;
-      },
-      request,
-      promise: continuable ? undefined : resultPromise,
-      async send(message: string): Promise<SubagentResult> {
-        if (!continuable) {
-          throw new Error("one-shot process subagent does not support send() — spawn a new one");
-        }
-        const proc = self.children.get(subagentId);
-        if (!proc || proc.killed) {
-          throw new Error("child process is no longer running");
-        }
-        const requestId = nextRequestId++;
-        const payload = {
-          jsonrpc: "2.0" as const,
-          id: requestId,
-          method: "agent.execute",
-          params: { goal: message },
-        };
-        return new Promise<SubagentResult>((resolve, reject) => {
-          pendingRequests.set(requestId, {
-            resolve,
-            reject,
-          });
-          try {
-            proc.stdin?.write(`${JSON.stringify(payload)}\n`);
-          } catch (err) {
-            pendingRequests.delete(requestId);
-            reject(err instanceof Error ? err : new Error(String(err)));
+    return this.track(
+      session.toHandle({
+        send,
+        async interrupt(reason = "interrupted"): Promise<void> {
+          if (!session.cancel(reason)) return;
+          rejectPending(new Error(reason));
+        },
+        async resume(): Promise<SubagentResult> {
+          if (session.state !== "paused") {
+            throw new Error(`cannot resume process subagent in state "${session.state}"`);
           }
-        });
-      },
-      async interrupt(reason?: string): Promise<void> {
-        const proc = self.children.get(subagentId);
-        if (proc && !proc.killed) {
-          // Send SIGTERM for graceful shutdown; escalate to SIGKILL after 2s.
-          proc.kill("SIGTERM");
-          setTimeout(() => {
-            if (!proc.killed) {
-              try {
-                proc.kill("SIGKILL");
-              } catch {
-                /* best-effort */
-              }
-            }
-          }, 2000);
-        }
-        // Reject pending requests.
-        for (const [, pending] of pendingRequests) {
-          pending.reject(new Error(reason ?? "interrupted"));
-        }
-        pendingRequests.clear();
-        handleRef.state = "cancelled";
-        if (rejectResult) {
-          rejectResult(new Error(reason ?? "interrupted"));
-        }
-      },
-      async resume(): Promise<SubagentResult> {
-        if (handle.state !== "paused") {
-          throw new Error(`cannot resume process subagent in state "${handle.state}"`);
-        }
-        handle.state = "running";
-        return handle.send("resume");
-      },
-      async fork(): Promise<SubagentHandle> {
-        return self.spawn(
-          { ...request, continuable: false, goal: `${request.goal} (forked from ${subagentId})` },
-          _parent,
-        );
-      },
-    };
-
-    this.handles.set(subagentId, handle);
-    return handle;
+          session.markRunning();
+          return send("resume");
+        },
+        fork: () =>
+          this.spawn({ ...request, continuable: false, goal: `${request.goal} (forked from ${subagentId})` }, parent),
+      }),
+    );
   }
 
-  list(): SubagentHandle[] {
-    return [...this.handles.values()];
+  /** SIGTERM, escalating to SIGKILL after 2 s. Idempotent: a child that already exited is left alone. */
+  private stopChild(subagentId: string): void {
+    const child = this.children.get(subagentId);
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    const escalate = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }, 2000);
+    escalate.unref();
+    child.once("exit", () => clearTimeout(escalate));
   }
 
-  async stopAll(): Promise<void> {
-    // SIGTERM every still-running child.
-    const killPromises: Promise<void>[] = [];
-    for (const child of this.children.values()) {
-      if (!child.killed) {
-        killPromises.push(
-          new Promise<void>((resolve) => {
-            const timer = setTimeout(() => {
-              if (!child.killed) {
-                try {
-                  child.kill("SIGKILL");
-                } catch {
-                  /* best-effort */
-                }
-              }
-              resolve();
-            }, 2000);
-            child.once("exit", () => {
-              clearTimeout(timer);
-              resolve();
-            });
-            try {
-              child.kill("SIGTERM");
-            } catch {
-              /* best-effort */
-            }
-          }),
-        );
-      }
+  /** Stops every live handle, then waits for each child process to actually exit. */
+  override async stopAll(): Promise<void> {
+    await super.stopAll();
+    const exits: Promise<void>[] = [];
+    for (const [subagentId, child] of this.children) {
+      if (child.exitCode !== null || child.signalCode !== null) continue;
+      exits.push(new Promise<void>((resolve) => child.once("exit", () => resolve())));
+      this.stopChild(subagentId);
     }
-    await Promise.allSettled(killPromises);
-    this.children.clear();
-    // Cancel any handles still in a running/pending state.
-    for (const handle of this.handles.values()) {
-      if (handle.state === "running" || handle.state === "pending") {
-        try {
-          await handle.interrupt("host shutdown");
-        } catch {
-          /* best-effort */
-        }
-        handle.state = "cancelled";
-      }
-    }
+    await Promise.allSettled(exits);
   }
 }
 
-// ── ACP provider (Agent Client Protocol) ───────────────────────────────────
+// ── ACP provider (Nexum-specific HTTP task API) ─────────────────────────────
 
 export interface AcpProviderOptions {
   /** ACP server endpoint (e.g. "https://acp.example.com"). */
@@ -743,156 +560,114 @@ export interface AcpProviderOptions {
  *   POST {endpoint}/sessions/{id}/cancel           { reason }
  * No handshake, capability negotiation, or streaming. Not registered by
  * defaultSubagentProviders() unless an endpoint is configured.
+ *
+ * A one-shot task is posted in the background: spawn() returns the handle at once,
+ * like the other providers, and its promise settles with the server's answer.
  */
-export class ACPSubagentProvider implements SubagentProvider {
+export class ACPSubagentProvider extends BaseSubagentProvider {
   readonly type = "acp" as const;
-  private readonly handles = new Map<string, SubagentHandle>();
   private readonly opts: AcpProviderOptions;
 
   constructor(opts: AcpProviderOptions = {}) {
+    super();
     this.opts = opts;
   }
 
-  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
-    if (!this.opts.endpoint) {
+  private headers(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      ...(this.opts.authToken ? { Authorization: `Bearer ${this.opts.authToken}` } : {}),
+    };
+  }
+
+  async spawn(request: SubagentSpawnRequest, parent?: ExecutionContext): Promise<SubagentHandle> {
+    const endpoint = this.opts.endpoint;
+    if (!endpoint) {
       throw new Error("ACPSubagentProvider requires an endpoint (set via AcpProviderOptions.endpoint)");
     }
-    const subagentId = newDelegationId();
-    const providerRunId = newRunId();
     const continuable = request.continuable ?? false;
+    const session = new SubagentSession({ provider: "acp", request, continuable });
+    const acpSessionId = `acp_${session.subagentId}`;
+    const headers = this.headers();
 
-    let resolveResult: ((r: SubagentResult) => void) | undefined;
-    let rejectResult: ((e: Error) => void) | undefined;
-    const resultPromise = new Promise<SubagentResult>((resolve, reject) => {
-      resolveResult = resolve;
-      rejectResult = reject;
-    });
-    resultPromise.catch(() => {});
-    const acpSessionId = `acp_${subagentId}`;
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional: closed over by object-literal methods below
-    const self = this;
-
-    const handle: SubagentHandle = {
-      subagentId,
-      providerRunId,
-      provider: "acp",
-      continuable,
-      state: "running",
-      request,
-      promise: continuable ? undefined : resultPromise,
-      async send(message: string): Promise<SubagentResult> {
-        // POST to {endpoint}/sessions/{acpSessionId}/messages
-        try {
-          const response = await fetch(`${self.opts.endpoint}/sessions/${acpSessionId}/messages`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(self.opts.authToken ? { Authorization: `Bearer ${self.opts.authToken}` } : {}),
-            },
-            body: JSON.stringify({ message }),
-          });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const data = (await response.json()) as { output?: string; error?: string };
-          return {
-            subagentId,
-            status: data.error ? "failed" : "completed",
-            output: data.output ?? "",
-            error: data.error,
-            metadata: { acpSessionId },
-          };
-        } catch (err) {
-          return {
-            subagentId,
-            status: "failed",
-            output: "",
-            error: err instanceof Error ? err.message : String(err),
-            metadata: { acpSessionId },
-          };
-        }
-      },
-      async interrupt(reason?: string): Promise<void> {
-        // POST to {endpoint}/sessions/{acpSessionId}/cancel
-        try {
-          await fetch(`${self.opts.endpoint}/sessions/${acpSessionId}/cancel`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(self.opts.authToken ? { Authorization: `Bearer ${self.opts.authToken}` } : {}),
-            },
-            body: JSON.stringify({ reason }),
-          });
-        } catch {
-          // best-effort
-        }
-        if (rejectResult) rejectResult(new Error(reason ?? "interrupted"));
-        handle.state = "cancelled";
-      },
-      async resume(): Promise<SubagentResult> {
-        if (handle.state !== "paused") {
-          throw new Error(`cannot resume ACP subagent in state "${handle.state}"`);
-        }
-        handle.state = "running";
-        return handle.send("resume");
-      },
-      async fork(): Promise<SubagentHandle> {
-        return self.spawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` }, _parent);
-      },
+    const send = async (message: string): Promise<SubagentResult> => {
+      try {
+        const response = await fetch(`${endpoint}/sessions/${acpSessionId}/messages`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ message }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = (await response.json()) as { output?: string; error?: string };
+        return {
+          subagentId: session.subagentId,
+          status: data.error ? "failed" : "completed",
+          output: data.output ?? "",
+          error: data.error,
+          metadata: { acpSessionId },
+        };
+      } catch (err) {
+        return {
+          subagentId: session.subagentId,
+          status: "failed",
+          output: "",
+          error: err instanceof Error ? err.message : String(err),
+          metadata: { acpSessionId },
+        };
+      }
     };
 
-    this.handles.set(subagentId, handle);
+    const handle = this.track(
+      session.toHandle({
+        send,
+        async interrupt(reason = "interrupted"): Promise<void> {
+          if (!session.cancel(reason)) return;
+          try {
+            await fetch(`${endpoint}/sessions/${acpSessionId}/cancel`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ reason }),
+            });
+          } catch {
+            /* best-effort: the local session is already cancelled */
+          }
+        },
+        async resume(): Promise<SubagentResult> {
+          if (session.state !== "paused") {
+            throw new Error(`cannot resume ACP subagent in state "${session.state}"`);
+          }
+          session.markRunning();
+          return send("resume");
+        },
+        fork: () => this.spawn({ ...request, goal: `${request.goal} (forked from ${session.subagentId})` }, parent),
+      }),
+    );
 
-    // For one-shot: actually POST to the ACP endpoint.
     if (!continuable) {
-      try {
-        const response = await fetch(`${this.opts.endpoint}/tasks`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(this.opts.authToken ? { Authorization: `Bearer ${this.opts.authToken}` } : {}),
-          },
-          body: JSON.stringify({
-            goal: request.goal,
-            requiredCapabilities: request.requiredCapabilities,
-            contextHandoff: request.contextHandoff,
-          }),
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status} from ${this.opts.endpoint}/tasks`);
-        const data = (await response.json()) as { output?: string; error?: string; sessionId?: string };
-        if (resolveResult) {
-          resolveResult({
-            subagentId,
+      void fetch(`${endpoint}/tasks`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          goal: request.goal,
+          requiredCapabilities: request.requiredCapabilities,
+          contextHandoff: request.contextHandoff,
+        }),
+      })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status} from ${endpoint}/tasks`);
+          const data = (await response.json()) as { output?: string; error?: string; sessionId?: string };
+          session.complete({
+            subagentId: session.subagentId,
             status: data.error ? "failed" : "completed",
             output: data.output ?? "",
             error: data.error,
             metadata: { acpSessionId: data.sessionId ?? acpSessionId },
           });
-          handle.state = data.error ? "failed" : "completed";
-        }
-      } catch (err) {
-        if (rejectResult) {
-          rejectResult(err instanceof Error ? err : new Error(String(err)));
-          handle.state = "failed";
-        }
-      }
+        })
+        .catch((err: unknown) => session.fail(err instanceof Error ? err : new Error(String(err))));
     }
 
     return handle;
-  }
-
-  list(): SubagentHandle[] {
-    return [...this.handles.values()];
-  }
-
-  async stopAll(): Promise<void> {
-    for (const handle of this.handles.values()) {
-      if (handle.state === "running" || handle.state === "pending") {
-        try {
-          await handle.interrupt("host shutdown");
-        } catch {
-          /* best-effort */
-        }
-      }
-    }
   }
 }
 
@@ -914,12 +689,12 @@ export interface SdkProviderOptions {
  * from a derived share of the parent's budget. Isolation here is runtime
  * state isolation, not a security boundary.
  */
-export class SDKSubagentProvider implements SubagentProvider {
+export class SDKSubagentProvider extends BaseSubagentProvider {
   readonly type = "sdk" as const;
-  private readonly handles = new Map<string, SubagentHandle>();
   private readonly opts: SdkProviderOptions;
 
   constructor(opts: SdkProviderOptions = {}) {
+    super();
     this.opts = opts;
   }
 
@@ -933,21 +708,7 @@ export class SDKSubagentProvider implements SubagentProvider {
       throw new Error("SDKSubagentProvider requires an agentRegistryFactory when the runtime exposes no `agents`");
     }
     const delegator = new Delegator({ runtime, agents });
-    const handle = spawnDelegated("sdk", delegator, request, parent, (r) => this.spawn(r, parent));
-    this.handles.set(handle.subagentId, handle);
-    return handle;
-  }
-
-  list(): SubagentHandle[] {
-    return [...this.handles.values()];
-  }
-
-  async stopAll(): Promise<void> {
-    for (const handle of this.handles.values()) {
-      if (handle.state === "running" || handle.state === "pending") {
-        await handle.interrupt("host shutdown");
-      }
-    }
+    return this.track(spawnDelegated("sdk", delegator, request, parent, (r) => this.spawn(r, parent)));
   }
 }
 
@@ -996,13 +757,13 @@ const EXTERNAL_PRESETS: Partial<
  * the stderr tail. Spawn errors, timeouts and interrupts reject the promise.
  * Continuable sessions are not supported.
  */
-export class ExternalAgentSubagentProvider implements SubagentProvider {
+export class ExternalAgentSubagentProvider extends BaseSubagentProvider {
   readonly type = "external" as const;
-  private readonly handles = new Map<string, SubagentHandle>();
   private readonly children = new Map<string, ChildProcess>();
   private readonly opts: ExternalAgentProviderOptions;
 
   constructor(opts: ExternalAgentProviderOptions) {
+    super();
     this.opts = opts;
   }
 
@@ -1030,24 +791,21 @@ export class ExternalAgentSubagentProvider implements SubagentProvider {
     return { binary, args, env };
   }
 
-  async spawn(request: SubagentSpawnRequest, _parent?: ExecutionContext): Promise<SubagentHandle> {
+  async spawn(request: SubagentSpawnRequest, parent?: ExecutionContext): Promise<SubagentHandle> {
     if (request.continuable) {
       throw new Error("external subagents are one-shot; continuable sessions are not supported");
     }
     const { binary, args, env } = this.invocation(request.goal);
-    const subagentId = newDelegationId();
-    const providerRunId = newRunId();
     const timeoutMs = this.opts.timeoutMs ?? 15 * 60_000;
     const maxOutputBytes = this.opts.maxOutputBytes ?? 1024 * 1024;
+    const session = new SubagentSession({ provider: "external", request });
 
-    let state: SubagentState = "running";
-    let rejectRun: (e: Error) => void = () => {};
     const child = spawn(binary, args, {
       cwd: this.opts.cwd,
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    this.children.set(subagentId, child);
+    this.children.set(session.subagentId, child);
 
     const terminate = (): void => {
       if (child.exitCode !== null || child.signalCode !== null) return;
@@ -1056,104 +814,68 @@ export class ExternalAgentSubagentProvider implements SubagentProvider {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       }, 5_000).unref();
     };
+    // Any terminal transition (cancel, timeout, start failure, normal exit) leaves no process behind.
+    void session.terminated.then(terminate);
 
-    const promise = new Promise<SubagentResult>((resolve, reject) => {
-      rejectRun = reject;
-      const stdout: Buffer[] = [];
-      let stdoutBytes = 0;
-      let truncated = false;
-      let stderrTail = "";
+    const stdout: Buffer[] = [];
+    let stdoutBytes = 0;
+    let truncated = false;
+    let stderrTail = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      const room = maxOutputBytes - stdoutBytes;
+      if (room <= 0) {
+        truncated = true;
+        return;
+      }
+      const kept = chunk.length > room ? chunk.subarray(0, room) : chunk;
+      if (kept.length < chunk.length) truncated = true;
+      stdout.push(kept);
+      stdoutBytes += kept.length;
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrTail = (stderrTail + chunk.toString("utf8")).slice(-4000);
+    });
 
-      child.stdout?.on("data", (chunk: Buffer) => {
-        const room = maxOutputBytes - stdoutBytes;
-        if (room <= 0) {
-          truncated = true;
-          return;
-        }
-        const kept = chunk.length > room ? chunk.subarray(0, room) : chunk;
-        if (kept.length < chunk.length) truncated = true;
-        stdout.push(kept);
-        stdoutBytes += kept.length;
-      });
-      child.stderr?.on("data", (chunk: Buffer) => {
-        stderrTail = (stderrTail + chunk.toString("utf8")).slice(-4000);
-      });
+    const timer = setTimeout(() => {
+      session.fail(new Error(`external agent timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timer.unref();
 
-      const timer = setTimeout(() => {
-        state = "failed";
-        terminate();
-        reject(new Error(`external agent timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      timer.unref();
-
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        if (state === "running") state = "failed";
-        reject(new Error(`failed to start external agent "${binary}": ${err.message}`));
-      });
-      child.on("close", (code, signal) => {
-        clearTimeout(timer);
-        this.children.delete(subagentId);
-        if (state !== "running") return;
-        const output = Buffer.concat(stdout).toString("utf8");
-        const ok = code === 0;
-        state = ok ? "completed" : "failed";
-        resolve({
-          subagentId,
-          status: ok ? "completed" : "failed",
-          output,
-          error: ok
-            ? undefined
-            : `exit code ${code ?? "null"}${signal ? ` (signal ${signal})` : ""}: ${stderrTail.trim()}`,
-          metadata: { agent: this.opts.agent, exitCode: code, truncated },
-        });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      this.children.delete(session.subagentId);
+      session.fail(new Error(`failed to start external agent "${binary}": ${err.message}`));
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      this.children.delete(session.subagentId);
+      if (!session.live) return;
+      const ok = code === 0;
+      session.complete({
+        subagentId: session.subagentId,
+        status: ok ? "completed" : "failed",
+        output: Buffer.concat(stdout).toString("utf8"),
+        error: ok
+          ? undefined
+          : `exit code ${code ?? "null"}${signal ? ` (signal ${signal})` : ""}: ${stderrTail.trim()}`,
+        metadata: { agent: this.opts.agent, exitCode: code, truncated },
       });
     });
-    promise.catch(() => {});
 
-    const handle: SubagentHandle = {
-      subagentId,
-      providerRunId,
-      provider: "external",
-      continuable: false,
-      get state() {
-        return state;
-      },
-      set state(next: SubagentState) {
-        state = next;
-      },
-      request,
-      promise,
-      async send(): Promise<SubagentResult> {
-        throw new Error("one-shot external subagent does not support send() — spawn a new one");
-      },
-      async interrupt(reason?: string): Promise<void> {
-        if (state !== "running") return;
-        state = "cancelled";
-        terminate();
-        rejectRun(new Error(reason ?? "interrupted"));
-      },
-      async resume(): Promise<SubagentResult> {
-        throw new Error("one-shot external subagent cannot be resumed");
-      },
-      fork: async (): Promise<SubagentHandle> =>
-        this.spawn({ ...request, goal: `${request.goal} (forked from ${subagentId})` }, _parent),
-    };
-
-    this.handles.set(subagentId, handle);
-    return handle;
-  }
-
-  list(): SubagentHandle[] {
-    return [...this.handles.values()];
-  }
-
-  async stopAll(): Promise<void> {
-    for (const handle of this.handles.values()) {
-      if (handle.state === "running" || handle.state === "pending") {
-        await handle.interrupt("host shutdown");
-      }
-    }
+    return this.track(
+      session.toHandle({
+        async send(): Promise<SubagentResult> {
+          throw new Error("one-shot external subagent does not support send() — spawn a new one");
+        },
+        async interrupt(reason = "interrupted"): Promise<void> {
+          session.cancel(reason);
+        },
+        async resume(): Promise<SubagentResult> {
+          throw new Error("one-shot external subagent cannot be resumed");
+        },
+        fork: () => this.spawn({ ...request, goal: `${request.goal} (forked from ${session.subagentId})` }, parent),
+      }),
+    );
   }
 }
 

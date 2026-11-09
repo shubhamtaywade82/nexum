@@ -9,7 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import { BudgetExhaustedError } from "../../models/errors.js";
-import type { BudgetUsage, ExecutionBudget, RunId, SessionId } from "../../core/types.js";
+import type { BudgetMeter, BudgetUsage, ExecutionBudget, RunId, SessionId } from "../../core/types.js";
 
 /** Error thrown when a run exceeds a declared budget dimension. */
 export class WallClockBudgetError extends BudgetExhaustedError {
@@ -49,7 +49,7 @@ export interface BudgetTrackerOptions {
   now?: () => number;
 }
 
-export class BudgetTracker {
+export class BudgetTracker implements BudgetMeter {
   readonly runId: RunId;
   readonly sessionId: SessionId;
   readonly budget: ExecutionBudget;

@@ -14,7 +14,7 @@ import type { Capability } from "../../models/catalog.js";
 import type { ExecutionResult, ExecutionContext, StrategyName } from "../../core/types.js";
 import type { ExecutionStrategy } from "./execution-strategy.js";
 import { ReActStrategy, runGuarded } from "./execution-strategy.js";
-import { LoopDetector } from "../../orchestration/loop-detector.js";
+import { LoopDetector } from "../../core/loop/loop-detector.js";
 import { TransientContextManager } from "../context/execution-context.js";
 import type { ExecutionStep } from "../types.js";
 

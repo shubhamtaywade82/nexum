@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Removed: the unused multi-agent subsystem
+
+- `src/multiagent` (message bus, shared state, consensus, supervisor loop), its tests, its `@nemesis-oss/nexum/multiagent` subpath, and the package-root exports are removed. No CLI command, host endpoint, TUI view or runtime path used them.
+- To restore them: `git checkout 01b42ab -- src/multiagent tests/multiagent`, then re-add the exports.
+
+### Subagents: one lifecycle owner, no terminal-state overwrites
+
+- Every provider now reports through `SubagentSession` (`src/subagents/session.ts`). Transitions follow one table and a terminal state never changes: a late `interrupt()` on a completed child keeps it `completed`. Previously the ACP and process providers overwrote it with `cancelled`.
+- **Breaking for `SubagentHandle` consumers:** `state` is read-only. Only the owning session moves it; callers that assigned `handle.state` must call `interrupt()` instead.
+- New `handle.terminated` resolves once with the terminal state, for one-shot and continuable children alike. The service frees a slot on it, so a continuable child whose process dies no longer holds a slot until `cancel()`.
+- A continuable child whose process exits while live fails its session. Every terminal transition stops its process, so a failed session cannot leave a process running.
+- The process provider watches `close` rather than `exit`, so a response written just before the child exits is delivered.
+- The ACP provider posts a one-shot task in the background and returns the handle at once, matching the other providers. Previously `spawn()` waited for the whole remote task.
+
+### Prompt: edits compose, and a paste moves the cursor past itself
+
+- Two keystrokes delivered before a re-render now both apply. Two backspaces in one tick removed one character, because each read the cursor from the last render.
+- A paste moves the cursor past the text it inserted. Previously the next typed character landed before the paste.
+- The prompt's text, cursor and paste bursts live in `PromptSession` (`src/ui/input/prompt-session.ts`), tested without rendering. The App keeps key routing and rendering.
+
+### Layering: the core plane depends on no plane above it
+
+- **Breaking for `@nemesis-oss/nexum/core` consumers:** the core entry point no longer re-exports runtime implementations (`DefaultAgentRuntime`, the strategies, `BudgetTracker` and the budget errors, the execution-context helpers, the registries). They are exported from `@nemesis-oss/nexum/runtime`, which is where they live.
+- Kernel contracts now live in core: `PlanStep`, `StepStatus`, `StepOutcome`, `HistoryEntry` (`core/plan`), `LoopDetector` (`core/loop`), `StrategyHooks` (`core/strategies`), and the `KernelEvent` and `BudgetMeter` ports. `EventSink.publish` accepts any event with a `type`, so the runtime's event unions are no longer a kernel dependency.
+- `tests/architecture/layering.test.ts` enforces the documented plane rules on the import graph.
+
+### Sandbox image runs as a non-root user
+
+- `docker/nexum-sandbox` now sets `USER node`. The shell tool already passes the host uid at run time, so model-issued commands are unaffected.
+- **Breaking for images built FROM `nexum-sandbox`:** a `RUN` step now runs as `node` unless the derived Dockerfile says `USER root`. Add that line before any step that needs root (package installs, writes outside the workspace).
+
+### Trust covers skills, and learned skills keep trust
+
+- A workspace's `.nexum/skills` are part of its trust digest. Workspace skills load only once the workspace is trusted, so an existing trusted workspace with skills needs one `nexum trust` after upgrading. Until then its workspace settings are withheld as well, down to the safe keys.
+- Nexum's own writes into the skill tree (learned skills, the legacy migration) keep an existing trust decision and never create one.
+
 ### Evolution: one champion per cycle
 
 - `--parallel n` now runs n candidate attempts concurrently and selects one champion. The champion is chosen only from attempts that passed the engine's own eligibility gate, ranked by development deltas (capability, then reliability, then efficiency), with a deterministic tie-break on slot. Held-out results can only veto an attempt; they never rank one.

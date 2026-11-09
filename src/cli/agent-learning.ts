@@ -4,6 +4,7 @@ import { ExperienceIngestionBridge } from "../learning/experience-bridge.js";
 import { SkillsRegistry } from "../skills/registry.js";
 import { SkillContent } from "../skills/types.js";
 import { Provider } from "../models/adapters/provider.js";
+import { keepTrustForNexumWrite, WorkspaceTrustStore, workspaceDigest, workspaceSkillGate } from "./workspace-trust.js";
 
 export interface AgentLearningOptions {
   workspaceRoot: string;
@@ -22,18 +23,27 @@ export interface AgentLearningOptions {
    * to true. Tests that don't want a second SQLite handle can opt out.
    */
   enableExperienceIngestion?: boolean;
+  /** Trust decisions for the workspace's own skills. Defaults to the global store. */
+  trustStore?: WorkspaceTrustStore;
 }
 
 export class AgentLearning {
   readonly memory: MemoryStore;
   readonly learning: LearningEngine;
-  readonly skills: SkillsRegistry;
   /** EVO-002 bridge: every persisted episode → experience.db. Owned here for close() on shutdown. */
   private readonly experienceBridge: ExperienceIngestionBridge | null;
+  private readonly trustStore: WorkspaceTrustStore;
+  /** Assigned by refreshSkills(), which the constructor runs before anything reads it. */
+  private skills!: SkillsRegistry;
+  /** Fingerprint of the discovery inputs (gate + trust-bearing files) the current registry was built from. */
+  private skillsKey = "";
+  private withheldReason: string | null = null;
+  private lastNotifiedReason: string | null = null;
   pinnedSkillId: string | null = null;
 
-  constructor(opts: AgentLearningOptions) {
+  constructor(private readonly opts: AgentLearningOptions) {
     this.memory = opts.memory;
+    this.trustStore = opts.trustStore ?? WorkspaceTrustStore.global();
     const enableBridge = opts.enableExperienceIngestion ?? true;
     this.experienceBridge = enableBridge
       ? new ExperienceIngestionBridge({
@@ -46,11 +56,44 @@ export class AgentLearning {
       provider: opts.provider,
       memory: opts.memory,
       onEpisodePersisted: this.experienceBridge?.ingest,
+      guardSkillWrite: keepTrustForNexumWrite(opts.workspaceRoot, this.trustStore),
     });
+    this.refreshSkills();
+  }
+
+  /**
+   * Rebuilds the skills registry when the workspace's skill gate or any
+   * trust-bearing file changed, so `nexum trust` and a pulled skill both take
+   * effect on the next turn. Cheap when nothing changed (one digest).
+   */
+  private refreshSkills(): void {
+    const root = this.opts.workspaceRoot;
+    const gate = workspaceSkillGate(root, this.trustStore);
+    const key = `${gate.allowed ? "open" : "withheld"}:${workspaceDigest(root).digest}`;
+    if (key === this.skillsKey) return;
+    this.skillsKey = key;
     this.skills = SkillsRegistry.discover(
-      { workspaceRoot: opts.workspaceRoot, homeDir: opts.skillsHomeDir },
-      opts.projectLanguage,
+      { workspaceRoot: root, homeDir: this.opts.skillsHomeDir, workspaceTrusted: gate.allowed },
+      this.opts.projectLanguage,
     );
+    this.withheldReason = gate.allowed ? null : (gate.reason ?? null);
+  }
+
+  /** The reason the workspace's skills are currently withheld, or null when they load. */
+  skillsWithheldReason(): string | null {
+    this.refreshSkills();
+    return this.withheldReason;
+  }
+
+  /**
+   * The withheld reason once per change, for a one-line status notice. Returns
+   * null when skills load or the same reason was already reported.
+   */
+  takeWithheldNotice(): string | null {
+    const reason = this.skillsWithheldReason();
+    if (reason === this.lastNotifiedReason) return null;
+    this.lastNotifiedReason = reason;
+    return reason;
   }
 
   /** Releases the experience-store SQLite handle. Call on shutdown. */
@@ -66,6 +109,7 @@ export class AgentLearning {
   }
 
   resolveForPrompt(userMessage: string): SkillContent[] {
+    this.refreshSkills();
     if (this.pinnedSkillId) {
       const skill = this.skills.activate(this.pinnedSkillId);
       return skill ? [skill] : [];
@@ -78,6 +122,7 @@ export class AgentLearning {
   }
 
   getSkillsRegistry(): SkillsRegistry {
+    this.refreshSkills();
     return this.skills;
   }
 

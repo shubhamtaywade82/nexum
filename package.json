@@ -46,8 +46,8 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs",
     "db:generate": "drizzle-kit generate",
     "test": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:coverage": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:server": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand tests/server tests/protocol",
-    "test:e2e": "NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js tests/e2e",
     "test:docker": "NEXUM_DOCKER_TESTS=1 NEXUM_TEST_NO_GLOBAL=true node --experimental-vm-modules node_modules/jest/bin/jest.js tests/integration",
     "start": "node dist/ui/index.js",
     "dev": "tsx src/ui/index.ts",
@@ -98,7 +98,6 @@
   "dependencies": {
     "@11ty/gray-matter": "^3.0.0",
     "@modelcontextprotocol/client": "^2.4.0",
-    "@nemesis-oss/binance-sdk": "^3.0.0",
     "@nemesis-oss/ollama-sdk": "^1.25.0",
     "@nemesis-oss/termina-core": "^0.1.0",
     "@openuidev/lang-core": "^0.3.0",
@@ -164,10 +163,6 @@
     "./evaluation": {
       "types": "./dist/evaluation/index.d.ts",
       "import": "./dist/evaluation/index.js"
-    },
-    "./multiagent": {
-      "types": "./dist/multiagent/index.d.ts",
-      "import": "./dist/multiagent/index.js"
     },
     "./rag": {
       "types": "./dist/rag/index.d.ts",

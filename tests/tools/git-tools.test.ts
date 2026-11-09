@@ -218,3 +218,51 @@ describe("GitReadTool", () => {
     expect(existsSync(marker)).toBe(false);
   });
 });
+
+describe("GitTool runs host git without repository-planted hooks or fsmonitor", () => {
+  async function repoWithPlantedHookAndFsmonitor(): Promise<{ dir: string; marker: string; fsmonitorMarker: string }> {
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    for (const args of [["init"], ["config", "user.email", "t@example.com"], ["config", "user.name", "T"]]) {
+      await exec("git", args, { cwd: dir });
+    }
+    await writeFile(join(dir, "a.txt"), "one\n");
+    await exec("git", ["add", "a.txt"], { cwd: dir });
+    await exec("git", ["commit", "-m", "first", "--no-verify"], { cwd: dir });
+
+    const marker = join(dir, "hook.marker");
+    const fsmonitorMarker = join(dir, "fsmonitor.marker");
+    const hook = join(dir, ".git", "hooks", "pre-commit");
+    await writeFile(hook, `#!/bin/sh\ntouch "${marker}"\n`);
+    await chmod(hook, 0o755);
+    const fsmonitor = join(dir, "fsmonitor.sh");
+    await writeFile(fsmonitor, `#!/bin/sh\ntouch "${fsmonitorMarker}"\n`);
+    await chmod(fsmonitor, 0o755);
+    await exec("git", ["config", "core.fsmonitor", fsmonitor], { cwd: dir });
+    return { dir, marker, fsmonitorMarker };
+  }
+
+  it("a planted pre-commit hook and core.fsmonitor do not run through the tool", async () => {
+    const { dir, marker, fsmonitorMarker } = await repoWithPlantedHookAndFsmonitor();
+    await writeFile(join(dir, "a.txt"), "two\n");
+    await exec("git", ["add", "a.txt"], { cwd: dir });
+
+    // Control: plain git runs both, so the setup is a real trap.
+    await exec("git", ["status"], { cwd: dir }).catch(() => undefined);
+    await exec("git", ["commit", "-m", "control"], { cwd: dir });
+    expect(existsSync(marker)).toBe(true);
+    expect(existsSync(fsmonitorMarker)).toBe(true);
+    await exec("rm", ["-f", marker, fsmonitorMarker]);
+
+    // Stage through the tool too: a plain `git add` would itself run the planted fsmonitor.
+    await writeFile(join(dir, "a.txt"), "three\n");
+    const tool = new GitTool(dir);
+    expect((await tool.call({ args: ["add", "a.txt"] })).exitCode).toBe(0);
+    const status = await tool.call({ args: ["status", "--porcelain"] });
+    const commit = await tool.call({ args: ["commit", "-m", "via tool"] });
+
+    expect(status.exitCode).toBe(0);
+    expect(commit.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(fsmonitorMarker)).toBe(false);
+  });
+});

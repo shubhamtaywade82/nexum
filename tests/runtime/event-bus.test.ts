@@ -32,4 +32,34 @@ describe("EventBus", () => {
     bus.publish({ type: "status.changed", status: "x" });
     expect(seen).toEqual(["first", "second"]);
   });
+
+  it("a throwing subscriber does not stop delivery or reach the publisher", () => {
+    const failures: Array<{ message: string; type: string }> = [];
+    const bus = new EventBus({
+      onListenerError: (error, event) => failures.push({ message: (error as Error).message, type: event.type }),
+    });
+    const seen: string[] = [];
+    bus.subscribe(() => {
+      throw new Error("boom");
+    });
+    bus.subscribe(() => seen.push("after-throw"));
+
+    expect(() => bus.publish({ type: "status.changed", status: "x" })).not.toThrow();
+    expect(seen).toEqual(["after-throw"]);
+    expect(failures).toEqual([{ message: "boom", type: "status.changed" }]);
+  });
+
+  it("reports a failing subscriber to stderr by default", () => {
+    const write = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const bus = new EventBus();
+      bus.subscribe(() => {
+        throw new Error("boom");
+      });
+      bus.publish({ type: "status.changed", status: "x" });
+      expect(write).toHaveBeenCalledWith("[event-bus] a subscriber failed on status.changed: boom\n");
+    } finally {
+      write.mockRestore();
+    }
+  });
 });

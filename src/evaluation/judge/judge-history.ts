@@ -20,6 +20,11 @@ export interface JudgeVerdict {
   /** Weighted overall score, normalized 0..1. */
   overall: number;
   pass: boolean;
+  /**
+   * Directives the screen found in the judged text (see injection-screen.ts). Present and non-empty means
+   * the verdict is flagged, and a flagged verdict never passes.
+   */
+  injectionFindings?: Array<{ field: string; label: string }>;
   explanation: string;
   /** Model that judged (for audits + calibration drift analysis). */
   judgeModel: string;

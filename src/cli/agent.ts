@@ -32,6 +32,7 @@ import { IntentResolver } from "../intent/intent-resolver.js";
 import { MemoryStore } from "../memory/store.js";
 import { DocsStore } from "../docs/store.js";
 import { AgentConversation } from "./agent-conversation.js";
+import { browserPack, docsPack, lspPack, railsPack, tradingPack } from "../tools/packs/index.js";
 import { AgentToolManager, type McpRegistrationOptions } from "./agent-tools.js";
 import { McpApprovalStore, McpTrustPolicy, mcpTrustPolicyFromConfig } from "../mcp/trust.js";
 import { resolveMcpEnv } from "../mcp/env.js";
@@ -90,6 +91,7 @@ import { WebService, defaultWebService } from "../web-service/index.js";
 
 import { LOCAL_DELEGATION_SYSTEM_ADDENDUM } from "../tools/delegate-tool.js";
 import { detectEscalationHint, isLookupPrompt } from "./agent-escalation.js";
+import { EscalationLadder } from "./escalation-ladder.js";
 // ── Kernel (agent execution kernel) ───────────────────────────────────
 import { ApprovalBroker, describeConfirmation } from "../core/policy/approval-broker.js";
 import { FILE_EDIT_TOOLS } from "../core/policy/rules.js";
@@ -164,6 +166,8 @@ type AgentEventHandler<E extends AgentEventName> = NonNullable<AgentEvents[E]>;
 
 export interface AgentOptions {
   config?: Partial<CliConfig>;
+  /** Trust decisions for the workspace's own skills. Defaults to the global store. */
+  trustStore?: WorkspaceTrustStore;
   /** Inject a Decision Plane gateway (tests); honored only when enableDecision is on. */
   decisionGateway?: import("../models/decision/index.js").DecisionGateway;
   events?: AgentEvents;
@@ -348,13 +352,14 @@ export class Agent {
       },
     });
 
-    this.tools.registerLspTools(this.intelligence.lspManager);
-    this.tools.registerRailsTools(this.intelligence.railsIndex);
+    // Each domain mounts its own pack; the tool surface stays one seam (registerToolPack).
+    this.tools.registerToolPack(lspPack(this.intelligence.lspManager));
+    this.tools.registerToolPack(railsPack(this.intelligence.railsIndex));
 
     this.browser = new BrowserManager();
-    this.tools.registerBrowserTools(this.browser, () => this.attachments);
+    this.tools.registerToolPack(browserPack(this.browser, () => this.attachments));
     this.binanceStream = new BinanceStreamManager();
-    this.tools.registerBinanceStreamTools(this.binanceStream);
+    this.tools.registerToolPack(tradingPack({ stream: this.binanceStream }));
 
     this.lspManager = this.intelligence.lspManager;
     this.railsIndex = this.intelligence.railsIndex;
@@ -364,7 +369,9 @@ export class Agent {
     // WorkspaceManager, the single owner of that decision (docs/REBRANDING.md §4).
     // (the one-time .devagent → .nexum migration copies config.json: keep a
     // trusted workspace trusted across it, never trust an untrusted one)
-    const statePaths = preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), () =>
+    // One trust store for every decision this agent makes about the workspace (the global one unless injected).
+    const trustStore = opts.trustStore ?? WorkspaceTrustStore.global();
+    const statePaths = preservingTrust(cfg.workspaceRoot, trustStore, () =>
       new WorkspaceManager(cfg.workspaceRoot).ensure(),
     );
 
@@ -378,7 +385,7 @@ export class Agent {
           // content: ignore them (servers needing approval then ask)
           approvals: cfg.workspaceTrust?.trusted
             ? new McpApprovalStore(join(statePaths.dir, "mcp-trust.json"), (write) =>
-                preservingTrust(cfg.workspaceRoot, WorkspaceTrustStore.global(), write),
+                preservingTrust(cfg.workspaceRoot, trustStore, write),
               )
             : undefined,
         })
@@ -408,7 +415,7 @@ export class Agent {
     });
 
     this.docs = new DocsStore(statePaths.docsDb);
-    this.tools.registerDocsTools(this.docs, cfg.workspaceRoot);
+    this.tools.registerToolPack(docsPack(this.docs, cfg.workspaceRoot));
 
     const projectLanguage = this.intelligence.railsIndex.enabled
       ? this.intelligence.railsIndex.workspace.isRails
@@ -423,6 +430,7 @@ export class Agent {
       provider: this.stack.provider,
       memory: this.memory,
       skillsHomeDir: opts.skillsHomeDir,
+      trustStore: opts.trustStore,
       projectLanguage,
       executorModel: cfg.model ?? this.stack.provider.currentModel,
     });
@@ -801,6 +809,8 @@ export class Agent {
 
     const learnings = this.learning.getLearnings();
     const activatedSkills = this.learning.resolveForPrompt(userMessage);
+    const skillsNotice = this.learning.takeWithheldNotice();
+    if (skillsNotice) this.emit("onStatus", skillsNotice);
 
     if (this.conversation.isEmpty()) {
       const cfg = loadConfig();
@@ -870,15 +880,19 @@ export class Agent {
     // Hybrid local+cloud routing: turns attempt the quick model first
     // (local-preferred) unless the heuristic pre-filter, self-consistency
     // divergence, or explicit hints escalate to the primary model.
-    let escalated = false;
     let delegationAddendumInjected = false;
-    const forceEscalate = opts.escalate === true;
     const injectDelegationAddendum = () => {
       if (this.stack.localWorker && !delegationAddendumInjected) {
         this.conversation.pushSystemMessage(LOCAL_DELEGATION_SYSTEM_ADDENDUM);
         delegationAddendumInjected = true;
       }
     };
+    // Every escalation goes through the ladder: one transition, the addendum, the status line.
+    const ladder = new EscalationLadder(escalationHint, (status) => {
+      injectDelegationAddendum();
+      this.emit("onStatus", status);
+    });
+    const forceEscalate = opts.escalate === true;
 
     // Layer-1 heuristic gate: an explicit complexity trigger (debug/architecture/
     // proof/multi-step/etc.) skips the quick-model attempt entirely instead of
@@ -894,28 +908,18 @@ export class Agent {
             this.stack.heuristicRouter.classify(userMessage),
           )
         : undefined;
-    if (forceEscalate) {
-      escalated = true;
-      injectDelegationAddendum();
-      this.emit("onStatus", "escalating to primary model: a local attempt at this step already failed verification");
-    }
-    if (routing && !escalated) {
+    if (forceEscalate) ladder.escalate("a local attempt at this step already failed verification");
+    if (routing && !ladder.escalated) {
       const heuristic = routing;
       if (heuristic.decision === "cloud") {
-        escalated = true;
-        injectDelegationAddendum();
-        this.emit("onStatus", `escalating to primary model: ${heuristic.why}`);
+        ladder.escalate(heuristic.why);
       } else if (heuristic.decision === "unknown" && !requiresToolEvidence && this.stack.selfConsistency) {
         // Self-consistency, not verbalized self-confidence: measures agreement
         // across independent samples rather than asking the model to judge its
         // own output (that approach was tried and rejected — see the comment
         // above requiresToolEvidence's verifyingLookup/verifyingRecovery usage).
         const sc = await this.stack.selfConsistency.evaluate(userMessage);
-        if (sc.shouldEscalate) {
-          escalated = true;
-          injectDelegationAddendum();
-          this.emit("onStatus", `escalating to primary model: low self-consistency agreement (${sc.score.toFixed(2)})`);
-        }
+        if (sc.shouldEscalate) ladder.escalate(`low self-consistency agreement (${sc.score.toFixed(2)})`);
       }
     }
 
@@ -964,18 +968,13 @@ export class Agent {
     // legacy reasoning is preserved verbatim inside the hooks.
     const hooks: StrategyHooks = {
       onTurnStart: async (turnInfo) => {
-        if (!escalated && consecutiveToolErrors >= TOOL_FAILURE_ESCALATION_THRESHOLD) {
-          escalated = true;
-          injectDelegationAddendum();
-          this.emit(
-            "onStatus",
-            `escalating to primary model: quick model failed ${consecutiveToolErrors} consecutive tool calls`,
-          );
+        if (consecutiveToolErrors >= TOOL_FAILURE_ESCALATION_THRESHOLD) {
+          ladder.escalate(`quick model failed ${consecutiveToolErrors} consecutive tool calls`);
         }
         this.conversation.pruneContext();
         // Size this turn to the model that will answer it: a quick 2B model
         // and a cloud model share one transcript, but not one budget.
-        turnBudget = this.budgetFor(escalated ? escalationHint : "quick");
+        turnBudget = this.budgetFor(ladder.capability);
         if (turnBudget) {
           const compacted = await this.conversation.compactToBudget(
             turnBudget.contextTokens,
@@ -1002,14 +1001,14 @@ export class Agent {
         );
         // escalate_task must always be offered while still on the local model —
         // heuristic/LLM tool-selection scoring could otherwise leave it out.
-        if (!escalated && !activeTools.some((t) => t.name === "escalate_task")) {
+        if (!ladder.escalated && !activeTools.some((t) => t.name === "escalate_task")) {
           const escalateTool = this.tools.registry.getTools().find((t) => t.name === "escalate_task");
           if (escalateTool) activeTools.push(escalateTool);
         }
         // Symmetric: delegate_to_local must always be offered once escalated —
         // it's the primary model's way to push boilerplate back down instead of
         // spending its own tokens on it.
-        if (escalated && this.stack.localWorker && !activeTools.some((t) => t.name === "delegate_to_local")) {
+        if (ladder.escalated && this.stack.localWorker && !activeTools.some((t) => t.name === "delegate_to_local")) {
           const delegateTool = this.tools.registry.getTools().find((t) => t.name === "delegate_to_local");
           if (delegateTool) activeTools.push(delegateTool);
         }
@@ -1023,7 +1022,7 @@ export class Agent {
       },
 
       callModel: async (turnInfo, opts) => {
-        const capability: Capability | null = escalated ? escalationHint : "quick";
+        const capability: Capability | null = ladder.capability;
 
         // Buffer the attempt's streamed text instead of emitting it live, so a bad
         // quick-model answer can be discarded and re-run on the primary model
@@ -1043,15 +1042,15 @@ export class Agent {
         // isn't trustworthy, so there's no cheap fix for that failure mode here;
         // it's an accepted residual risk (see escalate-on-hard-task benchmark
         // case in src/benchmark/cases-agentic.ts, which stays red on purpose).
-        const verifyingLookup = requiresToolEvidence && turnInfo.turn === 0 && !escalated;
-        const verifyingRecovery = !escalated && previousTurnHadToolError;
+        const verifyingLookup = requiresToolEvidence && turnInfo.turn === 0 && !ladder.escalated;
+        const verifyingRecovery = !ladder.escalated && previousTurnHadToolError;
         previousTurnHadToolError = false;
         const verifying = verifyingLookup || verifyingRecovery;
         // Opt-in critic pass (NEXUM_VERIFIER) on quick-model final answers.
         // Off by default for the reason above: a small model judging its own
         // output is weak evidence. When on, the answer is buffered so a
         // rejected draft never reaches the UI.
-        const critiquing = !escalated && !!this.stack.verifier;
+        const critiquing = !ladder.escalated && !!this.stack.verifier;
         let buffered: string[] | null = verifying || critiquing ? [] : null;
         const makeChatOpts = (): ChatOptions => ({
           stream: true,
@@ -1092,14 +1091,11 @@ export class Agent {
         };
 
         if (verifying && !(assistantMessage.tool_calls ?? []).length) {
-          this.emit(
-            "onStatus",
+          ladder.escalate(
             verifyingRecovery
-              ? "escalating to primary model: previous tool call failed and the quick model answered instead of retrying or escalating"
-              : "escalating to primary model: quick model answered a lookup query without calling a tool",
+              ? "previous tool call failed and the quick model answered instead of retrying or escalating"
+              : "quick model answered a lookup query without calling a tool",
           );
-          escalated = true;
-          injectDelegationAddendum();
           buffered = null;
           chatOpts = makeChatOpts();
           chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
@@ -1110,9 +1106,7 @@ export class Agent {
           (await this.critiqueQuickAnswer(userMessage, assistantMessage.content ?? "")) !== null
         ) {
           const issues = this.lastCritique ?? [];
-          this.emit("onStatus", `escalating to primary model: critic rejected the quick-model answer`);
-          escalated = true;
-          injectDelegationAddendum();
+          ladder.escalate("critic rejected the quick-model answer");
           this.conversation.pushSystemMessage(
             `[system] A reviewer rejected the previous draft answer:\n${issues.map((i) => `- ${i}`).join("\n")}\nAddress these issues in your answer.`,
           );
@@ -1226,14 +1220,7 @@ export class Agent {
           );
           previousTurnHadToolError = true;
           consecutiveToolErrors += 1;
-          if (!escalated) {
-            escalated = true;
-            injectDelegationAddendum();
-            this.emit(
-              "onStatus",
-              `escalating to ${escalationHint ?? "the primary model"}: local model escaped workspace root`,
-            );
-          }
+          ladder.escalate("local model escaped workspace root", escalationHint ?? "the primary model");
 
           if (this.loopDetector.record(name, args, "PathEscapeError")) {
             return {
@@ -1265,9 +1252,7 @@ export class Agent {
         this.conversation.pushToolResult(offloaded.text);
 
         if (name === "escalate_task" && record.escalate === true) {
-          escalated = true;
-          injectDelegationAddendum();
-          this.emit("onStatus", `escalating to ${escalationHint ?? "the primary model"}: ${record.reason}`);
+          ladder.escalate(String(record.reason), escalationHint ?? "the primary model");
         }
 
         // A shell command that exits non-zero reports exitCode, not error, but is just as much a failure.

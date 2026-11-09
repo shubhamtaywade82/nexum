@@ -19,8 +19,11 @@ export interface TaskExecutionResult {
   taskId: string;
   success: boolean;
   verificationPassed: boolean;
-  toolCalls: number;
-  toolErrors: number;
+  /** Tool calls executed. Absent when not recorded: such a result contributes nothing to the reliability rate. */
+  toolCalls?: number;
+  toolErrors?: number;
+  /** Which repeat of the task this result is (see flakyTaskIds). Absent for a single run. */
+  sample?: number;
   tokens: number;
   /** True when `tokens` is an estimate because the provider reported no usage counts. */
   tokensEstimated?: boolean;
@@ -47,8 +50,9 @@ export class CandidateEvaluator {
     const loopAborts = results.filter((r) => r.loopAborted).length;
     const falseSuccess = results.filter((r) => r.success && !r.verificationPassed).length;
 
-    const totalCalls = results.reduce((acc, r) => acc + r.toolCalls, 0) || 1;
-    const totalErrors = results.reduce((acc, r) => acc + r.toolErrors, 0);
+    const counted = results.filter((r) => r.toolCalls !== undefined);
+    const totalCalls = counted.reduce((acc, r) => acc + (r.toolCalls ?? 0), 0) || 1;
+    const totalErrors = counted.reduce((acc, r) => acc + (r.toolErrors ?? 0), 0);
 
     const avgTokens = Math.round(results.reduce((acc, r) => acc + r.tokens, 0) / total);
     const avgLatencyMs = Math.round(results.reduce((acc, r) => acc + r.latencyMs, 0) / total);
@@ -82,4 +86,21 @@ export class CandidateEvaluator {
       },
     };
   }
+}
+
+/**
+ * Tasks whose repeated runs disagree: some passed and some failed. A flaky task is evidence the
+ * measurement is noisy, and a comparison that leans on it is not decided by the candidate alone.
+ */
+export function flakyTaskIds(results: TaskExecutionResult[]): string[] {
+  const byTask = new Map<string, boolean[]>();
+  for (const result of results) {
+    const outcomes = byTask.get(result.taskId) ?? [];
+    outcomes.push(result.success);
+    byTask.set(result.taskId, outcomes);
+  }
+  return [...byTask]
+    .filter(([, outcomes]) => outcomes.length > 1 && outcomes.includes(true) && outcomes.includes(false))
+    .map(([taskId]) => taskId)
+    .sort();
 }

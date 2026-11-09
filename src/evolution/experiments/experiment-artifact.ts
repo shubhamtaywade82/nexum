@@ -52,7 +52,7 @@ import {
   MutationResult,
   MutationVerification,
 } from "../mutation/mutation-executor.js";
-import { TaskExecutionResult } from "../evaluator.js";
+import { TaskExecutionResult, flakyTaskIds } from "../evaluator.js";
 import { ImprovementTarget } from "../targets/target-engine.js";
 import { HarnessDiagnosis } from "../types.js";
 import { MutationScope } from "../mutation/mutation-scope.js";
@@ -62,6 +62,8 @@ export const EXPERIMENT_ARTIFACT_SCHEMA_VERSION = 1;
 /** Compact aggregate over one benchmark side (baseline or candidate). */
 export interface ExperimentMetricsSummary {
   runs: number;
+  /** Tasks whose repeated runs disagreed. Non-empty means the measurement itself is noisy. */
+  flakyTasks: string[];
   taskSuccessRate: number;
   verificationPassRate: number;
   toolErrorRate: number;
@@ -76,8 +78,8 @@ export interface ExperimentMetricsSummary {
     verificationPassed: boolean;
     isHeldOut: boolean;
     loopAborted: boolean;
-    toolCalls: number;
-    toolErrors: number;
+    toolCalls?: number;
+    toolErrors?: number;
     tokens: number;
     latencyMs: number;
   }>;
@@ -272,12 +274,15 @@ export function summarizeExperimentRuns(results: TaskExecutionResult[]): Experim
   const verified = results.filter((r) => r.verificationPassed).length;
   const falseSuccess = results.filter((r) => r.success && !r.verificationPassed).length;
   const loopAborts = results.filter((r) => r.loopAborted).length;
-  const toolErrors = results.reduce((acc, r) => acc + r.toolErrors, 0);
-  const toolCalls = results.reduce((acc, r) => acc + r.toolCalls, 0);
+  // Only runs that recorded their tool calls count toward the rate; the rest are unknown, not zero.
+  const counted = results.filter((r) => r.toolCalls !== undefined);
+  const toolErrors = counted.reduce((acc, r) => acc + (r.toolErrors ?? 0), 0);
+  const toolCalls = counted.reduce((acc, r) => acc + (r.toolCalls ?? 0), 0);
   const tokens = results.reduce((acc, r) => acc + r.tokens, 0);
   const latency = results.reduce((acc, r) => acc + r.latencyMs, 0);
   return {
     runs: total,
+    flakyTasks: flakyTaskIds(results),
     taskSuccessRate: total === 0 ? 0 : successes / total,
     verificationPassRate: total === 0 ? 0 : verified / total,
     toolErrorRate: toolCalls === 0 ? 0 : toolErrors / toolCalls,
@@ -293,6 +298,7 @@ export function summarizeExperimentRuns(results: TaskExecutionResult[]): Experim
       loopAborted: r.loopAborted,
       toolCalls: r.toolCalls,
       toolErrors: r.toolErrors,
+      ...(r.sample !== undefined ? { sample: r.sample } : {}),
       tokens: r.tokens,
       latencyMs: r.latencyMs,
     })),

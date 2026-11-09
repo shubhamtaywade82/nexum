@@ -22,12 +22,10 @@
  */
 
 import type { ChatMessage } from "../models/adapters/provider.js";
-import type { RuntimeEvent } from "../runtime/events/bus.js";
-import type { BudgetTracker } from "../runtime/budget/budget-tracker.js";
 import type { ToolGateway } from "../tools/gateway/tool-gateway.js";
 import type { PolicyEngine } from "./policy/policy-engine.js";
 import type { ModelGateway } from "../models/gateway/model-gateway.js";
-import type { StrategyHooks } from "../runtime/strategies/strategy-hooks.js";
+import type { StrategyHooks } from "./strategies/strategy-hooks.js";
 import type { TaskId, TraceId } from "./identity.js";
 
 // ── Identity ────────────────────────────────────────────────────────────────
@@ -120,9 +118,30 @@ export interface ExecutionResult {
 
 // ── Ports the kernel depends on (implemented outside the kernel) ────────────
 
-/** Sink for runtime events. The existing EventBus satisfies this structurally. */
+/**
+ * A kernel event as the kernel sees it: classified by its `type` (see core/events/families.ts).
+ * The runtime's concrete event unions satisfy this structurally.
+ */
+export interface KernelEvent {
+  readonly type: string;
+  /** Events carry their payload alongside the discriminator. */
+  readonly [field: string]: unknown;
+}
+
+/** Sink for kernel events. The runtime's EventBus satisfies this structurally. */
 export interface EventSink {
-  publish(event: RuntimeEvent): void;
+  publish(event: KernelEvent): void;
+}
+
+/**
+ * The budget the kernel charges as a run proceeds. The runtime's BudgetTracker implements it; the
+ * kernel depends on this shape, not on the implementation.
+ */
+export interface BudgetMeter {
+  snapshot(): BudgetUsage;
+  assertTimeLeft(): void;
+  consumeToolCall(): void;
+  consumeModelCall(opts?: { promptTokens?: number; completionTokens?: number; costUsd?: number }): void;
 }
 
 /**
@@ -180,7 +199,7 @@ export interface ExecutionContext {
   readonly policyEngine: PolicyEngine;
   readonly context: ContextManager;
   readonly events: EventSink;
-  readonly budget: BudgetTracker;
+  readonly budget: BudgetMeter;
 }
 
 // ── AgentRuntime (the kernel facade) ────────────────────────────────────────

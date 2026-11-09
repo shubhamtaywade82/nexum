@@ -14,6 +14,12 @@ const MIN_USES_BEFORE_JUDGING = 5;
 const DEMOTE_BELOW_SUCCESS_RATE = 0.4;
 const MAX_LESSONS_PER_SKILL = 8;
 
+/**
+ * Runs one write or delete inside the workspace skill tree. The default just runs it;
+ * the CLI passes a guard that keeps the workspace's trust decision (see workspace-trust.ts).
+ */
+export type SkillTreeWrite = (write: () => void) => void;
+
 export interface SynthesisReport {
   createdOrUpdated: string[];
   demoted: string[];
@@ -24,6 +30,7 @@ export class SkillSynthesizer {
     private readonly workspaceRoot: string,
     private readonly lessons: LessonStore,
     private readonly logger: Pick<Console, "info" | "warn"> = console,
+    private readonly guardWrite: SkillTreeWrite = (write) => write(),
   ) {}
 
   synthesize(): string[] {
@@ -66,7 +73,7 @@ export class SkillSynthesizer {
       if (successRate >= DEMOTE_BELOW_SUCCESS_RATE) continue;
 
       const dir = join(workspaceStateDir(this.workspaceRoot), "skills", stat.skillId);
-      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+      if (existsSync(dir)) this.guardWrite(() => rmSync(dir, { recursive: true, force: true }));
       this.lessons.demote(stat.skillId);
       demoted.push(stat.skillId);
       this.logger.warn(
@@ -82,7 +89,6 @@ export class SkillSynthesizer {
 
   private writeSkill(skillId: string, topic: string, lessons: Lesson[]): void {
     const dir = join(workspaceStateDir(this.workspaceRoot), "skills", skillId);
-    mkdirSync(dir, { recursive: true });
 
     const tags = [...new Set(lessons.flatMap((lesson) => lesson.tags))].slice(0, 10);
     const languages = [...new Set(lessons.map((lesson) => lesson.language).filter(Boolean))] as string[];
@@ -115,6 +121,9 @@ export class SkillSynthesizer {
       "",
     ].join("\n");
 
-    writeFileSync(join(dir, "SKILL.md"), content, "utf8");
+    this.guardWrite(() => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "SKILL.md"), content, "utf8");
+    });
   }
 }

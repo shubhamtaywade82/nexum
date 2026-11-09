@@ -17,7 +17,7 @@
  * every model chunk over the wire.
  */
 
-import type { Agent } from "../cli/agent.js";
+import type { AgentPort } from "./agent-port.js";
 import type { NexumRunEvent, ResolveInteractionRequest } from "../protocol/types.js";
 import type { ApprovalRequest, ClarificationRequest } from "../runtime/types.js";
 import { canonicalToolName } from "../core/tools/tool-aliases.js";
@@ -86,7 +86,7 @@ export class RunEventBridge {
   private readonly thoughtDeltas = new DeltaCoalescer((text) => this.writeDelta("thought.delta", text));
 
   constructor(
-    private readonly agent: Agent,
+    private readonly agent: AgentPort,
     private readonly opts: { interactionTimeoutMs?: number } = {},
   ) {
     agent.on("onThinking", (text) => {

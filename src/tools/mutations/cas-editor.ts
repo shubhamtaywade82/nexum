@@ -21,6 +21,7 @@
  * find/replace remain convenience wrappers on top of this module.
  */
 
+import { withFileLock } from "./file-lock.js";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -99,7 +100,7 @@ export class CasEditor {
    * lines and returns the new lines; the current file must still hash to
    * `expectedHash` when the edit applies.
    */
-  async editLines(
+  private async editLinesUnlocked(
     relativePath: string,
     expectedHash: string,
     edit: (lines: string[]) => string[],
@@ -128,7 +129,7 @@ export class CasEditor {
    * content; `expectedHash` pins the version the diff was generated
    * against.
    */
-  async applyUnifiedDiff(
+  private async applyUnifiedDiffUnlocked(
     relativePath: string,
     expectedHash: string,
     patch: string,
@@ -153,7 +154,11 @@ export class CasEditor {
    * Replace whole-file content with CAS (the write primitive used by
    * write_file when it wants version safety).
    */
-  async writeContent(relativePath: string, expectedHash: string | null, nextContent: string): Promise<MutationResult> {
+  private async writeContentUnlocked(
+    relativePath: string,
+    expectedHash: string | null,
+    nextContent: string,
+  ): Promise<MutationResult> {
     const absolute = this.opts.guard.requireAllowed("write", relativePath);
     let current = "";
     if (expectedHash !== null) {
@@ -188,6 +193,37 @@ export class CasEditor {
 
   // ── internals ──────────────────────────────────────────────────────────
 
+  /**
+   * Each write runs under the file's lock, so Nexum's own edits to one file are serialized. The commit-time
+   * hash check still applies: it is what catches a writer outside Nexum.
+   */
+  editLines(
+    relativePath: string,
+    expectedHash: string,
+    edit: (lines: string[]) => string[],
+    opts: { dryRun?: boolean } = {},
+  ): Promise<MutationResult> {
+    return this.locked(relativePath, () => this.editLinesUnlocked(relativePath, expectedHash, edit, opts));
+  }
+
+  applyUnifiedDiff(
+    relativePath: string,
+    expectedHash: string,
+    patch: string,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<MutationResult> {
+    return this.locked(relativePath, () => this.applyUnifiedDiffUnlocked(relativePath, expectedHash, patch, opts));
+  }
+
+  writeContent(relativePath: string, expectedHash: string | null, nextContent: string): Promise<MutationResult> {
+    return this.locked(relativePath, () => this.writeContentUnlocked(relativePath, expectedHash, nextContent));
+  }
+
+  private locked<T>(relativePath: string, fn: () => Promise<T>): Promise<T> {
+    const target = this.opts.guard.requireAllowed("write", relativePath);
+    return withFileLock(target, fn);
+  }
+
   private async readIfCurrent(
     relativePath: string,
     expectedHash: string,
@@ -203,6 +239,28 @@ export class CasEditor {
     return { absolute, content, hash };
   }
 
+  /**
+   * Throws ExpectedHashMismatchError unless the file still holds `expectedHash`.
+   * A file that does not exist is the empty content, which is what an edit computed
+   * against a missing file expects.
+   */
+  private async assertStillAt(relativePath: string, expectedHash: string): Promise<void> {
+    const current = await readVerifiedWith(
+      () => this.opts.guard.requireAllowed("write", relativePath),
+      relativePath,
+    ).then(
+      (buf) => buf.toString("utf8"),
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return "";
+        throw error;
+      },
+    );
+    const currentHash = contentHash(current);
+    if (currentHash !== expectedHash) {
+      throw new ExpectedHashMismatchError(relativePath, expectedHash, currentHash);
+    }
+  }
+
   /** dry-run (in memory) → apply atomically (temp + rename) → diff. */
   private async applyAtomic(
     relativePath: string,
@@ -215,7 +273,14 @@ export class CasEditor {
     const syntaxWarning = enforceEditSyntax(relativePath, before, after);
     if (!dryRun) {
       await mkdir(dirname(absolute), { recursive: true });
-      await writeVerifiedWith(() => this.opts.guard.requireAllowed("write", relativePath), relativePath, after);
+      await writeVerifiedWith(
+        () => this.opts.guard.requireAllowed("write", relativePath),
+        relativePath,
+        after,
+        // Compare-and-swap at the commit point: the target must still hold the version this edit was computed
+        // from. Without this, a change made after the read and before the rename was silently overwritten.
+        () => this.assertStillAt(relativePath, previousHash),
+      );
     }
     return {
       path: relativePath,
@@ -231,10 +296,16 @@ export class CasEditor {
 
 // ── Unified diff application (strict, hunk-anchored) ────────────────────────
 
+/** How far from a hunk's declared position its old-side text may be found. */
+const HUNK_SEARCH_RADIUS = 50;
+
 /**
- * Apply a unified diff to content. Hunks are matched by their context
- * lines with a small search window (fuzz), mirroring `patch(1)`'s
- * behavior. Failing hunks throw PatchApplicationError.
+ * Apply a unified diff to content. Each hunk's old side (context plus removed
+ * lines, in order) must match the content exactly, at the nearest location to
+ * the declared line within HUNK_SEARCH_RADIUS. Anything else throws
+ * PatchApplicationError and nothing is written: a hunk that does not match is
+ * never spliced at its declared position ("trusting the producer" corrupted
+ * files), and an ambiguous match is refused rather than guessed.
  */
 export function applyUnifiedDiffToContent(content: string, patch: string, label = "file"): string {
   const lines = content.split("\n");
@@ -243,22 +314,28 @@ export function applyUnifiedDiffToContent(content: string, patch: string, label 
     throw new PatchApplicationError(`no hunks found in patch for ${label}`);
   }
 
-  let offset = 0; // cumulative line drift from earlier hunks
+  let offset = 0; // cumulative line drift from earlier hunks, in the partially patched output
   const output = [...lines];
 
   hunks.forEach((hunk, idx) => {
-    const start = hunk.newStart - 1 + offset; // 0-based index into output
-    const ctxWindow = Math.max(0, start - 50);
-    const anchor = findHunkAnchor(output, hunk, ctxWindow, start + hunk.context.length + 50);
-    if (anchor === -1) {
+    const number = idx + 1;
+    // Insertion-only hunks (-N,0) name the line the insertion follows; others name the first old line.
+    const declared = hunk.oldBody.length === 0 ? hunk.oldStart + offset : hunk.oldStart - 1 + offset;
+    const anchor = findHunkAnchor(output, hunk.oldBody, declared);
+    if (anchor === "none") {
       throw new PatchApplicationError(
-        `hunk #${idx + 1} does not match content of ${label} (context not found near line ${hunk.newStart})`,
-        idx + 1,
+        `hunk #${number} does not match content of ${label} (context not found near line ${hunk.oldStart})`,
+        number,
       );
     }
-    // remove old lines, insert new ones at the anchor
-    output.splice(anchor, hunk.oldLines, ...hunk.newBody);
-    offset += hunk.newLines - hunk.oldLines;
+    if (anchor === "ambiguous") {
+      throw new PatchApplicationError(
+        `hunk #${number} matches more than one location in ${label} near line ${hunk.oldStart}; add context lines`,
+        number,
+      );
+    }
+    output.splice(anchor, hunk.oldBody.length, ...hunk.newBody);
+    offset += hunk.newBody.length - hunk.oldBody.length;
   });
 
   return output.join("\n");
@@ -269,58 +346,120 @@ interface ParsedHunk {
   oldLines: number;
   newStart: number;
   newLines: number;
-  context: string[];
+  /** Old side, in order: context and removed lines. This is what must match the file. */
+  oldBody: string[];
+  /** New side, in order: context and added lines. */
   newBody: string[];
 }
 
+/**
+ * Parses hunks by their header counts, not by line prefixes alone: inside a
+ * hunk, a line is body until the counts are satisfied, so a removed line such as
+ * `-- note` is not mistaken for a `--- a/file` header. Body lines beyond the
+ * counts, a truncated hunk, or a count mismatch are malformed and throw.
+ */
 function parseUnifiedDiff(patch: string): ParsedHunk[] {
   const hunks: ParsedHunk[] = [];
-  const lines = patch.split("\n");
   let current: ParsedHunk | null = null;
-  for (const line of lines) {
+  let oldLeft = 0;
+  let newLeft = 0;
+  const closeCurrent = (): void => {
+    if (current && (oldLeft !== 0 || newLeft !== 0)) {
+      throw new PatchApplicationError(
+        `hunk #${hunks.length} is truncated: its header counts exceed its body`,
+        hunks.length,
+      );
+    }
+    current = null;
+  };
+
+  const patchLines = patch.split("\n");
+  // A trailing newline leaves an empty last element that is not a line of the patch.
+  if (patchLines[patchLines.length - 1] === "") patchLines.pop();
+  for (const line of patchLines) {
+    if (current && (oldLeft > 0 || newLeft > 0)) {
+      if (line.startsWith("@@")) {
+        throw new PatchApplicationError(
+          `hunk #${hunks.length} is truncated: its header counts exceed its body`,
+          hunks.length,
+        );
+      }
+      const hunk: ParsedHunk = current;
+      if (line.startsWith("+")) {
+        hunk.newBody.push(line.slice(1));
+        newLeft -= 1;
+      } else if (line.startsWith("-")) {
+        hunk.oldBody.push(line.slice(1));
+        oldLeft -= 1;
+      } else if (line.startsWith("\\")) {
+        // "\ No newline at end of file": not a content line
+      } else {
+        // a context line, possibly blank with its leading space stripped
+        const text = line.startsWith(" ") ? line.slice(1) : line;
+        hunk.oldBody.push(text);
+        hunk.newBody.push(text);
+        oldLeft -= 1;
+        newLeft -= 1;
+      }
+      if (oldLeft < 0 || newLeft < 0) {
+        throw new PatchApplicationError(`hunk #${hunks.length} has more lines than its header declares`, hunks.length);
+      }
+      continue;
+    }
+
+    closeCurrent();
     const header = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
     if (header) {
-      current = {
+      const hunk: ParsedHunk = {
         oldStart: Number(header[1]),
         oldLines: header[2] !== undefined ? Number(header[2]) : 1,
         newStart: Number(header[3]),
         newLines: header[4] !== undefined ? Number(header[4]) : 1,
-        context: [],
+        oldBody: [],
         newBody: [],
       };
-      hunks.push(current);
+      hunks.push(hunk);
+      current = hunk;
+      oldLeft = hunk.oldLines;
+      newLeft = hunk.newLines;
       continue;
     }
-    if (!current) continue;
-    if (line.startsWith("---") || line.startsWith("+++") || line.startsWith("diff ") || line.startsWith("index ")) {
-      continue;
-    }
-    if (line.startsWith("+")) current.newBody.push(line.slice(1));
-    else if (line.startsWith("-")) {
-      /* old-only line: contributes to oldLines, nothing to emit */
-    } else if (line.startsWith(" ")) {
-      current.context.push(line.slice(1));
-      current.newBody.push(line.slice(1));
-    } else if (line === "" || line.startsWith("\\")) {
-      // trailing newline markers / blank separator: treat as context-less
+    // Between hunks: file headers ("diff", "index", "---", "+++") and prose are ignored.
+    // A body-shaped line here is a body line the header did not count: refuse it, do not drop it.
+    if (
+      hunks.length > 0 &&
+      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
+      !line.startsWith("+++ ") &&
+      !line.startsWith("--- ")
+    ) {
+      throw new PatchApplicationError(
+        `line after hunk #${hunks.length} is not covered by its header: "${line}"`,
+        hunks.length,
+      );
     }
   }
+  closeCurrent();
   return hunks;
 }
 
-function findHunkAnchor(content: string[], hunk: ParsedHunk, from: number, to: number): number {
-  // match the first context line (or first removed line when no context)
-  const probeLen = Math.max(1, hunk.context.length);
-  for (let i = Math.max(0, from); i < Math.min(content.length, to + probeLen); i++) {
-    let matched = true;
-    for (let j = 0; j < probeLen; j++) {
-      if (content[i + j] !== hunk.context[j]) {
-        matched = false;
-        break;
-      }
-    }
-    if (matched) return i;
+/**
+ * Where the old side occurs, nearest to `declared` first. Returns the index,
+ * "none" when there is no match within the radius, or "ambiguous" when two
+ * matches are equally near. An empty old side (pure insertion) is only valid
+ * at the declared position.
+ */
+function findHunkAnchor(content: string[], oldBody: string[], declared: number): number | "none" | "ambiguous" {
+  const matchesAt = (i: number): boolean =>
+    i >= 0 && i + oldBody.length <= content.length && oldBody.every((line, j) => content[i + j] === line);
+
+  if (oldBody.length === 0) {
+    return declared >= 0 && declared <= content.length ? declared : "none";
   }
-  // fallback: newStart as declared (trusting the producer)
-  return Math.min(Math.max(0, hunk.newStart - 1), content.length);
+  for (let distance = 0; distance <= HUNK_SEARCH_RADIUS; distance++) {
+    const candidates = distance === 0 ? [declared] : [declared - distance, declared + distance];
+    const hits = candidates.filter(matchesAt);
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) return "ambiguous";
+  }
+  return "none";
 }

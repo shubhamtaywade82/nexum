@@ -113,6 +113,8 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
             caseId: "case-1",
             category: "tool-calling",
             pass: true,
+            toolCalls: 3,
+            toolErrors: 1,
             latencyMs: 120,
             tokensPerSec: 9.5,
             tokens: 1200,
@@ -145,13 +147,21 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
 
       const results = parseBenchmarkJson(stdout);
       expect(results).toHaveLength(3);
-      expect(results[0]).toMatchObject({ taskId: "case-1", success: true, verificationPassed: true, toolErrors: 0 });
+      expect(results[0]).toMatchObject({
+        taskId: "case-1",
+        success: true,
+        verificationPassed: true,
+        toolCalls: 3,
+        toolErrors: 1,
+      });
       expect(results[1]).toMatchObject({
         taskId: "case-2",
         success: false,
         isHeldOut: isHeldOutCase("case-2"),
       });
       expect(results[2]).toMatchObject({ taskId: "case-3", loopAborted: true });
+      // A record without tool counts stays unknown; it is not reported as zero.
+      expect(results[1].toolCalls).toBeUndefined();
     });
 
     it("ignores bracketed logger prefixes on stdout", () => {

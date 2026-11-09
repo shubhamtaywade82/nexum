@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { OllamaToolSchema } from "../models/adapters/provider.js";
 import type { LegacyToolMetadata } from "../tools/gateway/tool-catalog.js";
 import { Tool } from "../tools/tool.js";
-import type { AgenticCaseDriver, BenchmarkTarget, CaseRunOutcome } from "./runner.js";
+import { countToolErrors, type AgenticCaseDriver, type BenchmarkTarget, type CaseRunOutcome } from "./runner.js";
 import type { AgenticBenchmarkCase, AgenticToolCall, AgenticTrajectory } from "./types.js";
 
 /**
@@ -156,6 +156,8 @@ export function createAgentDriver(createAgent: BenchmarkAgentFactory): AgenticCa
         // A model call without reported usage makes the total a lower bound.
         tokensEstimated: usageMissing,
         modelsUsed: [...modelsUsed].sort(),
+        toolCalls: toolCallsMade.length,
+        toolErrors: countToolErrors(toolCallsMade),
       };
     } finally {
       await agent?.stopHost().catch(() => undefined);

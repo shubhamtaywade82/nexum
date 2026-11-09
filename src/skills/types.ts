@@ -24,6 +24,11 @@ export interface SkillMeta {
   path: string;
   /** Optional programming language this skill targets (e.g. "python", "ruby"). */
   language?: string;
+  /**
+   * Frontmatter `disable-model-invocation: true`. The model may not select
+   * this skill for a prompt; only an explicit pin/activation loads it.
+   */
+  disableModelInvocation?: boolean;
 }
 
 export interface SkillContent extends SkillMeta {

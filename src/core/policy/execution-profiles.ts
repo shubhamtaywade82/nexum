@@ -89,7 +89,7 @@ export const EXECUTION_PROFILES: Record<ExecutionProfileName, ExecutionProfile> 
     confirmationFloor: "medium",
     allowExternalMutation: false,
     allowFinancial: false,
-    deniedTools: ["run_shell", "docker", "paper_trade"],
+    deniedTools: ["run_shell", "docker", "binance_paper_trade"],
   },
   development: {
     name: "development",
@@ -119,7 +119,7 @@ export const EXECUTION_PROFILES: Record<ExecutionProfileName, ExecutionProfile> 
     confirmationFloor: "high",
     allowExternalMutation: false,
     allowFinancial: false,
-    deniedTools: ["paper_trade", "git"],
+    deniedTools: ["binance_paper_trade", "git"],
   },
   devops: {
     name: "devops",

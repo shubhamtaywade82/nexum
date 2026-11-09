@@ -1,4 +1,4 @@
-import { CandidateEvaluator, TaskExecutionResult } from "../../src/evolution/evaluator.js";
+import { CandidateEvaluator, flakyTaskIds, TaskExecutionResult } from "../../src/evolution/evaluator.js";
 
 describe("CandidateEvaluator", () => {
   const evaluator = new CandidateEvaluator();
@@ -42,5 +42,37 @@ describe("CandidateEvaluator", () => {
     const metrics = evaluator.aggregateResults([]);
     expect(metrics.capability.taskSuccessRate).toBe(0);
     expect(metrics.efficiency.avgTokens).toBe(0);
+  });
+});
+
+describe("flakyTaskIds", () => {
+  const run = (taskId: string, success: boolean, sample: number): TaskExecutionResult => ({
+    taskId,
+    success,
+    verificationPassed: success,
+    toolCalls: 1,
+    toolErrors: 0,
+    tokens: 10,
+    latencyMs: 1,
+    loopAborted: false,
+    sample,
+  });
+
+  it("flags a task whose repeats disagree, and not one that is consistent", () => {
+    const results = [
+      run("steady-pass", true, 0),
+      run("steady-pass", true, 1),
+      run("steady-pass", true, 2),
+      run("steady-fail", false, 0),
+      run("steady-fail", false, 1),
+      run("flaky", true, 0),
+      run("flaky", false, 1),
+      run("flaky", true, 2),
+    ];
+    expect(flakyTaskIds(results)).toEqual(["flaky"]);
+  });
+
+  it("flags nothing when every task ran once", () => {
+    expect(flakyTaskIds([run("a", true, 0), run("b", false, 0)])).toEqual([]);
   });
 });

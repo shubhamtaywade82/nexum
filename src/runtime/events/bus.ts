@@ -30,12 +30,35 @@ export type { PresentationEvent } from "./presentation-events.js";
 
 export type EventListener = (event: RuntimeEvent) => void;
 
+export interface EventBusOptions {
+  /**
+   * Called when a subscriber throws. Delivery continues to the other subscribers either way.
+   * The default writes one line to stderr, so a broken subscriber is never silent.
+   */
+  onListenerError?: (error: unknown, event: RuntimeEvent) => void;
+}
+
 export class EventBus {
   private listeners = new Set<EventListener>();
+  private readonly onListenerError: (error: unknown, event: RuntimeEvent) => void;
+
+  constructor(opts: EventBusOptions = {}) {
+    this.onListenerError =
+      opts.onListenerError ??
+      ((error, event) => {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[event-bus] a subscriber failed on ${event.type}: ${message}\n`);
+      });
+  }
 
   publish(event: RuntimeEvent): void {
+    // One subscriber's failure must not stop fan-out to the rest, nor reach the publisher (the execution loop).
     for (const listener of [...this.listeners]) {
-      listener(event);
+      try {
+        listener(event);
+      } catch (error) {
+        this.onListenerError(error, event);
+      }
     }
   }
 

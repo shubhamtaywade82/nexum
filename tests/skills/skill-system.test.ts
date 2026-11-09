@@ -66,7 +66,7 @@ This skill covers crypto futures trading strategies.
 `,
       );
 
-      const provider = new FilesystemSkillProvider({ workspaceRoot: tmpDir });
+      const provider = new FilesystemSkillProvider({ workspaceRoot: tmpDir, workspaceTrusted: true });
       const list = await provider.list();
       expect(list.length).toBe(1);
       expect(list[0].id).toBe("crypto-futures");

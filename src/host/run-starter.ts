@@ -1,4 +1,4 @@
-import type { Agent } from "../cli/agent.js";
+import type { AgentPort } from "./agent-port.js";
 import type { RedisEventBus } from "../infrastructure/redis/pubsub.js";
 import { runChannel } from "../infrastructure/redis/channels.js";
 import type { EventRepository } from "../persistence/repositories/event-repository.js";
@@ -83,7 +83,7 @@ export function cancelRun({ agent, bridge }: AgentEntry): boolean {
 }
 
 async function runAgentInBackground(
-  agent: Agent,
+  agent: AgentPort,
   bridge: RunEventBridge,
   { goal, presentation, interactive, approvalMode, modelTier }: CreateRunRequest,
   ctx: {
@@ -127,7 +127,14 @@ async function runAgentInBackground(
     await publishChain;
     const seq = await ctx.repos.events.append(event);
     await ctx.repos.runs.complete(ctx.runId, status, fields);
-    await ctx.eventBus.publish(channel, { seq, ...event });
+    // Live delivery is best-effort here. The event and the status are already durable, and a client that
+    // missed the live event replays it. Letting this throw would send the run into the failure path below,
+    // which would then overwrite a completed run with 'failed'.
+    await ctx.eventBus.publish(channel, { seq, ...event }).catch((err) => {
+      process.stderr.write(
+        `[nexum host] live delivery of ${event.type} for ${ctx.runId} failed: ${describeError(err)}\n`,
+      );
+    });
   };
 
   bridge.begin({ runId: ctx.runId, write: publish, interactive });

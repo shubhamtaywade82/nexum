@@ -175,6 +175,7 @@ export function resolveSkills(prompt: string, catalog: SkillMeta[], opts: Resolv
   const promptTokens = tokenize(prompt);
 
   return catalog
+    .filter((skill) => !skill.disableModelInvocation)
     .map((skill) => scoreSkill(promptTokens, skill, opts.projectLanguage))
     .filter((s) => s.score >= minScore)
     .sort((a, b) => b.score - a.score || a.meta.id.localeCompare(b.meta.id))

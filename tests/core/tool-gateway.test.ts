@@ -9,6 +9,7 @@ import {
 import { ToolDefinition } from "../../src/core/tools/tool-contract.js";
 import { RulePolicyEngine } from "../../src/core/policy/policy-engine.js";
 import { Tool } from "../../src/tools/tool.js";
+import { IdempotencyManager } from "../../src/tools/idempotency.js";
 
 function def(overrides: Partial<ToolDefinition> = {}): ToolDefinition {
   return {
@@ -46,7 +47,7 @@ class LegacyGreetTool extends Tool {
 describe("canonicalToolName", () => {
   it("strips provider prefixes and maps aliases", () => {
     expect(canonicalToolName("functions.read_file")).toBe("read_file");
-    expect(canonicalToolName("ls")).toBe("list_dir");
+    expect(canonicalToolName("ls")).toBe("list_directory");
     expect(canonicalToolName("bash")).toBe("run_shell");
     expect(canonicalToolName("read_file")).toBe("read_file");
   });
@@ -200,5 +201,93 @@ describe("DefaultToolGateway", () => {
     const gateway = new DefaultToolGateway({ catalog: makeCatalog() });
     expect(gateway.discover(["testing"]).map((d) => d.id)).toContain("echo");
     expect(gateway.discover(["no-such"]).map((d) => d.id)).toEqual([]);
+  });
+});
+
+describe("DefaultToolGateway call semantics", () => {
+  const mutating = (id: string, idempotencyKey: "required" | "auto", timeoutMs = 5_000) =>
+    def({
+      id,
+      inputSchema: { type: "object", properties: { path: { type: "string" }, id: { type: "number" } } },
+      risk: "write",
+      sideEffects: { filesystem: true, process: false, network: false, externalMutation: true, financial: false },
+      execution: { timeoutMs, concurrency: 1, idempotent: true, reversible: false, idempotencyKey },
+    });
+
+  it("auto-keyed mutations dedupe concurrent calls, as required-keyed ones do", async () => {
+    const catalog = new ToolCatalog();
+    let calls = 0;
+    catalog.register(mutating("mutate", "auto"), async () => {
+      calls += 1;
+      await new Promise((r) => setTimeout(r, 40));
+      return { wrote: true };
+    });
+    const gateway = new DefaultToolGateway({ catalog, idempotency: new IdempotencyManager() });
+
+    const results = await Promise.all([
+      gateway.invoke("mutate", { path: "x" }),
+      gateway.invoke("mutate", { path: "x" }),
+    ]);
+
+    expect(calls).toBe(1);
+    expect(results.filter((r) => r.error?.code === "IdempotencyConflict")).toHaveLength(1);
+  });
+
+  it("retries a failed mutation with the same key, then replays the completed result", async () => {
+    const catalog = new ToolCatalog();
+    let attempts = 0;
+    catalog.register(mutating("flaky", "required"), async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("network reset");
+      return { ok: true };
+    });
+    const gateway = new DefaultToolGateway({ catalog, idempotency: new IdempotencyManager() });
+
+    expect((await gateway.invoke("flaky", { id: 1 })).ok).toBe(false);
+    expect((await gateway.invoke("flaky", { id: 1 })).ok).toBe(true);
+    expect((await gateway.invoke("flaky", { id: 1 })).ok).toBe(true);
+    expect(attempts).toBe(2);
+  });
+
+  it("aborts the handler's signal when the tool times out", async () => {
+    const catalog = new ToolCatalog();
+    let observed: AbortSignal | undefined;
+    catalog.register(
+      def({ id: "hang", execution: { timeoutMs: 30, concurrency: 1, idempotent: true, reversible: true } }),
+      (_args, callCtx) =>
+        new Promise((_resolve, reject) => {
+          observed = callCtx?.signal;
+          observed?.addEventListener("abort", () => reject(new Error("aborted by timeout")));
+        }),
+    );
+    const gateway = new DefaultToolGateway({ catalog });
+
+    const result = await gateway.invoke("hang", {});
+
+    expect(result.error?.code).toBe("Timeout");
+    expect(observed?.aborted).toBe(true);
+  });
+
+  it("aborts the handler's signal when the run is cancelled mid-call", async () => {
+    const catalog = new ToolCatalog();
+    let observed: AbortSignal | undefined;
+    catalog.register(
+      def({ id: "wait", execution: { timeoutMs: 0, concurrency: 1, idempotent: true, reversible: true } }),
+      (_args, callCtx) =>
+        new Promise((_resolve, reject) => {
+          observed = callCtx?.signal;
+          observed?.addEventListener("abort", () => reject(new Error("cancelled")));
+        }),
+    );
+    const gateway = new DefaultToolGateway({ catalog });
+    const run = new AbortController();
+
+    const pending = gateway.invoke("wait", {}, { signal: run.signal });
+    await new Promise((r) => setTimeout(r, 10));
+    run.abort();
+    const result = await pending;
+
+    expect(result.ok).toBe(false);
+    expect(observed?.aborted).toBe(true);
   });
 });
