@@ -41,6 +41,8 @@ export interface HostAgentRegistryOptions {
 
 export class HostAgentRegistry {
   private readonly entries = new Map<string, AgentEntry>();
+  /** Creations in flight: concurrent first requests for one session share one Agent. */
+  private readonly creating = new Map<string, Promise<AgentEntry>>();
   private readonly idleTtlMs: number;
   private sweepTimer: NodeJS.Timeout | null = null;
   private mcpHub: McpHub | null = null;
@@ -67,7 +69,16 @@ export class HostAgentRegistry {
       existing.lastUsedAt = Date.now();
       return existing;
     }
+    // Creation awaits MCP and history loading, so a second request for the same session used to pass
+    // the check above too: both built an Agent (with its child processes), and the second overwrote the first.
+    const inFlight = this.creating.get(sessionId);
+    if (inFlight) return inFlight;
+    const creation = this.createEntry(sessionId).finally(() => this.creating.delete(sessionId));
+    this.creating.set(sessionId, creation);
+    return creation;
+  }
 
+  private async createEntry(sessionId: string): Promise<AgentEntry> {
     const agent = this.opts.createAgent();
     await this.attachMcp(agent);
     try {
