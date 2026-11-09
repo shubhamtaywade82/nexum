@@ -14,6 +14,8 @@ export class LspServerSession {
   status: "starting" | "running" | "stopped" | "error" = "starting";
   readonly openDocuments = new Map<string, { uri: string; version: number }>();
   readonly cachedDiagnostics = new Map<string, Diagnostic[]>();
+  /** URIs whose text changed since the server last published diagnostics for them. */
+  readonly awaitingDiagnostics = new Set<string>();
   // Tokens with an open $/progress "begin" and no matching "end" yet — most
   // servers (ruby-lsp, typescript-language-server) report project indexing
   // this way. `status` alone can't tell "no results" from "not indexed yet".
@@ -91,6 +93,7 @@ export class LspServerSession {
     if (method === "textDocument/publishDiagnostics") {
       const p = params as { uri: string; diagnostics: Diagnostic[] };
       this.cachedDiagnostics.set(p.uri, p.diagnostics);
+      this.awaitingDiagnostics.delete(p.uri);
       this.onDiagnostics?.(p.uri, p.diagnostics);
     }
     if (method === "$/progress") {
@@ -134,6 +137,9 @@ export class LspServerSession {
     const doc = this.openDocuments.get(uri);
     const nextVersion = version ?? (doc ? doc.version + 1 : 1);
     this.openDocuments.set(uri, { uri, version: nextVersion });
+    // Diagnostics for the previous text describe code that no longer exists: drop them until the server republishes.
+    this.cachedDiagnostics.delete(uri);
+    this.awaitingDiagnostics.add(uri);
     this.client.didChange(uri, nextVersion, [{ text }]);
     this.lastActivity = Date.now();
   }
@@ -143,6 +149,7 @@ export class LspServerSession {
     const uri = pathToUri(this.workspacePath, filePath);
     this.openDocuments.delete(uri);
     this.cachedDiagnostics.delete(uri);
+    this.awaitingDiagnostics.delete(uri);
     this.client.didClose(uri);
     this.lastActivity = Date.now();
   }

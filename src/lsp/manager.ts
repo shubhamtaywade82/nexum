@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { LanguageRegistry, LanguageProviderConfig } from "./registry.js";
 import { LspPool } from "./pool.js";
@@ -47,7 +48,13 @@ export class LspManager {
     registry?: LanguageRegistry;
     lspConfig?: Partial<LspGlobalConfig>;
     events?: LspManagerEvents;
+    /**
+     * How long a diagnostics query waits for the server to republish after the
+     * text changed. Push-only servers answer only after they re-analyse.
+     */
+    diagnosticsSettleMs?: number;
   }) {
+    this.diagnosticsSettleMs = opts.diagnosticsSettleMs ?? 1_500;
     this.workspaceRoot = opts.workspaceRoot;
     this.registry = opts.registry ?? new LanguageRegistry();
     const config = mergeLspConfig(opts.lspConfig);
@@ -126,6 +133,14 @@ export class LspManager {
     return this.ensureSession(filePath);
   }
 
+  /**
+   * Makes the server's copy of the file match the text it should see, and
+   * returns false when no server handles the file. The agent edits files through
+   * tools and through the shell, so the disk is the source of truth: a document
+   * already open is re-synced whenever its text differs from what the server last
+   * received. (Syncing only on open left every query after an edit running
+   * against the pre-edit buffer.)
+   */
   async ensureOpen(filePath: string, content?: string): Promise<boolean> {
     const provider = this.registry.getProviderForFile(filePath);
     if (!provider) return false;
@@ -140,10 +155,16 @@ export class LspManager {
     }
 
     const uri = pathToUri(this.workspaceRoot, filePath);
+    const text = content ?? this.readFile(filePath);
+    const digest = digestOf(text);
     if (!session.openDocuments.has(uri)) {
-      const text = content ?? this.readFile(filePath);
       await session.openDocument(filePath, text);
+    } else if (this.syncedDigest.get(uri) !== digest) {
+      await session.changeDocument(filePath, text);
+    } else {
+      return true;
     }
+    this.syncedDigest.set(uri, digest);
     return true;
   }
 
@@ -154,6 +175,7 @@ export class LspManager {
     const uri = pathToUri(this.workspaceRoot, filePath);
     if (session.openDocuments.has(uri)) {
       await session.changeDocument(filePath, content);
+      this.syncedDigest.set(uri, digestOf(content));
     }
   }
 
@@ -164,6 +186,7 @@ export class LspManager {
     if (session) {
       await session.closeDocument(filePath);
     }
+    this.syncedDigest.delete(pathToUri(this.workspaceRoot, filePath));
   }
 
   private getFileProviderAndSession(filePath: string) {
@@ -291,6 +314,10 @@ export class LspManager {
     if (!session) return [];
 
     const uri = pathToUri(this.workspaceRoot, filePath);
+    // Text changed since the last publish: give the server a bounded window to republish before answering.
+    if (session.awaitingDiagnostics.has(uri)) {
+      await waitUntil(() => !session.awaitingDiagnostics.has(uri), this.diagnosticsSettleMs);
+    }
     const cached = session.cachedDiagnostics.get(uri);
     if (cached) return cached;
 
@@ -432,6 +459,10 @@ export class LspManager {
     }));
   }
 
+  /** sha256 of the text last sent to each open document, keyed by uri. */
+  private readonly syncedDigest = new Map<string, string>();
+  private readonly diagnosticsSettleMs: number;
+
   private readFile(filePath: string): string {
     try {
       return readFileSync(filePath, "utf-8");
@@ -486,5 +517,16 @@ export class LspManager {
     };
     walk(symbols);
     return result;
+  }
+}
+
+function digestOf(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+async function waitUntil(done: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!done() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
