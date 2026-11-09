@@ -34,8 +34,8 @@ import { hypothesisHash } from "./task-validator.js";
 import { PoliciesFile, SchedulesFile, TaskDefinition, Report, IdentifiedGap } from "./types.js";
 import { ReportGenerator } from "../reporting/report-generator.js";
 import { ReportStore } from "../reporting/report-store.js";
-import { ClosedLoopEngine, ClosedLoopDiagnosis } from "../engine-v2.js";
-import { ExperienceStore } from "../experience/experience-store.js";
+import { ClosedLoopDiagnosis } from "../engine-v2.js";
+import { openEvolutionBench } from "../bench.js";
 // Cycle note: evolution/cli.ts (which dispatches into this module via
 // tasks/cli.ts) also exports loadAllEpisodes. The import below is safe in
 // ESM because loadAllEpisodes is a hoisted function declaration and is only
@@ -91,9 +91,10 @@ export function buildEngineWiring(opts: EngineWiringOptions): EngineWiring {
   const backlog = new BacklogTracker(join(stateDir, "task-catalogue.db"));
   const reportStore = new ReportStore(join(stateDir, "report-store.db"));
   const reportGenerator = new ReportGenerator();
-  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
+  const bench = openEvolutionBench(stateDir);
+  const experienceStore = bench.experience;
 
-  const engine = new ClosedLoopEngine({ experienceStore });
+  const engine = bench.engine();
   const episodes = opts.episodes ?? loadWorkspaceEpisodes(root);
   // Best-effort experience ingestion, mirroring the --autonomous path:
   // the feed must never break a catalogue run.
@@ -201,7 +202,7 @@ export function buildEngineWiring(opts: EngineWiringOptions): EngineWiring {
     close() {
       backlog.close();
       reportStore.close();
-      experienceStore.close();
+      bench.close();
     },
   };
 }

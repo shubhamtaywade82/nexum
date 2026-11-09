@@ -24,7 +24,7 @@ import { ActivationResult, ClosedLoopDiagnosis, ClosedLoopEngine } from "./engin
 import type { ActivationEvidence } from "./delivery/activation-gate.js";
 import type { ChampionCandidate } from "./parallel/champion.js";
 import { runParallelCycle, type SlotRun } from "./parallel/orchestrator.js";
-import { ExperienceStore } from "./experience/experience-store.js";
+import { openEvolutionBench } from "./bench.js";
 import {
   buildExperimentArtifact,
   writeExperimentArtifact,
@@ -996,11 +996,11 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
     );
   }
   const stateDir = workspaceStateDir(root);
-  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
+  const bench = openEvolutionBench(stateDir);
   // v2.3.2: the mutate path PERSISTS experiment provenance. Without a
   // store-backed controller the full lifecycle ran in-memory and was lost at
   // process exit, while --experiments read an empty database.
-  const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
+  const experimentStore = bench.experiments;
   const experimentDir = (values["experiment-dir"] as string | undefined) ?? join(stateDir, "experiments");
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
   const parentRef = (values.parent as string) || "HEAD";
@@ -1042,9 +1042,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
         ),
       },
     );
-    return new ClosedLoopEngine({
-      experienceStore,
-      experimentController: sharedExperiments,
+    return bench.engineSharing(sharedExperiments, {
       ...(registry ? { registry } : {}),
       ...(role === "solo" && activationController ? { runtimeActivation: activationController } : {}),
       generalizationPolicy: policy,
@@ -1078,9 +1076,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   // receives only the selected champion. It has no mutation executor, because it never generates.
   const coordinator =
     parallel > 1
-      ? new ClosedLoopEngine({
-          experienceStore,
-          experimentController: sharedExperiments,
+      ? bench.engineSharing(sharedExperiments, {
           ...(registry ? { registry } : {}),
           ...(activationController ? { runtimeActivation: activationController } : {}),
           generalizationPolicy: policy,
@@ -1384,8 +1380,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       }
     }
   } finally {
-    experienceStore.close();
-    experimentStore.close();
+    bench.close();
     registry?.close();
   }
 }
@@ -1540,12 +1535,9 @@ async function executeAutonomousCommand(root: string, values: Record<string, unk
     return;
   }
   const stateDir = workspaceStateDir(root);
-  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
-  const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
-  const engine = new ClosedLoopEngine({
-    experienceStore,
-    experimentController: new ExperimentController({ store: experimentStore }),
-  });
+  const bench = openEvolutionBench(stateDir);
+  const experienceStore = bench.experience;
+  const engine = bench.engine();
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
 
   try {
@@ -1583,8 +1575,7 @@ async function executeAutonomousCommand(root: string, values: Record<string, unk
     console.log("");
     console.log(formatExperienceText(engine.digestExperience()));
   } finally {
-    experienceStore.close();
-    experimentStore.close();
+    bench.close();
   }
 }
 
@@ -1665,9 +1656,9 @@ async function executeMonitorCommand(root: string, values: Record<string, unknow
 
 async function executeClosedLoopCommand(root: string, values: Record<string, unknown>): Promise<void> {
   const stateDir = workspaceStateDir(root);
-  const experienceStore = new ExperienceStore(join(stateDir, "experience.db"));
-  const experimentStore = new ExperimentStore(join(stateDir, "experiments.db"));
-  const engine = new ClosedLoopEngine({ experienceStore });
+  const bench = openEvolutionBench(stateDir);
+  const experimentStore = bench.experiments;
+  const engine = bench.engine();
   const limit = values.limit ? parseInt(values.limit as string, 10) : 20;
 
   try {
@@ -1694,8 +1685,7 @@ async function executeClosedLoopCommand(root: string, values: Record<string, unk
       console.log(formatTargetText(observation));
     }
   } finally {
-    experienceStore.close();
-    experimentStore.close();
+    bench.close();
   }
 }
 
