@@ -71,7 +71,6 @@ export default defineConfig({
       {
         text: "Multi-Agent & Production",
         items: [
-          { text: "Multi-Agent Coordination", link: "/guide/multiagent" },
           { text: "Artifacts", link: "/guide/artifacts" },
           { text: "Telemetry (OpenTelemetry)", link: "/guide/telemetry" },
           { text: "Durable Job Queue", link: "/guide/durable-jobs" },

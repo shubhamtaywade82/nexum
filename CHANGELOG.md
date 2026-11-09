@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Removed: the unused multi-agent subsystem
+
+- `src/multiagent` (message bus, shared state, consensus, supervisor loop), its tests, its `@nemesis-oss/nexum/multiagent` subpath, and the package-root exports are removed. No CLI command, host endpoint, TUI view or runtime path used them.
+- To restore them: `git checkout 01b42ab -- src/multiagent tests/multiagent`, then re-add the exports.
+
 ### Layering: the core plane depends on no plane above it
 
 - **Breaking for `@nemesis-oss/nexum/core` consumers:** the core entry point no longer re-exports runtime implementations (`DefaultAgentRuntime`, the strategies, `BudgetTracker` and the budget errors, the execution-context helpers, the registries). They are exported from `@nemesis-oss/nexum/runtime`, which is where they live.
