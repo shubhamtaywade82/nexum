@@ -3,11 +3,11 @@
  * workspace or in credential stores like ~/.ssh) are treated as secrets.
  */
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceGuard } from "../../src/core/fs/workspace-guard.js";
-import { ReadFileTool, SensitivePathError } from "../../src/tools/filesystem.js";
+import { ReadFileTool, SensitivePathError, WriteFileTool } from "../../src/tools/filesystem.js";
 import { CopyFileTool } from "../../src/tools/directory-tools.js";
 import { SearchCodeTool } from "../../src/tools/search-tools.js";
 import { ShellTool } from "../../src/tools/shell.js";
@@ -46,6 +46,28 @@ describe("hardlinked secrets", () => {
     expect(g.check("read", "deploy-key.txt").code).toBe("sensitive_path");
     expect(g.check("copy", "deploy-key.txt").code).toBe("sensitive_path");
     expect(g.check("read", "app.ts").allowed).toBe(true);
+  });
+
+  it("mutations through an alias of a secret are refused, with or without read protection", () => {
+    const unprotected = new WorkspaceGuard({ root, credentialLocations: [join(home, ".ssh")] });
+    for (const g of [guard(), unprotected]) {
+      expect(g.check("write", "notes.txt").code).toBe("sensitive_path");
+      expect(g.check("write", "deploy-key.txt").code).toBe("sensitive_path");
+      expect(g.check("delete", "notes.txt").code).toBe("sensitive_path");
+    }
+  });
+
+  it("write_file refuses an alias and leaves the secret's bytes untouched", async () => {
+    await expect(new WriteFileTool(guard()).call({ path: "notes.txt", content: "overwritten" })).rejects.toThrow(
+      SensitivePathError,
+    );
+    expect(readFileSync(join(root, ".env"), "utf8")).toBe("API_KEY=sk-live NEEDLE\n");
+    expect(readFileSync(join(home, ".ssh", "id_ed25519"), "utf8")).toBe("PRIVATE KEY NEEDLE\n");
+  });
+
+  it("writes to ordinary hardlinks between non-secret files stay allowed", () => {
+    linkSync(join(root, "app.ts"), join(root, "app-copy.ts"));
+    expect(guard().check("write", "app-copy.ts").allowed).toBe(true);
   });
 
   it("ordinary hardlinks between non-secret files stay readable", () => {

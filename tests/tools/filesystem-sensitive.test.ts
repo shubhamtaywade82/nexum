@@ -79,3 +79,17 @@ describe("WriteFileTool sensitive path blocking", () => {
     expect(result.path).toBe("main.ts");
   });
 });
+
+describe("ReadFileTool sensitive path blocking across case variants", () => {
+  it("blocks case variants of credential filenames and directories", async () => {
+    const { mkdir } = await import("node:fs/promises");
+    const dir = await mkdtemp(join(tmpdir(), "ws-"));
+    await writeFile(join(dir, "ID_RSA"), "-----BEGIN OPENSSH PRIVATE KEY-----");
+    await mkdir(join(dir, ".AWS"), { recursive: true });
+    await writeFile(join(dir, ".AWS", "credentials"), "[default]\naws_secret_access_key=abc");
+    const tool = new ReadFileTool(dir);
+
+    await expect(tool.call({ path: "ID_RSA" })).rejects.toThrow(SensitivePathError);
+    await expect(tool.call({ path: ".AWS/credentials" })).rejects.toThrow(SensitivePathError);
+  });
+});
