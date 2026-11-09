@@ -43,12 +43,30 @@ describe("Evolution Benchmarks Bridge", () => {
     expect(taskRes.taskId).toBe("case-loop-1");
     expect(taskRes.success).toBe(true);
     expect(taskRes.verificationPassed).toBe(true);
-    expect(taskRes.toolCalls).toBe(2);
-    expect(taskRes.toolErrors).toBe(0);
+    // Not recorded for this result, so not invented: the reliability aggregate ignores it.
+    expect(taskRes.toolCalls).toBeUndefined();
+    expect(taskRes.toolErrors).toBeUndefined();
     expect(taskRes.latencyMs).toBe(1200);
     // The provider-reported usage, not a constant.
     expect(taskRes.tokens).toBe(812);
     expect(taskRes.tokensEstimated).toBe(false);
+  });
+
+  it("carries the tool-call counts the runner recorded, and never a category-derived constant", () => {
+    const bRes: BenchmarkResult = {
+      model: "m",
+      tier: "local",
+      caseId: "case-tools-1",
+      category: "tool-calling",
+      pass: false,
+      latencyMs: 1,
+      tokensPerSec: null,
+      tokens: 0,
+      tokensEstimated: false,
+      toolCalls: 5,
+      toolErrors: 3,
+    };
+    expect(toTaskExecutionResult(bRes)).toEqual(expect.objectContaining({ toolCalls: 5, toolErrors: 3 }));
   });
 
   it("assigns held-out by the frozen case-id split, never by category label", () => {

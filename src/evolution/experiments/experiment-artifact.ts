@@ -76,8 +76,8 @@ export interface ExperimentMetricsSummary {
     verificationPassed: boolean;
     isHeldOut: boolean;
     loopAborted: boolean;
-    toolCalls: number;
-    toolErrors: number;
+    toolCalls?: number;
+    toolErrors?: number;
     tokens: number;
     latencyMs: number;
   }>;
@@ -272,8 +272,10 @@ export function summarizeExperimentRuns(results: TaskExecutionResult[]): Experim
   const verified = results.filter((r) => r.verificationPassed).length;
   const falseSuccess = results.filter((r) => r.success && !r.verificationPassed).length;
   const loopAborts = results.filter((r) => r.loopAborted).length;
-  const toolErrors = results.reduce((acc, r) => acc + r.toolErrors, 0);
-  const toolCalls = results.reduce((acc, r) => acc + r.toolCalls, 0);
+  // Only runs that recorded their tool calls count toward the rate; the rest are unknown, not zero.
+  const counted = results.filter((r) => r.toolCalls !== undefined);
+  const toolErrors = counted.reduce((acc, r) => acc + (r.toolErrors ?? 0), 0);
+  const toolCalls = counted.reduce((acc, r) => acc + (r.toolCalls ?? 0), 0);
   const tokens = results.reduce((acc, r) => acc + r.tokens, 0);
   const latency = results.reduce((acc, r) => acc + r.latencyMs, 0);
   return {

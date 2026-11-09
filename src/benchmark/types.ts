@@ -74,6 +74,13 @@ export interface BenchmarkResult {
   driver?: "model" | "agent";
   /** Models the harness actually called (agent driver only); routing may pick models besides `model`. */
   modelsUsed?: string[];
+  /**
+   * Tool calls the case executed, counted from its trajectory. 0 for a single-turn case, which runs no tools.
+   * Absent when the case errored or timed out before the trajectory was complete: unknown, not zero.
+   */
+  toolCalls?: number;
+  /** Executed tool calls whose result carried an `error`. Same absence rule as `toolCalls`. */
+  toolErrors?: number;
   error?: string;
 }
 

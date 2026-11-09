@@ -1,6 +1,7 @@
 import { Provider, ChatMessage, ChatResponse, Tier } from "../models/adapters/provider.js";
 import {
   AgenticBenchmarkCase,
+  AgenticToolCall,
   AgenticTrajectory,
   BenchmarkCase,
   BenchmarkResult,
@@ -21,6 +22,13 @@ export interface CaseRunOutcome {
   tokensEstimated: boolean;
   /** Models the harness actually called. Only the agent driver sets it: its router may pick models besides the target. */
   modelsUsed?: string[];
+  toolCalls?: number;
+  toolErrors?: number;
+}
+
+/** A tool result is an error when it carries a non-empty `error` string (the convention every case tool follows). */
+export function countToolErrors(calls: AgenticToolCall[]): number {
+  return calls.filter((call) => typeof call.result.error === "string" && call.result.error.length > 0).length;
 }
 
 /**
@@ -240,6 +248,9 @@ async function runSingleTurn(target: BenchmarkTarget, testCase: SingleTurnBenchm
     reason,
     tokensPerSec: estimateTokensPerSec(response, Date.now() - start),
     ...usageFor(response),
+    // A single turn emits tool calls but executes none.
+    toolCalls: 0,
+    toolErrors: 0,
   };
 }
 
@@ -310,6 +321,8 @@ async function runAgenticTurn(
     tokensPerSec: lastResponse ? estimateTokensPerSec(lastResponse, Date.now() - start) : null,
     tokens,
     tokensEstimated,
+    toolCalls: toolCallsMade.length,
+    toolErrors: countToolErrors(toolCallsMade),
   };
 }
 

@@ -140,6 +140,50 @@ describe("runBenchmark — agentic cases", () => {
     expect(results[0].category).toBeUndefined();
   });
 
+  it("records the tool calls it executed and how many returned an error, from the trajectory", async () => {
+    const provider = new Provider({ tier: "local", model: "x" });
+    let call = 0;
+    jest.spyOn(provider, "chat").mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return toolCallResponse("lookup", { id: "missing" });
+      if (call === 2) return toolCallResponse("lookup", { id: "u123" });
+      return response("done");
+    });
+    const agenticCase: AgenticBenchmarkCase = {
+      id: "counted",
+      kind: "agentic",
+      description: "one failing and one successful lookup",
+      messages: [{ role: "user", content: "go" }],
+      tools: [],
+      maxTurns: 5,
+      resolveTool: async (_name, args) => (args.id === "u123" ? { ok: true } : { error: "not found" }),
+      validate: () => ({ pass: true }),
+    };
+
+    const [result] = await runBenchmark([{ model: "qwen3:8b", tier: "local", provider }], [agenticCase]);
+
+    expect(result.toolCalls).toBe(2);
+    expect(result.toolErrors).toBe(1);
+  });
+
+  it("records zero executed tool calls for a single-turn case, which runs no tools", async () => {
+    const provider = new Provider({ tier: "local", model: "x" });
+    jest.spyOn(provider, "chat").mockResolvedValue(response("an answer"));
+    const singleCase: SingleTurnBenchmarkCase = {
+      id: "single",
+      kind: "single",
+      description: "one turn",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [],
+      validate: () => ({ pass: true }),
+    } as SingleTurnBenchmarkCase;
+
+    const [result] = await runBenchmark([{ model: "qwen3:8b", tier: "local", provider }], [singleCase]);
+
+    expect(result.toolCalls).toBe(0);
+    expect(result.toolErrors).toBe(0);
+  });
+
   it("marks hitMaxTurns when the model never stops calling tools", async () => {
     const provider = new Provider({ tier: "local", model: "x" });
     jest.spyOn(provider, "chat").mockResolvedValue(toolCallResponse("loop_forever", {}));

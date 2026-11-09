@@ -32,15 +32,15 @@ export function filterCasesByCategory(cases: BenchmarkCase[], categories: string
 
 /** Transforms a BenchmarkResult into a standardized TaskExecutionResult. */
 export function toTaskExecutionResult(res: BenchmarkResult): TaskExecutionResult {
-  const isError = !res.pass;
   const loopAborted = Boolean(res.error?.includes("maxTurns") || res.reason?.includes("loop"));
 
   return {
     taskId: res.caseId,
     success: res.pass,
     verificationPassed: res.pass,
-    toolCalls: res.category === "tool-calling" || res.category === "agentic-looping" ? 2 : 1,
-    toolErrors: isError ? 1 : 0,
+    // Recorded by the runner from the trajectory; undefined when it was not recorded.
+    toolCalls: res.toolCalls,
+    toolErrors: res.toolErrors,
     tokens: res.tokens,
     tokensEstimated: res.tokensEstimated,
     latencyMs: res.latencyMs,
