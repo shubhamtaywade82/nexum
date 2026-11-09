@@ -168,31 +168,6 @@ export class AgentToolManager {
     this.registerToolPack(agentCorePack({ requester }));
   }
 
-  registerBinanceStreamTools(stream: BinanceStreamManager): void {
-    this.registerToolPack(tradingPack({ stream }));
-  }
-
-  /** Trading domain pack (canonical name — review item 21). */
-  registerTradingTools(stream: BinanceStreamManager): void {
-    this.registerToolPack(tradingPack({ stream }));
-  }
-
-  registerLspTools(lsp: LspManager): void {
-    this.registerToolPack(lspPack(lsp));
-  }
-
-  registerBrowserTools(browser: BrowserManager, screenshots?: () => ScreenshotSink | undefined): void {
-    this.registerToolPack(browserPack(browser, screenshots));
-  }
-
-  registerRailsTools(rails: SemanticIndex): void {
-    this.registerToolPack(railsPack(rails));
-  }
-
-  registerDocsTools(store: DocsStore, workspaceRoot: string): void {
-    this.registerToolPack(docsPack(store, workspaceRoot));
-  }
-
   registerTool(tool: Tool, category = "General"): void {
     this.registry.register(tool, category);
     this.kernelCatalog.registerLegacy(tool, category);

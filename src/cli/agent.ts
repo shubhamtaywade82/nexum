@@ -32,6 +32,7 @@ import { IntentResolver } from "../intent/intent-resolver.js";
 import { MemoryStore } from "../memory/store.js";
 import { DocsStore } from "../docs/store.js";
 import { AgentConversation } from "./agent-conversation.js";
+import { browserPack, docsPack, lspPack, railsPack, tradingPack } from "../tools/packs/index.js";
 import { AgentToolManager, type McpRegistrationOptions } from "./agent-tools.js";
 import { McpApprovalStore, McpTrustPolicy, mcpTrustPolicyFromConfig } from "../mcp/trust.js";
 import { resolveMcpEnv } from "../mcp/env.js";
@@ -350,13 +351,14 @@ export class Agent {
       },
     });
 
-    this.tools.registerLspTools(this.intelligence.lspManager);
-    this.tools.registerRailsTools(this.intelligence.railsIndex);
+    // Each domain mounts its own pack; the tool surface stays one seam (registerToolPack).
+    this.tools.registerToolPack(lspPack(this.intelligence.lspManager));
+    this.tools.registerToolPack(railsPack(this.intelligence.railsIndex));
 
     this.browser = new BrowserManager();
-    this.tools.registerBrowserTools(this.browser, () => this.attachments);
+    this.tools.registerToolPack(browserPack(this.browser, () => this.attachments));
     this.binanceStream = new BinanceStreamManager();
-    this.tools.registerBinanceStreamTools(this.binanceStream);
+    this.tools.registerToolPack(tradingPack({ stream: this.binanceStream }));
 
     this.lspManager = this.intelligence.lspManager;
     this.railsIndex = this.intelligence.railsIndex;
@@ -412,7 +414,7 @@ export class Agent {
     });
 
     this.docs = new DocsStore(statePaths.docsDb);
-    this.tools.registerDocsTools(this.docs, cfg.workspaceRoot);
+    this.tools.registerToolPack(docsPack(this.docs, cfg.workspaceRoot));
 
     const projectLanguage = this.intelligence.railsIndex.enabled
       ? this.intelligence.railsIndex.workspace.isRails
