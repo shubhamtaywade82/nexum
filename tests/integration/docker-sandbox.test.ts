@@ -106,6 +106,22 @@ describeIfDocker("sandbox boundary against a real Docker daemon", () => {
   );
 
   it(
+    "cannot move .git aside to plant a fresh hooks dir (the git dir is itself a mount point)",
+    async () => {
+      // Read-only hooks/config mounts alone let `mv .git` succeed, after which
+      // the container recreates .git/hooks/pre-commit on the host workspace.
+      expect((await run("mv .git .git-moved && echo moved")).out).not.toBe("moved");
+      expect(existsSync(join(root, ".git", "hooks"))).toBe(true);
+      expect((await run("mkdir -p .git/hooks && echo planted > .git/hooks/pre-commit")).exit).not.toBe(0);
+      expect(existsSync(join(root, ".git", "hooks", "pre-commit"))).toBe(false);
+      expect(existsSync(join(root, ".git-moved"))).toBe(false);
+      // Ordinary writes inside .git stay allowed, so git works from the sandbox.
+      expect((await run("echo ok > .git/sandbox-write && echo ok")).out).toBe("ok");
+    },
+    TIMEOUT,
+  );
+
+  it(
     "has no network, no capabilities, no privilege escalation and a read-only root filesystem",
     async () => {
       const net = await run(

@@ -402,6 +402,51 @@ export class ShellTool extends Tool {
   }
 
   /**
+   * Git internals. Host git runs `.git/hooks/*` and `core.fsmonitor` from
+   * `.git/config` on every relevant command, so the container must never be
+   * able to plant either. Three rules:
+   *   - refuse symlinked internals: a mount does not protect a link's target,
+   *     and the container could swap the link for its own content;
+   *   - create a missing hooks dir and config (real `.git` directory only), so the
+   *     read-only binds exist: a path that is missing stays writable through the
+   *     workspace mount;
+   *   - bind `.git` itself. The read-only binds alone do not stop `mv .git
+   *     .git-old && mkdir -p .git/hooks`, which would replace the whole repository;
+   *     a mount point cannot be renamed, so `.git` stays where it is.
+   * A `.git` file (worktree or submodule pointer) is bound read-only so a
+   * rewritten pointer cannot redirect host git to a planted gitdir.
+   * `gitWritable` is false under a write scope narrower than the workspace.
+   */
+  private gitInternalMounts(
+    root: string,
+    toContainer: (hostPath: string) => string,
+    bind: (source: string, target: string, readonly: boolean) => string[],
+    gitWritable: boolean,
+  ): string[] {
+    const gitDir = join(root, ".git");
+    const internals = [join(gitDir, "hooks"), join(gitDir, "config")];
+    if (isSymlink(gitDir) || internals.some(isSymlink)) {
+      throw new Error(
+        ".git, .git/hooks or .git/config is a symbolic link; the sandbox cannot protect git internals behind a link. " +
+          "Replace the link with a real file or directory.",
+      );
+    }
+    if (!existsSync(gitDir)) return [];
+
+    if (!lstatSync(gitDir).isDirectory()) {
+      return bind(gitDir, toContainer(gitDir), true);
+    }
+
+    if (!existsSync(internals[0])) mkdirSync(internals[0]);
+    if (!existsSync(internals[1])) closeSync(openSync(internals[1], "wx", 0o644));
+
+    return [
+      ...bind(gitDir, toContainer(gitDir), !gitWritable),
+      ...internals.flatMap((internal) => bind(internal, toContainer(internal), true)),
+    ];
+  }
+
+  /**
    * Mounts, in override order (later wins):
    *   1. the workspace — read-write, or read-only when a write scope is set
    *   2. the write scope — read-write
@@ -429,11 +474,7 @@ export class ShellTool extends Tool {
     const args = bind(root, "/workspace", scope !== undefined);
     if (scope && scopeInside && existsSync(scope)) args.push(...bind(scope, toContainer(scope), false));
 
-    for (const internal of [join(root, ".git", "hooks"), join(root, ".git", "config")]) {
-      if (existsSync(internal) && !lstatSync(internal).isSymbolicLink()) {
-        args.push(...bind(internal, toContainer(internal), true));
-      }
-    }
+    args.push(...this.gitInternalMounts(root, toContainer, bind, scope === undefined || scope === root));
 
     // Nexum's state (config, plugin installs, trust stores) is read-only too.
     // .nexum is created first when missing: otherwise the container could
