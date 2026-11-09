@@ -7,6 +7,15 @@
 - `src/multiagent` (message bus, shared state, consensus, supervisor loop), its tests, its `@nemesis-oss/nexum/multiagent` subpath, and the package-root exports are removed. No CLI command, host endpoint, TUI view or runtime path used them.
 - To restore them: `git checkout 01b42ab -- src/multiagent tests/multiagent`, then re-add the exports.
 
+### Subagents: one lifecycle owner, no terminal-state overwrites
+
+- Every provider now reports through `SubagentSession` (`src/subagents/session.ts`). Transitions follow one table and a terminal state never changes: a late `interrupt()` on a completed child keeps it `completed`. Previously the ACP and process providers overwrote it with `cancelled`.
+- **Breaking for `SubagentHandle` consumers:** `state` is read-only. Only the owning session moves it; callers that assigned `handle.state` must call `interrupt()` instead.
+- New `handle.terminated` resolves once with the terminal state, for one-shot and continuable children alike. The service frees a slot on it, so a continuable child whose process dies no longer holds a slot until `cancel()`.
+- A continuable child whose process exits while live fails its session. Every terminal transition stops its process, so a failed session cannot leave a process running.
+- The process provider watches `close` rather than `exit`, so a response written just before the child exits is delivered.
+- The ACP provider posts a one-shot task in the background and returns the handle at once, matching the other providers. Previously `spawn()` waited for the whole remote task.
+
 ### Layering: the core plane depends on no plane above it
 
 - **Breaking for `@nemesis-oss/nexum/core` consumers:** the core entry point no longer re-exports runtime implementations (`DefaultAgentRuntime`, the strategies, `BudgetTracker` and the budget errors, the execution-context helpers, the registries). They are exported from `@nemesis-oss/nexum/runtime`, which is where they live.

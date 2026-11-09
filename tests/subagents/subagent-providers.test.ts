@@ -2,7 +2,7 @@
  * SubagentService + providers: real execution paths, lifecycle accounting,
  * and provider registration honesty.
  */
-import { describe, it, expect, beforeEach } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import {
   SubagentService,
   InProcessSubagentProvider,
@@ -72,6 +72,15 @@ function parentContext(): ExecutionContext {
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 20));
+
+/** Polls until `predicate` holds; the child-process tests observe real exits, which have no fixed latency. */
+async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("condition not reached in time");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
 
 describe("InProcessSubagentProvider", () => {
   it("executes the goal through the runtime and returns its real output", async () => {
@@ -278,6 +287,16 @@ describe("ProcessSubagentProvider", () => {
     expect(handle.state).toBe("cancelled");
   });
 
+  it("a continuable child that exits fails its handle and frees its slot", async () => {
+    const service = new SubagentService({ maxConcurrent: 1 }).registerProvider(
+      new ProcessSubagentProvider({ binaryPath: "/bin/true" }),
+    );
+    const handle = await service.spawn({ provider: "process", goal: "c", continuable: true });
+    await waitUntil(() => handle.state !== "running");
+    expect(handle.state).toBe("failed");
+    expect(service.activeSlots()).toBe(0);
+  });
+
   it("stopAll leaves every handle terminal", async () => {
     await provider.spawn({ provider: "process", goal: "a", continuable: true });
     await provider.spawn({ provider: "process", goal: "b", continuable: true });
@@ -289,10 +308,28 @@ describe("ProcessSubagentProvider", () => {
 });
 
 describe("ACPSubagentProvider", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
   it("spawn throws without an endpoint", async () => {
     await expect(new ACPSubagentProvider().spawn({ provider: "acp", goal: "test" })).rejects.toThrow(
       /requires an endpoint/,
     );
+  });
+
+  it("keeps a completed one-shot task completed when it is interrupted afterwards", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ output: "done" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })) as typeof fetch;
+    const provider = new ACPSubagentProvider({ endpoint: "http://acp.test" });
+    const handle = await provider.spawn({ provider: "acp", goal: "g" });
+    await expect(handle.promise).resolves.toMatchObject({ status: "completed", output: "done" });
+    await handle.interrupt("late cancel");
+    expect(handle.state).toBe("completed");
   });
 });
 
