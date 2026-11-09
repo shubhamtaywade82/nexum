@@ -59,6 +59,34 @@ const VALID_TRANSITIONS: Record<StepStatus, readonly StepStatus[]> = {
   running: ["completed", "failed", "blocked", "cancelled", "testing"],
 };
 
+/** Statuses a planner revision may never overwrite: finished or unwound work is history, not plan. */
+const IMMUTABLE_ON_REPLAN: ReadonlySet<StepStatus> = new Set(["completed", "cancelled", "rolledback"]);
+
+/**
+ * Ids of steps that can still reach `completed`: already-completed steps, plus
+ * pending steps whose dependencies are all in the set (fixpoint). Pending steps
+ * outside it can never run — they depend on a failed/skipped/cancelled step, an
+ * unknown id, or sit in a dependency cycle.
+ */
+function finishableSteps(graph: ReadonlyMap<string, PlanStep>): Set<string> {
+  const finishable = new Set<string>();
+  for (const step of graph.values()) {
+    if (step.status === "completed") finishable.add(step.id);
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const step of graph.values()) {
+      if (step.status !== "pending" || finishable.has(step.id)) continue;
+      if (step.dependencies.every((depId) => finishable.has(depId))) {
+        finishable.add(step.id);
+        changed = true;
+      }
+    }
+  }
+  return finishable;
+}
+
 export interface OrchestratorOptions {
   steps: PlanStep[];
   runner: StepRunner;
@@ -174,9 +202,7 @@ export class Orchestrator {
         throw new OrchestratorError(`exceeded ${this.maxReplans} re-plans — aborting to avoid an unbounded loop`);
       }
 
-      const remaining = order.filter((s) => s.status !== "completed" && s.status !== "failed");
-      const revised = await this.planner.replan(remaining, this.history);
-      this.applyReplan(revised);
+      await this.replanRemaining(order);
       order = this.topologicalOrder();
     }
 
@@ -281,11 +307,78 @@ export class Orchestrator {
     }
   }
 
-  private applyReplan(revised: PlanStep[]): void {
-    for (const step of revised) {
-      this.steps.set(step.id, step);
+  /**
+   * Asks the planner to revise the unfinished plan and adopts the revision only
+   * if it validates. Planner exceptions propagate (the checkpoint is kept, so the
+   * run can resume). A rejected revision is logged and the current plan is kept:
+   * dependents of the failed step are already skipped, independent work still
+   * runs, and the mission ends through the normal rollback path rather than
+   * crashing mid-run with a corrupted, already-checkpointed graph.
+   */
+  private async replanRemaining(order: PlanStep[]): Promise<void> {
+    const remaining = order.filter((s) => s.status !== "completed" && s.status !== "failed");
+    const revised = await this.planner.replan(remaining, this.history);
+    try {
+      this.steps = this.mergeRevision(revised);
+    } catch (error) {
+      if (!(error instanceof OrchestratorError)) throw error;
+      this.logger.warn(`[Orchestrator] rejected plan revision — keeping current plan: ${error.message}`);
+      return;
     }
     this.saveCheckpoint();
+  }
+
+  /**
+   * Validates a planner revision and returns the graph it would produce. Pure:
+   * `this.steps` and the checkpoint are untouched, so a rejected revision leaves
+   * the live plan exactly as it was.
+   *
+   *   - the revision is an array; each step has a non-empty id and string deps;
+   *   - ids are unique within the revision;
+   *   - no revised step overwrites completed/cancelled/rolledback work (a planner
+   *     reusing "step-1" must not re-run finished steps or invalidate their output);
+   *   - revised steps re-enter as `pending` with a fresh retry budget: the planner
+   *     cannot mint `completed` steps or import a status the orchestrator owns;
+   *   - every revised step must be able to finish, which rejects unknown deps,
+   *     dependency cycles and deps on failed/skipped/cancelled steps.
+   */
+  private mergeRevision(revised: PlanStep[]): Map<string, PlanStep> {
+    if (!Array.isArray(revised)) {
+      throw new OrchestratorError("planner returned a revision that is not an array");
+    }
+
+    const seen = new Set<string>();
+    for (const step of revised) {
+      if (typeof step?.id !== "string" || step.id.trim() === "") {
+        throw new OrchestratorError("revision contains a step without a usable id");
+      }
+      if (!Array.isArray(step.dependencies) || !step.dependencies.every((d) => typeof d === "string")) {
+        throw new OrchestratorError(`revised step ${step.id} has invalid dependencies`);
+      }
+      if (seen.has(step.id)) throw new OrchestratorError(`revision lists step ${step.id} more than once`);
+      seen.add(step.id);
+
+      const existing = this.steps.get(step.id);
+      if (existing && IMMUTABLE_ON_REPLAN.has(existing.status)) {
+        throw new OrchestratorError(`revision overwrites ${existing.status} step ${step.id}`);
+      }
+    }
+
+    const merged = new Map(this.steps);
+    for (const step of revised) {
+      merged.set(step.id, { ...step, status: "pending", retryCount: 0 });
+    }
+
+    const finishable = finishableSteps(merged);
+    for (const step of revised) {
+      if (finishable.has(step.id)) continue;
+      const blocker = step.dependencies.find((depId) => !finishable.has(depId)) ?? step.id;
+      const state = merged.get(blocker)?.status ?? "unknown";
+      throw new OrchestratorError(
+        `revised step ${step.id} can never run: dependency ${blocker} is ${state} and cannot finish`,
+      );
+    }
+    return merged;
   }
 
   private topologicalOrder(): PlanStep[] {

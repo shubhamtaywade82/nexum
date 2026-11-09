@@ -397,3 +397,188 @@ describe("Orchestrator resume state", () => {
     expect(priorHistory).toHaveLength(1);
   });
 });
+
+// A planner revision is model output. Each malformed revision must be rejected
+// without crashing the run and without writing a corrupted graph to the checkpoint.
+describe("Orchestrator replan validation", () => {
+  let dir: string;
+  let checkpointPath: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "orchestrator-revision-"));
+    checkpointPath = join(dir, "checkpoint.json");
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** "a" completes, "x" fails permanently, "y" waits on "a": the batch-1 failure triggers a replan with remaining=[y]. */
+  function runnerFailingX(executed: string[]): StepRunner {
+    return {
+      async run(step) {
+        executed.push(step.id);
+        return step.id === "x" ? { kind: "blocking", error: "broken" } : { kind: "success", output: {} };
+      },
+    };
+  }
+
+  it("rejects a revision that overwrites a completed step instead of re-running it", async () => {
+    const executed: string[] = [];
+    const warn = jest.fn();
+    const planner: Planner = {
+      async replan() {
+        return [makeStep("a"), makeStep("z")];
+      },
+    };
+    const orchestrator = new Orchestrator({
+      steps: [makeStep("a"), makeStep("x"), makeStep("y", ["a"])],
+      runner: runnerFailingX(executed),
+      planner,
+      runRollback: async () => {},
+      logger: { info: jest.fn(), warn, error: jest.fn() },
+    });
+    const result = await orchestrator.run();
+
+    expect(executed.filter((id) => id === "a")).toHaveLength(1);
+    expect(executed).not.toContain("z");
+    expect(executed).toContain("y");
+    expect(result.find((s) => s.id === "a")?.status).toBe("completed");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("overwrites completed step a"));
+  });
+
+  it("rejects a revision with an unknown dependency without crashing or checkpointing it", async () => {
+    const executed: string[] = [];
+    const checkpoint = new CheckpointStore(checkpointPath);
+    const saveSpy = jest.spyOn(checkpoint, "save");
+    const planner: Planner = {
+      async replan() {
+        return [makeStep("y", ["ghost"])];
+      },
+    };
+    const orchestrator = new Orchestrator({
+      steps: [makeStep("a"), makeStep("x"), makeStep("y", ["a"])],
+      runner: runnerFailingX(executed),
+      planner,
+      runRollback: async () => {},
+      logger: noopLogger,
+      checkpoint,
+    });
+
+    await expect(orchestrator.run()).resolves.toBeDefined();
+    expect(executed).toContain("y"); // the original step still runs
+    for (const [data] of saveSpy.mock.calls) {
+      expect(data.steps.map((s) => s.id)).not.toContain("ghost");
+    }
+  });
+
+  it("rejects a revision containing a dependency cycle", async () => {
+    const executed: string[] = [];
+    const warn = jest.fn();
+    const planner: Planner = {
+      async replan() {
+        return [makeStep("c", ["d"]), makeStep("d", ["c"])];
+      },
+    };
+    const orchestrator = new Orchestrator({
+      steps: [makeStep("a"), makeStep("x"), makeStep("y", ["a"])],
+      runner: runnerFailingX(executed),
+      planner,
+      runRollback: async () => {},
+      logger: { info: jest.fn(), warn, error: jest.fn() },
+    });
+    const result = await orchestrator.run();
+
+    expect(executed).not.toContain("c");
+    expect(executed).not.toContain("d");
+    expect(result.map((s) => s.id)).toEqual(["a", "x", "y"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("can never run"));
+  });
+
+  it("rejects a revision that depends on a failed step, which can never complete", async () => {
+    const executed: string[] = [];
+    const warn = jest.fn();
+    const planner: Planner = {
+      async replan() {
+        return [makeStep("b", ["a"])];
+      },
+    };
+    const runner: StepRunner = {
+      async run(step) {
+        executed.push(step.id);
+        return { kind: "blocking", error: "broken" };
+      },
+    };
+    const orchestrator = new Orchestrator({
+      steps: [makeStep("a"), makeStep("b", ["a"])],
+      runner,
+      planner,
+      runRollback: async () => {},
+      logger: { info: jest.fn(), warn, error: jest.fn() },
+    });
+    const result = await orchestrator.run();
+
+    expect(executed).toEqual(["a"]);
+    expect(result.find((s) => s.id === "b")?.status).toBe("skipped");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("dependency a is failed"));
+  });
+
+  it("rejects a revision that is not an array", async () => {
+    const warn = jest.fn();
+    const planner: Planner = {
+      replan: async () => undefined as unknown as PlanStep[],
+    };
+    const orchestrator = new Orchestrator({
+      steps: [makeStep("a")],
+      runner: {
+        async run(): Promise<StepOutcome> {
+          return { kind: "blocking", error: "broken" };
+        },
+      },
+      planner,
+      runRollback: async () => {},
+      logger: { info: jest.fn(), warn, error: jest.fn() },
+    });
+    const result = await orchestrator.run();
+
+    expect(result[0].status).toBe("failed");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("not an array"));
+  });
+
+  it("adopts a valid revision and normalizes planner-supplied status and retry budget", async () => {
+    const executed: string[] = [];
+    const planner: Planner = {
+      async replan(remaining) {
+        expect(remaining.map((s) => s.id)).toEqual(["b"]);
+        return [
+          // A planner may not mint a completed step: "a" re-enters as pending and must actually run.
+          { ...makeStep("a"), status: "completed", retryCount: 7 },
+          { ...makeStep("b", ["a"]), status: "skipped" },
+        ];
+      },
+    };
+    let attempts = 0;
+    const runner: StepRunner = {
+      async run(step) {
+        executed.push(step.id);
+        if (step.id !== "a") return { kind: "success", output: {} };
+        attempts += 1;
+        return attempts === 1 ? { kind: "blocking", error: "first try fails" } : { kind: "success", output: {} };
+      },
+    };
+    const orchestrator = new Orchestrator({
+      steps: [makeStep("a"), makeStep("b", ["a"])],
+      runner,
+      planner,
+      runRollback: async () => {},
+      logger: noopLogger,
+    });
+    const result = await orchestrator.run();
+
+    expect(executed).toEqual(["a", "a", "b"]);
+    expect(result).toEqual([
+      expect.objectContaining({ id: "a", status: "completed", retryCount: 0 }),
+      expect.objectContaining({ id: "b", status: "completed" }),
+    ]);
+  });
+});
