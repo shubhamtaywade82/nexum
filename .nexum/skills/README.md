@@ -35,7 +35,7 @@ Model- or user-reachable (rich trigger phrasing so the model can reach for them)
 
 ## Attribution
 
-The skills below are copied from [mattpocock/skills](https://github.com/mattpocock/skills) (`skills/engineering`), released under the MIT License, Copyright (c) 2026 Matt Pocock. Their directory names match upstream; their content may have been adapted for this repository, so upstream is the reference for the original wording.
+The skills below are copied from [mattpocock/skills](https://github.com/mattpocock/skills) (`skills/engineering`), released under the MIT License, Copyright (c) 2026 Matt Pocock. The full license text is in [LICENSE-mattpocock-skills](./LICENSE-mattpocock-skills). Their directory names match upstream; their content may have been adapted for this repository, so upstream is the reference for the original wording.
 
 `ask-matt`, `code-review`, `codebase-design`, `diagnosing-bugs`, `domain-modeling`, `grill-with-docs`, `implement`, `implement-spec`, `improve-codebase-architecture`, `pr`, `prototype`, `research`, `retro`, `setup-matt-pocock-skills`, `tdd`, `to-spec`, `to-tickets`, `triage`, `wayfinder`, `wizard`.
 
