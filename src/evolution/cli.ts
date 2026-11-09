@@ -12,6 +12,8 @@ import { parseArgs } from "node:util";
 import { promisify } from "node:util";
 import { BenchmarkResult } from "../benchmark/types.js";
 import { loadConfig, CliConfig } from "../cli/config.js";
+import { workspaceSkillGate, WorkspaceTrustStore } from "../cli/workspace-trust.js";
+import { loadMutationSkillGuidance } from "./mutation/skill-guidance.js";
 import { Episode } from "../learning/types.js";
 import { LessonStore } from "../learning/lesson-store.js";
 import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
@@ -630,18 +632,15 @@ function traceSummary(entry: MutationTraceEntry): string {
   return `tool ${entry.name}(${JSON.stringify(entry.args).slice(0, 120)}) → ${status}`;
 }
 
-const MATT_POCOCK_ENGINEERING_DISCIPLINE = [
-  "Engineering Disciplines (Matt Pocock Skills / Deep Modules):",
-  "- Root Cause Locality (diagnosing-bugs & codebase-design): Trace the symptom to the implementing seam and fix it at the source so all callers succeed without changing caller signatures.",
-  "- Minimal Vertical Slice (tdd & implement): Propose ONLY the smallest atomic edit needed to solve the symptom. No speculative abstractions, wrappers, or extra parameters.",
-  "- Deep Modules: Keep interfaces small and implementations robust; hide complexity rather than leaking it to callers.",
-  "- Behavior Preservation (code-review): Ensure existing working functionality remains completely intact.",
-].join("\n");
-
 export function buildMutationStrategy(
   name: string | undefined,
   cfg: CliConfig,
-  opts: { maxTurns?: number; onTrace?: (entry: MutationTraceEntry) => void } = {},
+  opts: {
+    maxTurns?: number;
+    onTrace?: (entry: MutationTraceEntry) => void;
+    /** Process guidance for the agent, from the repository's skill files (see loadMutationSkillGuidance). */
+    skillGuidance?: string;
+  } = {},
 ): MutationStrategy | null {
   if (!name || name === "heuristic") return null;
   const chat = () => chatClientFromProvider(providerFromConfig(cfg));
@@ -651,7 +650,7 @@ export function buildMutationStrategy(
         runtime: new DefaultAgentRuntime(),
         modelGateway: modelGatewayFromChatClient(chat()),
         onTrace: opts.onTrace,
-        systemPromptExtras: MATT_POCOCK_ENGINEERING_DISCIPLINE,
+        ...(opts.skillGuidance ? { systemPromptExtras: opts.skillGuidance } : {}),
         ...(opts.maxTurns ? { maxTurns: opts.maxTurns } : {}),
       }),
     });
@@ -906,6 +905,11 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   const rawRepo = (values.repo as string | undefined) ?? ".";
   const repoRoot = resolve(root, rawRepo);
   const cfg = loadConfig();
+  // The agent is told the process in the skill files of the repository it mutates, and only once that
+  // repository is trusted: its skills are repository content, which must not steer the model before trust.
+  const skillGuidance = loadMutationSkillGuidance(repoRoot, {
+    workspaceTrusted: workspaceSkillGate(repoRoot, WorkspaceTrustStore.global()).allowed,
+  });
   // --agent is an alias for --strategy agent; an explicit --strategy wins.
   // In cloud environments or when configured via env, default to the production engineering agent.
   const defaultStrategy = process.env.NEXUM_MUTATION_STRATEGY ?? (cfg.tier === "cloud" ? "agent" : undefined);
@@ -1030,6 +1034,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
       { ...cfg, apiKeys: keys, ...(keys[0] ? { apiKey: keys[0] } : {}) },
       {
         maxTurns,
+        skillGuidance: skillGuidance.text,
         onTrace: mutationTraceWriter(
           join(experimentDir, `mutation-${runStamp}${slotSuffix(slot)}.trace.jsonl`),
           parallel > 1 ? `c${slot} ` : "",
