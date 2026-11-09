@@ -5,12 +5,6 @@ import { connectMcpServerTools, type McpServerToolsOptions } from "../mcp/adapte
 import type { McpToolAdapter } from "../mcp/adapter/mcp-tool-adapter.js";
 import type { LocalWorker } from "../models/local-worker.js";
 import type { ClarificationRequester } from "../tools/ask-user-tool.js";
-import type { LspManager } from "../lsp/manager.js";
-import type { BrowserManager } from "../browser/manager.js";
-import type { ScreenshotSink } from "../tools/browser-tools.js";
-import type { BinanceStreamManager } from "../domains/trading/binance-stream.js";
-import type { SemanticIndex } from "../domains/rails/index.js";
-import type { DocsStore } from "../docs/store.js";
 import type { ToolResult } from "../core/tools/tool-contract.js";
 import { DefaultToolGateway } from "../tools/gateway/tool-gateway.js";
 import { ToolCatalog, type LegacyToolMetadata } from "../tools/gateway/tool-catalog.js";
@@ -18,23 +12,18 @@ import { mountToolPack, ToolPack } from "../tools/gateway/tool-pack.js";
 import { parityPosture } from "../core/policy/postures.js";
 import {
   agentCorePack,
-  browserPack,
   databasePack,
   generalPack,
   dockerPack,
-  docsPack,
   filesystemPack,
   gitPack,
   githubPack,
-  lspPack,
   memoryPack,
   projectPack,
-  railsPack,
   ragPack,
   rubyPack,
   searchPack,
   shellPack,
-  tradingPack,
 } from "../tools/packs/index.js";
 import { createWorkspaceSemanticMemory } from "../memory/semantic/semantic-memory.js";
 import type { SemanticMemory } from "../memory/semantic/semantic-memory.js";
