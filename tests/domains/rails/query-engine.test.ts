@@ -1,6 +1,12 @@
 import { KnowledgeGraph } from "../../../src/domains/rails/graph/graph.js";
 import { QueryEngine } from "../../../src/domains/rails/query-engine.js";
-import { ControllerEntity, ModelEntity, RouteEntity, SpecEntity } from "../../../src/domains/rails/types.js";
+import {
+  ControllerEntity,
+  ModelEntity,
+  RouteEntity,
+  SpecEntity,
+  ViewEntity,
+} from "../../../src/domains/rails/types.js";
 
 function buildGraph(): KnowledgeGraph {
   const graph = new KnowledgeGraph();
@@ -75,6 +81,29 @@ describe("QueryEngine", () => {
     expect(query.findRoute("/users/42")?.id).toBe("route:GET /users/:id");
     expect(query.findRoute("/users/:id", "get")?.id).toBe("route:GET /users/:id");
     expect(query.findRoute("/users/42/extra")).toBeUndefined();
+  });
+
+  it("returns the views a controller renders, from the edge the view scanner records", () => {
+    const graph = buildGraph();
+    const show: ViewEntity = {
+      id: "view:users/show",
+      type: "view",
+      name: "users/show",
+      file: "app/views/users/show.html.erb",
+      line: 1,
+      viewFormat: "erb",
+      format: "html",
+      controller: "Users",
+      action: "show",
+      referencedPartials: [],
+    };
+    graph.addEntity(show);
+    // Exactly what the indexer produces for a view: from the view to its controller.
+    graph.addEdge({ from: show.id, to: "controller:UsersController", type: "renders_view" });
+
+    const engine = new QueryEngine(graph);
+    expect(engine.viewsFor("UsersController").map((v) => v.id)).toEqual(["view:users/show"]);
+    expect(engine.viewsFor("Missing")).toEqual([]);
   });
 
   it("returns routes reaching a controller", () => {

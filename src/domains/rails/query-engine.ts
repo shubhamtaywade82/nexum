@@ -47,13 +47,17 @@ export class QueryEngine {
     return this.graph.findByName(name, "component")[0] as ViewEntity | undefined;
   }
 
-  /** Views that serve a given controller (via renders_view edges). */
+  /**
+   * Views that serve a given controller. The view scanner records renders_view
+   * from the view to its controller (an unflipped intent), so the relation
+   * arrives on the controller's incoming edges.
+   */
   viewsFor(controllerName: string): ViewEntity[] {
     const controller = this.findController(controllerName);
     if (!controller) return [];
     return this.graph
-      .edgesFrom(controller.id, "renders_view")
-      .map((e) => this.graph.getEntity(e.to))
+      .edgesTo(controller.id, "renders_view")
+      .map((e) => this.graph.getEntity(e.from))
       .filter((e): e is ViewEntity => e?.type === "view");
   }
 
