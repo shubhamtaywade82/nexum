@@ -1,5 +1,7 @@
 # Multi-Agent Coordination
 
+> **Status: library surface.** The message bus, shared state, consensus engine and supervisor loop are exported from the package (`src/multiagent`) and covered by tests. No CLI command, host endpoint or TUI view calls them, and the agent runtime does not route through them. Wiring them into an entry point is a product decision that has not been made. Use them directly from code that embeds Nexum.
+
 Nexum had delegation (supervisor → spawn child → result) — a call tree. This plane adds general multi-agent coordination: peer messaging, a shared blackboard, consensus, and a true supervisor loop.
 
 ```
@@ -38,8 +40,8 @@ const alice = bus.register("alice");
 bus.register("bob");
 
 bus.send({ from: "alice", to: "bob", type: "coord.task.assign", payload: { taskId: "t1", goal: "..." } });
-bus.send({ from: "alice", to: "*", type: "announce", payload: {} });            // broadcast
-bus.subscribeTopic("topic:research", { agentId: "researcher" });                // pub/sub
+bus.send({ from: "alice", to: "*", type: "announce", payload: {} }); // broadcast
+bus.subscribeTopic("topic:research", { agentId: "researcher" }); // pub/sub
 
 const reply = await bus.request("alice", "bob", "coord.question", { question: "..." });
 ```
@@ -77,13 +79,13 @@ Stale CAS writes and non-owner mutations hit the conflict policy: proceed-and-lo
 ```ts
 const engine = new ConsensusEngine({
   electorate: ["alice", "bob", "carol"],
-  voting: new WeightedVoting({ alice: 1, bob: 2, carol: 3 }),   // or Majority / Unanimous / Quorum
+  voting: new WeightedVoting({ alice: 1, bob: 2, carol: 3 }), // or Majority / Unanimous / Quorum
   priorityResolver: new PriorityResolver(new Map([["carol", 10]])),
-  bus,  // optional: proposals/votes/decisions mirrored as coord.* messages
+  bus, // optional: proposals/votes/decisions mirrored as coord.* messages
 });
 const p = engine.propose({ topic: "database", value: "sqlite", proposer: "alice" });
 engine.cast({ proposalId: p.id, voter: "bob", choice: "approve" });
-const decision = engine.resolve(p.id);   // auto-resolves when the full electorate voted
+const decision = engine.resolve(p.id); // auto-resolves when the full electorate voted
 ```
 
 Between **competing proposals**, `ConflictResolver` arbitrates deterministically: supervisor's proposal wins outright → else highest priority → else first proposal (tie-break). Resolutions are recorded as decisions in the shared state.
