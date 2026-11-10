@@ -98,7 +98,7 @@
   "dependencies": {
     "@11ty/gray-matter": "^3.0.0",
     "@modelcontextprotocol/client": "^2.4.0",
-    "@nemesis-oss/ollama-sdk": "^1.25.0",
+    "@nemesis-oss/ollama-sdk": "^1.25.1",
     "@nemesis-oss/termina-core": "^0.1.0",
     "@openuidev/lang-core": "^0.3.0",
     "better-sqlite3": "^12.11.1",
