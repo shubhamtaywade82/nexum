@@ -336,8 +336,8 @@ export function registerDefaultSpecs(service: SettingsService): void {
     key: "policy.autoApprove",
     label: "Auto-Approve Confirmation-Required Actions",
     description:
-      "On by default for unattended execution. Confirmation-required and destructive workspace actions run without an interactive prompt.",
-    default: true,
+      "Off by default. When enabled, confirmation-required and destructive workspace actions run without an interactive prompt — an explicit opt-in for unattended execution.",
+    default: false,
     type: "boolean",
     namespace: "policy",
     editable: true,

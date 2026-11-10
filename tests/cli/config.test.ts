@@ -371,7 +371,7 @@ describe("commented config file (config.example.jsonc)", () => {
     // these are unset unless the example's values were read
     expect(cfg.shellTimeoutSec).toBe(30);
     expect(cfg.maxActiveTools).toBe(8);
-    expect(cfg.autoApprove).toBe(true);
+    expect(cfg.autoApprove).toBe(false);
     expect(cfg.sandbox).toBe(true);
   });
 });
