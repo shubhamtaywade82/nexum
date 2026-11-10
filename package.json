@@ -38,9 +38,7 @@
     "node": ">=22"
   },
   "bin": {
-    "nexum": "bin/cli.js",
-    "devagent": "bin/cli.js",
-    "devagent-ts": "bin/cli.js"
+    "nexum": "bin/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs",

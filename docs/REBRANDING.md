@@ -21,10 +21,17 @@ change, not the contract.
 | npm package | `@nemesis-oss/nexum` |
 | GitHub (target) | `nemesis-oss/nexum` (activated after repo migration, see §8) |
 
+Removed before first publication (decision 2026-11-10):
+
+- CLI bin aliases `devagent`, `devagent-ts` — no DevAgent package was ever
+  published to npm (registry verified), so the aliases had no users to carry;
+  after publication they would have become a compatibility promise. `nexum`
+  is the only executable.
+- npm alias package `@nemesis-oss/devagent-ts` — never published; no stub or
+  deprecation release will be created for it.
+
 Retained during the transition (at least one major version):
 
-- npm alias package `@nemesis-oss/devagent-ts` (final compat release, then deprecated)
-- CLI bin aliases `devagent`, `devagent-ts`
 - Environment variables `DEVAGENT_*` (read as deprecated fallbacks)
 - Workspace directory `.devagent/` (auto-migrated, never destroyed)
 
@@ -181,16 +188,18 @@ Global state follows the same rule: `~/.devagent/` → `~/.nexum/`
   "name": "@nemesis-oss/nexum",
   "version": "2.0.0",
   "bin": {
-    "nexum": "bin/cli.js",
-    "devagent": "bin/cli.js",
-    "devagent-ts": "bin/cli.js"
+    "nexum": "bin/cli.js"
   }
 }
 ```
 
 Why major `2.0.0`: the package name, CLI, environment variables, workspace
-state directory, and brand all change — a breaking product migration. The bin
-and env aliases carry existing users across the boundary for one major cycle.
+state directory, and brand all change — a breaking product migration. The env
+and workspace aliases carry local state across the boundary for one major
+cycle. The bin aliases were removed before the first npm publication: no
+predecessor package was ever published (registry verified 2026-11-10), so
+they protected no existing users — and after publication they would have
+become a compatibility promise.
 
 ## 6. Scope discipline
 
@@ -211,10 +220,10 @@ src/platform/
 
 | Release | Package | Contents |
 |---|---|---|
-| A — preparation | `devagent-ts@1.0.1` | migration framework, legacy env support, deprecation warnings, no breaking changes |
+| A — preparation | skipped | planned as `devagent-ts@1.0.1`; the package was never published to npm, so the step has no target |
 | B — rename | `nexum@2.0.0` | new package, `nexum` CLI, `.nexum/`, `NEXUM_*`, Nexum branding |
-| C — deprecation | `devagent-ts@1.0.2` | `npm deprecate` pointing to `@nemesis-oss/nexum` |
-| D — sunset | — | stop developing `devagent-ts`; keep historical package metadata intact |
+| C — deprecation | skipped | nothing to deprecate: no `devagent-ts` package exists on the registry |
+| D — sunset | skipped | follows from C |
 
 GitHub sequence (UI/API operations, not file changes):
 rename branch → merge → release → rename GitHub repository to
@@ -230,7 +239,6 @@ Before declaring the rename complete, every row must pass:
 |---|---|
 | `npm install @nemesis-oss/nexum` | installs |
 | `nexum` | runs |
-| `devagent` / `devagent-ts` alias | runs during transition |
 | local Ollama | works |
 | cloud Ollama + multi-key failover | works |
 | MCP / LSP / browser tools | work |
