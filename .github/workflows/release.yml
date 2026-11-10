@@ -65,9 +65,23 @@ jobs:
           CI: true
           SKIP_NETWORK_TESTS: true
 
+      - name: Compute dist-tag
+        id: dist
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          # npm applies the `latest` dist-tag to every publish by default —
+          # including prerelease versions. Prereleases must land on `next`
+          # so a bare `npm install @nemesis-oss/nexum` never resolves to an
+          # alpha/beta/rc. See RELEASE-READINESS.md blocker B4.
+          if [[ "$VERSION" == *-* ]]; then
+            echo "tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to NPM Registry
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --tag ${{ steps.dist.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
