@@ -331,6 +331,7 @@ import { config as dotenvConfig } from "dotenv";
 import {
   partitionWorkspaceConfig,
   preservingTrust,
+  withholdUserOnlyKeys,
   workspaceTrustState,
   WorkspaceTrustStore,
   type WorkspaceTrustStatus,
@@ -401,7 +402,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
   const globalFile = loadGlobalConfig();
   const rawWorkspaceFile = loadWorkspaceConfig(workspaceRoot);
   const { safe, withheld } = partitionWorkspaceConfig(rawWorkspaceFile);
-  const workspaceFile: ConfigFile = trust.trusted ? rawWorkspaceFile : safe;
+  // Trusted workspaces apply everything except user-only keys (e.g. pricing): trust does not
+  // let a repo set the policy that budget enforcement reads.
+  const { kept: trustedFile, withheld: userOnlyWithheld } = withholdUserOnlyKeys(rawWorkspaceFile);
+  const workspaceFile: ConfigFile = trust.trusted ? trustedFile : safe;
   // Workspace config overrides global, env vars override both.
   // Product env vars resolve NEXUM_* first, then deprecated DEVAGENT_*
   // (see platform/environment.ts — legacy reads warn on stderr).
@@ -549,7 +553,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     workspaceTrust: {
       status: trust.status,
       trusted: trust.trusted,
-      withheldKeys: trust.trusted ? [] : withheld,
+      withheldKeys: trust.trusted ? userOnlyWithheld : withheld,
       skippedEnvFiles,
     },
   };

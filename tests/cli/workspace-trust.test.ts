@@ -158,6 +158,34 @@ describe("loadConfig gates workspace settings on trust", () => {
   });
 });
 
+describe("pricing is user-only: no repo file sets the cost basis", () => {
+  const repoRate = { pricing: { inputPerMillion: 0.01, outputPerMillion: 0.01 } };
+
+  it("an untrusted workspace's pricing is withheld", () => {
+    writeConfig(repoRate);
+    const cfg = loadConfig({ trustStore: store });
+    expect(cfg.pricing).toBeUndefined();
+    expect(cfg.workspaceTrust.withheldKeys).toContain("pricing");
+  });
+
+  it("a trusted workspace cannot set its own rate either — trust is not a budget override", () => {
+    writeConfig(repoRate);
+    trustWorkspace(root, store);
+    const cfg = loadConfig({ trustStore: store });
+    expect(cfg.workspaceTrust).toMatchObject({ trusted: true, withheldKeys: ["pricing"] });
+    expect(cfg.pricing).toBeUndefined();
+  });
+
+  it("the user's own rate still applies in a trusted workspace", () => {
+    writeConfig(repoRate);
+    trustWorkspace(root, store);
+    process.env.NEXUM_PRICE_INPUT_PER_M = "2";
+    process.env.NEXUM_PRICE_OUTPUT_PER_M = "4";
+    const cfg = loadConfig({ trustStore: store });
+    expect(cfg.pricing).toEqual({ inputPerMillion: 2, outputPerMillion: 4 });
+  });
+});
+
 describe("Nexum's own writes keep trust, but never launder someone else's", () => {
   it("saving config in a trusted workspace keeps it trusted", () => {
     writeConfig({ sandbox: true });
