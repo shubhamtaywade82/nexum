@@ -1,4 +1,5 @@
-import { Provider, ChatMessage, ChatResponse, Tier } from "../models/adapters/provider.js";
+import { ChatMessage, ChatResponse, Tier } from "../models/adapters/provider.js";
+import type { ChatPort } from "../models/gateway/inference-dispatcher.js";
 import {
   AgenticBenchmarkCase,
   AgenticToolCall,
@@ -11,7 +12,11 @@ import {
 export interface BenchmarkTarget {
   model: string;
   tier: Tier;
-  provider: Provider;
+  /**
+   * Chat for this target. The model is pinned on each call by the port, so no provider state is mutated and
+   * every benchmark call is dispatched and accounted like any other model call.
+   */
+  provider: ChatPort;
 }
 
 export interface CaseRunOutcome {
@@ -104,9 +109,6 @@ export async function runBenchmark(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_CASE_TIMEOUT_MS;
 
   for (const target of targets) {
-    target.provider.setModel(target.model);
-    target.provider.setTier(target.tier);
-
     const repeats = Math.max(1, Math.floor(opts.repeats ?? 1));
     const plan: Array<{ testCase: BenchmarkCase; sample: number }> = [];
     for (let sample = 0; sample < repeats; sample++) {

@@ -44,8 +44,18 @@ export interface InferenceDispatcherOptions {
   lanes: Record<string, Provider | undefined>;
   budget?: BudgetTracker;
   registry?: ModelCapabilityRegistry;
+  /** Override the process-wide gates (tests). Leave unset in production so every dispatcher shares one cap. */
   gates?: { local?: ConcurrencyGate; cloud?: ConcurrencyGate };
 }
+
+/**
+ * One concurrency gate per tier for the whole process. Every dispatcher draws from these, so the cloud cap of 3 holds
+ * across the CLI, evolution attempts and benchmark targets running in the same process, not per instance.
+ */
+const PROCESS_GATES = {
+  local: new ConcurrencyGate({ maxConcurrent: 8, label: "model:local" }),
+  cloud: new ConcurrencyGate({ maxConcurrent: 3, label: "model:cloud" }),
+};
 
 export class InferenceDispatcher {
   readonly localGate: ConcurrencyGate;
@@ -58,8 +68,8 @@ export class InferenceDispatcher {
     this.lanes = opts.lanes;
     this.budget = opts.budget;
     this.registry = opts.registry;
-    this.localGate = opts.gates?.local ?? new ConcurrencyGate({ maxConcurrent: 8, label: "model:local" });
-    this.cloudGate = opts.gates?.cloud ?? new ConcurrencyGate({ maxConcurrent: 3, label: "model:cloud" });
+    this.localGate = opts.gates?.local ?? PROCESS_GATES.local;
+    this.cloudGate = opts.gates?.cloud ?? PROCESS_GATES.cloud;
   }
 
   /** A dispatcher with one lane, for code that owns a single provider. */

@@ -84,6 +84,29 @@ describe("InferenceDispatcher", () => {
     expect(peak).toBeGreaterThan(1);
   });
 
+  it("two dispatchers in one process share the cloud cap, so parallel callers cannot multiply it", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const slowCloud = (): Provider => {
+      const provider = new Provider({ tier: "cloud", model: "m", apiKey: "k" });
+      jest.spyOn(provider, "chat").mockImplementation(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        inFlight -= 1;
+        return reply();
+      });
+      return provider;
+    };
+    const calls = Array.from({ length: 6 }, () =>
+      InferenceDispatcher.single("engineering", slowCloud()).dispatch({ lane: "engineering", purpose: "t" }, CHAT),
+    );
+
+    await Promise.all(calls);
+
+    expect(peak).toBeLessThanOrEqual(3);
+  });
+
   it("port() is a ChatPort bound to its target", async () => {
     const local = new Provider({ tier: "local", model: "m" });
     const chat = jest.spyOn(local, "chat").mockResolvedValue(reply());
