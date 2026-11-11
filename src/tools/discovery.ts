@@ -1,12 +1,13 @@
 import { Tool } from "./tool.js";
-import { Provider, ChatMessage, ChatResponse } from "../models/adapters/provider.js";
+import { ChatMessage, ChatResponse } from "../models/adapters/provider.js";
+import type { ChatPort } from "../models/gateway/inference-dispatcher.js";
 
 export type SelectionMode = "heuristic" | "llm" | "hybrid";
 
 export interface SelectorOptions {
   mode?: SelectionMode;
   maxActiveTools?: number;
-  provider?: Provider;
+  provider?: ChatPort;
   /**
    * Optional override for the LLM-mode chat call, used in place of
    * `provider.chat` when given — e.g. route through the capability-routed
@@ -19,7 +20,7 @@ export interface SelectorOptions {
 export class DynamicToolSelector {
   private readonly mode: SelectionMode;
   private readonly maxActiveTools: number;
-  private readonly provider?: Provider;
+  private readonly provider?: ChatPort;
   private readonly chatOverride?: (messages: ChatMessage[]) => Promise<ChatResponse>;
 
   constructor(opts: SelectorOptions = {}) {

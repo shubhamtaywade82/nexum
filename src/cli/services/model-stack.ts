@@ -218,10 +218,11 @@ export class ModelStack {
       dispatcher: this.dispatcher,
     });
 
-    this.localWorker = cfg.enableLocalWorker ? new LocalWorker(quickLocalProvider) : undefined;
-    this.verifier = cfg.enableVerifier && this.localWorker ? new Verifier(quickLocalProvider) : undefined;
+    // The quick model runs on the cloud in cloud tier, so these helpers dispatch through the quick lane too.
+    this.localWorker = cfg.enableLocalWorker ? new LocalWorker(this.quickPort("local-worker")) : undefined;
+    this.verifier = cfg.enableVerifier && this.localWorker ? new Verifier(this.quickPort("verifier")) : undefined;
     this.selfConsistency = cfg.enableSelfConsistency
-      ? new SelfConsistency(quickLocalProvider, {
+      ? new SelfConsistency(this.quickPort("self-consistency"), {
           n: cfg.selfConsistencyN,
           threshold: cfg.selfConsistencyThreshold,
         })

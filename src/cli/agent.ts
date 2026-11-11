@@ -428,7 +428,7 @@ export class Agent {
 
     this.learning = new AgentLearning({
       workspaceRoot: cfg.workspaceRoot,
-      provider: this.stack.provider,
+      provider: this.stack.primaryPort("learning"),
       memory: this.memory,
       skillsHomeDir: opts.skillsHomeDir,
       trustStore: opts.trustStore,
@@ -439,7 +439,7 @@ export class Agent {
     const dynamicSelector = new DynamicToolSelector({
       mode: cfg.toolSelectionMode,
       maxActiveTools: cfg.maxActiveTools,
-      provider: this.stack.provider,
+      provider: this.stack.primaryPort("tool-selection"),
       // LLM-mode tool selection is a classification task, not a coding one — route it
       // through the "quick" capability (an always-resident local model, falling back
       // to cloud per Router.route/routeWithFallback) instead of the primary model.
@@ -1552,7 +1552,9 @@ export class Agent {
    * instead of starting a new one when `goal` is empty and a checkpoint
    * exists. */
   async runPlan(goal: string): Promise<PlanStep[]> {
-    const planner: Planner = { replan: (remaining, history) => replanSteps(remaining, history, this.stack.provider) };
+    const planner: Planner = {
+      replan: (remaining, history) => replanSteps(remaining, history, this.stack.primaryPort("plan.replan")),
+    };
 
     if (!goal.trim() && this.hasResumablePlan()) {
       // Understand/Inspect have no distinct signal of their own (both happen
@@ -1578,7 +1580,7 @@ export class Agent {
     this.emit("onMissionPhase", "understand", "completed");
     this.emit("onMissionPhase", "inspect", "completed");
     this.emit("onMissionPhase", "plan", "running");
-    const steps = await generatePlan(goal, this.stack.provider);
+    const steps = await generatePlan(goal, this.stack.primaryPort("plan.generate"));
     this.emit("onMissionPhase", "plan", "completed");
     this.emit("onPlanUpdate", goal, steps, "running");
     this.emit("onMissionPhase", "execute", "running");

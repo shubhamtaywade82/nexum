@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { MemoryStore } from "../memory/store.js";
-import { Provider } from "../models/adapters/provider.js";
+import type { ChatPort } from "../models/gateway/inference-dispatcher.js";
 import { EpisodeRecorder } from "./episode-recorder.js";
 import { gradeEpisode } from "./grader.js";
 import { LessonStore } from "./lesson-store.js";
@@ -12,7 +12,7 @@ import { workspaceStateDir } from "../platform/paths.js";
 
 export interface LearningEngineOptions {
   workspaceRoot: string;
-  provider: Provider;
+  provider: ChatPort;
   memory: MemoryStore;
   /** Reflect on at most every Nth episode when the episode was a clean success. */
   reflectSuccessEveryN?: number;
