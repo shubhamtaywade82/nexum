@@ -77,8 +77,11 @@ export interface PolicyRequest {
   workspace?: WorkspacePolicyContext;
   /** Execution profile / trading mode. */
   environment?: EnvironmentPolicyContext;
-  /** Remaining budget snapshot (depleted budgets deny mutations). */
-  budget?: BudgetUsage;
+  /**
+   * Budget snapshot for the run. `depleted` is set by the caller from the run's own tracker when a ceiling is
+   * reached; BudgetGuardRule denies mutating tools while it is set.
+   */
+  budget?: BudgetUsage & { depleted?: boolean };
 }
 
 export interface PolicyDecision {
@@ -250,11 +253,7 @@ export class BudgetGuardRule implements PolicyRule {
   readonly description = "Denies mutating tools once the run's budget is depleted.";
 
   evaluate(request: PolicyRequest): PolicyDecision | null {
-    const budget = request.budget;
-    if (!budget) return null;
-    // depleted = no time left or negative headroom signals from the caller
-    const depleted = budget.elapsedMs < 0 || (budget as { depleted?: boolean }).depleted === true;
-    if (!depleted) return null;
+    if (request.budget?.depleted !== true) return null;
     if (!toolIsMutating(request.tool)) return null;
     return {
       allowed: false,

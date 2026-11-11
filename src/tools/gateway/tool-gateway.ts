@@ -339,7 +339,7 @@ export class DefaultToolGateway implements ToolGateway {
         agent: ctx.agent,
         workspace: ctx.workspace,
         environment: ctx.environment,
-        budget: ctx.budget?.snapshot(),
+        budget: ctx.budget ? { ...ctx.budget.snapshot(), depleted: ctx.budget.isDepleted?.() === true } : undefined,
       });
       ctx.onPolicyDecision?.({ ...decision, tool: entry.definition.id });
       if (!decision.allowed) {

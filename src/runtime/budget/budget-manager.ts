@@ -182,6 +182,17 @@ export class BudgetManager extends BudgetTracker {
     this.propagateUp("toolCall");
   }
 
+  /** Adds the run-level dimensions (iterations, cloud calls, cloud spend) to the base ceilings. */
+  override isDepleted(): boolean {
+    const b = this.budget;
+    return (
+      super.isDepleted() ||
+      (b.maxIterations !== undefined && this.iterations >= b.maxIterations) ||
+      (b.maxCloudCalls !== undefined && this.cloudCalls >= b.maxCloudCalls) ||
+      (b.maxCloudSpendUsd !== undefined && this.cloudSpendUsd >= b.maxCloudSpendUsd)
+    );
+  }
+
   // ── child derivation (review items 14 + 26) ─────────────────────────────
 
   /**

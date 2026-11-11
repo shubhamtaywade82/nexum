@@ -142,6 +142,8 @@ export interface EventSink {
 export interface BudgetMeter {
   snapshot(): BudgetUsage;
   assertTimeLeft(): void;
+  /** True once a ceiling is reached (see BudgetTracker.isDepleted). Optional for meters that don't track ceilings. */
+  isDepleted?(): boolean;
   consumeToolCall(): void;
   consumeModelCall(opts?: {
     promptTokens?: number;

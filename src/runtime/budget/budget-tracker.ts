@@ -105,6 +105,23 @@ export class BudgetTracker implements BudgetMeter {
   }
 
   /**
+   * True once a ceiling is reached: the deadline has passed, or a counted dimension has used up its limit.
+   * The next consumption on that dimension would throw, so a depleted run starts no new mutating work
+   * (BudgetGuardRule reads this through the policy request).
+   */
+  isDepleted(): boolean {
+    const b = this.budget;
+    const u = this.usage;
+    if (b.deadlineMs !== undefined && this.elapsedMs >= b.deadlineMs) return true;
+    return (
+      (b.maxToolCalls !== undefined && u.toolCalls >= b.maxToolCalls) ||
+      (b.maxModelCalls !== undefined && u.modelCalls >= b.maxModelCalls) ||
+      (b.maxTotalTokens !== undefined && u.totalTokens >= b.maxTotalTokens) ||
+      (b.maxCostUsd !== undefined && u.costUsd >= b.maxCostUsd)
+    );
+  }
+
+  /**
    * Record one tool call. Throws ToolCallBudgetError when the ceiling is
    * exceeded — call before executing the tool.
    */
