@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### CLI: one executable
+
+- The `devagent` and `devagent-ts` bin aliases are removed; `nexum` is the only command the package installs. No DevAgent-era npm package was ever published to npm (registry verified 2026-11-10), so the aliases had no users to carry — and after the first publication they would have become a compatibility promise. See `docs/REBRANDING.md` §1/§5/§7.
+- `DEVAGENT_*` environment fallbacks and `.devagent/` → `.nexum/` workspace migration are unchanged and stay supported for one major version.
+
 ### Removed: the unused multi-agent subsystem
 
 - `src/multiagent` (message bus, shared state, consensus, supervisor loop), its tests, its `@nemesis-oss/nexum/multiagent` subpath, and the package-root exports are removed. No CLI command, host endpoint, TUI view or runtime path used them.

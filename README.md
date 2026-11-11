@@ -39,7 +39,7 @@ nexum
 ✓ Pull request opened: #184
 ```
 
-> **Renamed from DevAgent TS.** Nexum 2.0 is the successor to `@nemesis-oss/devagent-ts` 1.x.
+> **Renamed from DevAgent TS.** Nexum 2.0 is the successor to the DevAgent TS source project — no predecessor npm package was ever published, so `@nemesis-oss/nexum` is the first and only package.
 > Existing `.devagent/` workspaces and `DEVAGENT_*` variables migrate automatically on first run — see [Migration](#migration-from-devagent-ts) and [docs/REBRANDING.md](docs/REBRANDING.md).
 
 ---
@@ -249,13 +249,6 @@ nexum credentials get OPENAI_API_KEY
 nexum capabilities attest --subject plugin:my-plugin --grant "capability:tools"
 ```
 
-The old command names keep working during the transition:
-
-```bash
-devagent       # alias of nexum (deprecated)
-devagent-ts    # alias of nexum (deprecated)
-```
-
 ### Programmatic Usage
 
 ```typescript
@@ -385,10 +378,12 @@ Nexum 2.0 renames the product; nothing of yours is lost:
   explicit report.
 - **Environment variables** — `DEVAGENT_*` still works and warns; `NEXUM_*` is
   canonical and wins.
-- **CLI** — `devagent` / `devagent-ts` remain as aliases of `nexum` for one major
-  version.
-- **Package** — `@nemesis-oss/devagent-ts` 1.x is superseded by
-  `@nemesis-oss/nexum` 2.0 (the old package gets a final deprecation release).
+- **CLI** — `nexum` is the only executable. Prerelease builds carried
+  `devagent` / `devagent-ts` aliases; they were removed before the first npm
+  publication because no DevAgent package was ever published to npm.
+- **Package** — `@nemesis-oss/nexum` is the first and only npm package for this
+  project. No `devagent-ts` package exists on the registry, so there is nothing
+  to migrate or deprecate there.
 
 Full contract: [docs/REBRANDING.md](docs/REBRANDING.md).
 

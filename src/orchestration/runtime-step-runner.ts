@@ -12,7 +12,7 @@
  *   RuntimeStepRunner — kernel runs. Maps the PlanStep directly onto the
  *                       kernel's ExecutionRequest port and spawns it through
  *                       `AgentRuntime.execute`. Used by kernel-embedded
- *                       products: headless runners, devagent-ts library
+ *                       products: headless runners, Nexum SDK library
  *                       consumers, and future agent products that want plan
  *                       execution without the interactive CLI machinery.
  *

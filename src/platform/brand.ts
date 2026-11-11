@@ -14,12 +14,8 @@ export const BRAND = {
   organization: "Nemesis OSS",
   /** Canonical npm package. */
   package: "@nemesis-oss/nexum",
-  /** Legacy npm package (kept published as a deprecation pointer). */
-  legacyPackage: "@nemesis-oss/devagent-ts",
   /** Canonical CLI command. */
   cli: "nexum",
-  /** Deprecated CLI aliases, kept for one major version. */
-  legacyCliAliases: ["devagent", "devagent-ts"],
   /** Workspace state directory (relative to workspace root). */
   configDir: ".nexum",
   /** Legacy workspace state directory — read + migrated, never deleted. */

@@ -286,7 +286,7 @@ as every other work item:
   onto `StepOutcome`: `completed` → success, `failed`/`timeout` → retryable,
   `cancelled`/`budget_exhausted` → blocking. The CLI keeps `AgentStepRunner`
   (product turns with the full preamble/hooks); kernel-embedded products —
-  headless runners, `devagent-ts` library consumers, future agents — get
+  headless runners, Nexum SDK consumers, future agents — get
   plan execution without importing the CLI product layer.
 
 ### Gateway enforcement flip (step 2, done)
