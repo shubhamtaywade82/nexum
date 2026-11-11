@@ -6,6 +6,7 @@ import {
   ProviderError,
   PaymentRequiredError,
   TransportFailure,
+  OutcomeUnknownError,
 } from "../adapters/provider.js";
 import { Capability, ModelCatalog } from "../catalog.js";
 
@@ -14,6 +15,18 @@ export interface RouterOptions {
   cloud?: Provider;
   catalog: ModelCatalog;
   logger?: Pick<Console, "warn">;
+}
+
+/**
+ * A cloud failure that may have run the request. A TypeError from a cloud provider counts too: it surfaces
+ * after the request left, so it cannot prove the request did not execute. Local failures are never unknown.
+ */
+function asOutcomeUnknown(e: unknown, tier: "local" | "cloud"): OutcomeUnknownError | undefined {
+  if (e instanceof OutcomeUnknownError) return e;
+  if (tier === "cloud" && e instanceof TypeError) {
+    return new OutcomeUnknownError(`cloud call failed after dispatch: ${e.message}`, e);
+  }
+  return undefined;
 }
 
 export class Router {
@@ -67,9 +80,13 @@ export class Router {
     }
 
     let lastError: unknown;
+    // Set once a cloud request may have run. Every later cloud candidate would bill the same request again, so the
+    // loop skips them. Local candidates bill nothing and stay eligible.
+    let cloudOutcomeUnknown: OutcomeUnknownError | undefined;
     for (const candidate of candidates) {
       const provider = candidate.tier === "local" ? this.local : this.cloud;
       if (!provider) continue;
+      if (candidate.tier === "cloud" && cloudOutcomeUnknown) continue;
 
       // Per-request model, not provider.setModel(): mutating shared instance
       // state before an await meant two concurrent routes (e.g. the
@@ -83,6 +100,12 @@ export class Router {
         return response;
       } catch (e) {
         lastError = e;
+        const unknown = asOutcomeUnknown(e, candidate.tier);
+        if (unknown) {
+          cloudOutcomeUnknown = unknown;
+          this.logger.warn(`[Router] cloud/${candidate.name} may have run — no further cloud candidates`);
+          continue;
+        }
         if (!this.isRecoverable(e)) throw e;
         this.logger.warn(
           `[Router] ${(e as Error).constructor.name} on ${candidate.tier}/${candidate.name} — trying next candidate`,
@@ -90,12 +113,15 @@ export class Router {
       }
     }
 
+    // Candidates ran out after a paid request may have executed: report that, not a later local failure.
+    if (cloudOutcomeUnknown) throw cloudOutcomeUnknown;
     throw lastError ?? new Error(`no reachable provider for capability "${capability}"`);
   }
 
   private isRecoverable(e: unknown): boolean {
-    // Covers RateLimitError and TimeoutError, and network-level failures
-    // (refused, reset, DNS) that the SDK surfaces as OllamaNetworkError.
+    // Covers RateLimitError and TimeoutError, and network-level failures (refused, reset, DNS)
+    // that the SDK surfaces as OllamaNetworkError. A cloud timeout or reset never reaches here:
+    // it is OutcomeUnknownError, handled in route() before this check.
     if (e instanceof TransportFailure) return true;
     if (e instanceof TypeError) return true;
     // Billing gate on this candidate (plan or credits), not on the account

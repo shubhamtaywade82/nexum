@@ -31,6 +31,7 @@ import {
   ProviderError,
   PaymentRequiredError,
   TimeoutError,
+  OutcomeUnknownError,
   InferenceQualityError,
   ToolFailure,
   BudgetExhaustedError,
@@ -44,6 +45,7 @@ export {
   ProviderError,
   PaymentRequiredError,
   TimeoutError,
+  OutcomeUnknownError,
   InferenceQualityError,
   ToolFailure,
   BudgetExhaustedError,
@@ -205,11 +207,77 @@ export function defaultHostForTier(tier: Tier): string {
   return tier === "cloud" ? DEFAULT_CLOUD_HOST : (process.env.OLLAMA_HOST ?? DEFAULT_LOCAL_HOST);
 }
 
+/**
+ * Endpoint failover codes for cloud clients. The SDK's default list also fails over on `timeout`,
+ * `network_error`, `server_error` and `bad_gateway`. Each of those can follow a request the cloud already
+ * ran, and re-sending it on the next key bills it again. These codes come back only when the request was
+ * refused before it ran: rate-limited, queue full, key rejected, or unsupported at pre-flight.
+ */
+export const CLOUD_PRE_EXECUTION_FAILOVER_CODES: readonly string[] = [
+  "rate_limited",
+  "overloaded",
+  "auth_error",
+  "unsupported_capability",
+];
+
+/** Failures after a cloud request was sent, where the answer did not come back cleanly. */
+const CLOUD_POST_DISPATCH_CODES: ReadonlySet<string> = new Set(["server_error", "bad_gateway", "stream_error"]);
+
+/** Socket errors raised before any byte leaves the machine: the request cannot have run. */
+const PRE_DISPATCH_NETWORK_CODES: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+]);
+
+/** Walks the `cause` chain (fetch wraps the socket error in a TypeError) looking for a pre-dispatch code. */
+function isPreDispatchNetworkFailure(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth++) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && PRE_DISPATCH_NETWORK_CODES.has(code)) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * A cloud failure after dispatch: the request may have run and billed. Null when the failure is known to
+ * precede execution (a 429, a refused connection, a rejected key), where failing over is safe.
+ */
+function cloudOutcomeUnknown(err: unknown, model: string): OutcomeUnknownError | null {
+  if (err instanceof OllamaTimeoutError) {
+    return new OutcomeUnknownError(`Ollama cloud timed out on ${model}; the request may have run`, err);
+  }
+  if (err instanceof OllamaNetworkError) {
+    if (isPreDispatchNetworkFailure(err)) return null;
+    return new OutcomeUnknownError(
+      `Ollama cloud connection dropped on ${model}; the request may have run: ${redactSecrets(err.message)}`,
+      err,
+    );
+  }
+  if (err instanceof OllamaClientError && CLOUD_POST_DISPATCH_CODES.has(err.code)) {
+    return new OutcomeUnknownError(
+      `Ollama cloud ${err.code} on ${model}; the request may have run: ${redactSecrets(upstreamBodyText(err))}`,
+      err,
+    );
+  }
+  return null;
+}
+
 // Maps an SDK error onto this module's error hierarchy so existing
 // `instanceof RateLimitError/TimeoutError/ProviderError` checks (e.g. in
 // router.ts) keep working unchanged, and upstream body text (e.g.
 // "does not support tools", "subscription") survives intact for those checks.
-function mapSdkError(err: unknown, tier: Tier, model: string, cloudKeyCount: number): Error {
+// A billable cloud generation that failed after dispatch becomes OutcomeUnknownError first: the router must
+// not retry it on another paid candidate. Reads (model listing, account probes) bill nothing and pass billable=false.
+function mapSdkError(err: unknown, tier: Tier, model: string, cloudKeyCount: number, billable = false): Error {
+  if (tier === "cloud" && billable) {
+    const unknown = cloudOutcomeUnknown(err, model);
+    if (unknown) return unknown;
+  }
   if (err instanceof OllamaRateLimitError) {
     // The SDK parses `Retry-After` (delay-seconds or HTTP-date) into
     // `retryAfterMs`; carry it through so the caller can pace its own retry.
@@ -363,6 +431,8 @@ export class Provider {
           priority: this.apiKeys.length - i,
         })),
         endpointHealth: { failureThreshold: 1 },
+        // Only pre-execution failures fail over to the next key; see CLOUD_PRE_EXECUTION_FAILOVER_CODES.
+        failoverOn: CLOUD_PRE_EXECUTION_FAILOVER_CODES,
         // No same-endpoint retry — a failed key should fail over to the next
         // one immediately, not retry itself a few times first (old behavior
         // had no retry loop either).
@@ -434,7 +504,7 @@ export class Provider {
         const resp = await client.chat({ ...request, stream: false });
         return resp as unknown as ChatResponse;
       } catch (err) {
-        throw mapSdkError(err, this.tier, model, this.apiKeys.length);
+        throw mapSdkError(err, this.tier, model, this.apiKeys.length, true);
       }
     } finally {
       if (preferredKey) this.keySelector?.release(preferredKey);
@@ -477,6 +547,7 @@ export class Provider {
         })),
       ],
       endpointHealth: { failureThreshold: 1 },
+      failoverOn: CLOUD_PRE_EXECUTION_FAILOVER_CODES,
       retries: 0,
       timeoutMs: this.timeoutMs,
       ...this.contextConfig,
@@ -545,7 +616,7 @@ export class Provider {
     try {
       yield* stream;
     } catch (err) {
-      throw mapSdkError(err, this.tier, model, this.apiKeys.length);
+      throw mapSdkError(err, this.tier, model, this.apiKeys.length, true);
     }
   }
 
@@ -637,7 +708,7 @@ export class Provider {
     try {
       return await fn();
     } catch (err) {
-      throw mapSdkError(err, this.tier, model, this.apiKeys.length);
+      throw mapSdkError(err, this.tier, model, this.apiKeys.length, true);
     }
   }
 }

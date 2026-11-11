@@ -20,6 +20,7 @@ export {
   RateLimitError,
   ProviderError,
   TimeoutError,
+  OutcomeUnknownError,
   BudgetExhaustedError,
   AgentRuntimeError,
   TransportFailure,
