@@ -15,6 +15,7 @@
  */
 
 import type { ChatMessage, ChatOptions, ChatResponse } from "../adapters/provider.js";
+import { budgetUsageOf, readUsage } from "../usage-reading.js";
 import { Router } from "../router/router.js";
 import type { ModelCatalog } from "../catalog.js";
 import { ConcurrencyGate } from "../../core/concurrency/gate.js";
@@ -103,23 +104,19 @@ export class DefaultModelGateway implements ModelGateway {
 
   private record(response: ChatResponse): void {
     if (!this.budget) return;
-    const promptTokens = Number(response.prompt_eval_count ?? 0);
-    const completionTokens = Number(response.eval_count ?? 0);
+    const reading = readUsage(response);
+    // A cost needs both counts from the provider. A MISSING reading is left unpriced, never priced at zero tokens.
     const cost =
-      response.routedModel !== undefined
-        ? this.registry.estimateCostUsd(response.routedModel, promptTokens, completionTokens)
+      reading.source === "PROVIDER" && response.routedModel !== undefined
+        ? this.registry.estimateCostUsd(response.routedModel, reading.promptTokens ?? 0, reading.completionTokens ?? 0)
         : undefined;
+    const usage = { ...budgetUsageOf(reading), costUsd: cost };
     // cloud-aware consumption when the run carries a BudgetManager
     // (review item 14: cloud calls + cloud spend are their own dimensions)
     if (this.budget instanceof BudgetManager) {
-      this.budget.consumeModelCall({
-        promptTokens,
-        completionTokens,
-        costUsd: cost,
-        cloud: response.routedTier === "cloud",
-      });
+      this.budget.consumeModelCall({ ...usage, cloud: response.routedTier === "cloud" });
     } else {
-      this.budget.consumeModelCall({ promptTokens, completionTokens, costUsd: cost });
+      this.budget.consumeModelCall(usage);
     }
   }
 }

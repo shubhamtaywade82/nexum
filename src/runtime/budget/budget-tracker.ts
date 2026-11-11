@@ -49,6 +49,20 @@ export interface BudgetTrackerOptions {
   now?: () => number;
 }
 
+/** Usage handed to `consumeModelCall`. Counts are what the provider reported; an absent count is unknown. */
+export interface UsageConsumption {
+  promptTokens?: number;
+  completionTokens?: number;
+  costUsd?: number;
+  usageSource?: "PROVIDER" | "MISSING";
+}
+
+/** Unmetered: the provider said its usage is missing, or the call arrived with no counts at all. */
+function isUnmetered(opts: UsageConsumption): boolean {
+  if (opts.usageSource === "MISSING") return true;
+  return opts.usageSource === undefined && opts.promptTokens === undefined && opts.completionTokens === undefined;
+}
+
 export class BudgetTracker implements BudgetMeter {
   readonly runId: RunId;
   readonly sessionId: SessionId;
@@ -56,7 +70,14 @@ export class BudgetTracker implements BudgetMeter {
 
   private readonly startedAt: number;
   private readonly nowFn: () => number;
-  private usage: BudgetUsage = { toolCalls: 0, modelCalls: 0, totalTokens: 0, costUsd: 0, elapsedMs: 0 };
+  private usage: BudgetUsage = {
+    toolCalls: 0,
+    modelCalls: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    elapsedMs: 0,
+    unmeteredModelCalls: 0,
+  };
 
   constructor(opts: BudgetTrackerOptions = {}) {
     this.runId = opts.runId ?? `run_${randomUUID()}`;
@@ -99,12 +120,19 @@ export class BudgetTracker implements BudgetMeter {
    * Record one model call with its token usage. Throws ModelCallBudgetError /
    * TokenBudgetError / CostBudgetError when a ceiling is exceeded.
    * `costUsd` is an optional per-call estimate from the model profile.
+   *
+   * A call whose usage the provider did not report (`usageSource: "MISSING"`, or no counts at all) still
+   * counts as a model call, and is also counted as unmetered. Its tokens and cost are unknown, so none are
+   * invented: the usage counters only ever hold what providers reported.
    */
-  consumeModelCall(opts: { promptTokens?: number; completionTokens?: number; costUsd?: number } = {}): void {
+  consumeModelCall(opts: UsageConsumption = {}): void {
     const limit = this.budget.maxModelCalls;
     this.usage.modelCalls += 1;
     if (limit !== undefined && this.usage.modelCalls > limit) {
       throw new ModelCallBudgetError(this.usage.modelCalls, limit);
+    }
+    if (isUnmetered(opts)) {
+      this.usage.unmeteredModelCalls = (this.usage.unmeteredModelCalls ?? 0) + 1;
     }
 
     const tokens = (opts.promptTokens ?? 0) + (opts.completionTokens ?? 0);

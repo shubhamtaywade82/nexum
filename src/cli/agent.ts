@@ -7,6 +7,7 @@ import { summarizePlan } from "../orchestration/plan-summary.js";
 import type { PullProgressEvent } from "@nemesis-oss/ollama-sdk";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
+import { readUsage as readProviderUsage } from "../models/usage-reading.js";
 import { ModelStack } from "./services/model-stack.js";
 import { SessionManager } from "./services/session-manager.js";
 import { ApprovalManager } from "./services/approval-manager.js";
@@ -1722,15 +1723,14 @@ export class Agent {
   private readUsage(response: {
     [key: string]: unknown;
   }): { promptTokens: number; completionTokens: number; tokensPerSecond: number } | undefined {
-    const promptTokens = response.prompt_eval_count as number | undefined;
-    const completionTokens = response.eval_count as number | undefined;
+    // Both counts or nothing: a partial reading would show a zero the provider never reported.
+    const reading = readProviderUsage(response);
+    if (reading.source !== "PROVIDER") return undefined;
     const evalDurationNs = response.eval_duration as number | undefined;
-    if (typeof promptTokens !== "number" && typeof completionTokens !== "number") return undefined;
+    const completionTokens = reading.completionTokens ?? 0;
     const tokensPerSecond =
-      typeof completionTokens === "number" && typeof evalDurationNs === "number" && evalDurationNs > 0
-        ? completionTokens / (evalDurationNs / 1e9)
-        : 0;
-    return { promptTokens: promptTokens ?? 0, completionTokens: completionTokens ?? 0, tokensPerSecond };
+      typeof evalDurationNs === "number" && evalDurationNs > 0 ? completionTokens / (evalDurationNs / 1e9) : 0;
+    return { promptTokens: reading.promptTokens ?? 0, completionTokens, tokensPerSecond };
   }
 
   getRegistry() {
