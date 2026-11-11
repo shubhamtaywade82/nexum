@@ -476,11 +476,8 @@ export class Agent {
     }
 
     // ── Kernel wiring: gateways, broker, runtime ────────────────────────
-    this.modelGateway = new DefaultModelGateway({
-      router: this.stack.router,
-      catalog: this.stack.catalog,
-      registry: this.stack.modelProfiles,
-    });
+    // The stack's gateway shares the stack's dispatcher, so every call the kernel makes lands on one budget.
+    this.modelGateway = this.stack.gateway;
 
     // Every run is recorded durably (.nexum/runs/<runId>.events.jsonl) so
     // sessions can be searched, traced and replayed after the process exits.
@@ -1084,7 +1081,7 @@ export class Agent {
         let chatOpts = makeChatOpts();
         let chatResponse = capability
           ? await this.stack.routeWithFallback(capability, this.conversation.getMessages(), chatOpts)
-          : await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
+          : await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
 
         let assistantMessage = chatResponse.message as {
           content?: string;
@@ -1099,7 +1096,7 @@ export class Agent {
           );
           buffered = null;
           chatOpts = makeChatOpts();
-          chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
+          chatResponse = await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
         } else if (
           critiquing &&
           !(assistantMessage.tool_calls ?? []).length &&
@@ -1113,7 +1110,7 @@ export class Agent {
           );
           buffered = null;
           chatOpts = makeChatOpts();
-          chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
+          chatResponse = await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
         } else if (buffered) {
           for (const delta of buffered) {
             lastAssistantText += delta;
