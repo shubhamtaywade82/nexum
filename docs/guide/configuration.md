@@ -27,27 +27,27 @@ The interactive UI asks the first time it meets an untrusted workspace; other co
 
 ## Environment Variables
 
-| Variable                            | Description                                                                                                                | Default                                       |
-| :---------------------------------- | :------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------- |
-| `NEXUM_MODEL`                       | Default Ollama model                                                                                                       | `qwen3.5:4b`                                  |
-| `NEXUM_HOST`                        | Ollama host endpoint                                                                                                       | `http://localhost:11434`                      |
-| `NEXUM_TIER`                        | Execution tier (`local` or `cloud`)                                                                                        | `local`                                       |
-| `OLLAMA_API_KEY`                    | Ollama Cloud API Key                                                                                                       | `undefined`                                   |
-| `OLLAMA_API_KEYS`                   | Comma-separated API Key rotation pool                                                                                      | `undefined`                                   |
-| `NEXUM_SHELL_IMAGE`                 | Shell sandbox Docker image                                                                                                 | `nexum-sandbox:latest`                        |
-| `NEXUM_DOCKER_TOOL`                 | Docker daemon tool (root-equivalent); enabled by default in trusted workspaces                                              | `true` in trusted workspaces                 |
-| `NEXUM_DOCKER_EGRESS`               | Docker-tool container bridge egress (loopback publishing only); enabled by default in trusted workspaces                    | `true` in trusted workspaces                 |
-| `NEXUM_TIMEOUT_MS`                  | Per-request timeout in milliseconds (cloud tier only — local never times out mid-generation)                               | unset (60s on cloud)                          |
-| `NEXUM_TOOL_SELECTION_MODE`         | Dynamic tool pruning mode (`heuristic`, `llm`, `hybrid`)                                                                   | `hybrid`                                      |
-| `NEXUM_AUTO_PLAN`                   | Route multi-step requests through the checkpointed plan orchestrator (`ask`, `always`, `off`)                            | `always`                                      |
-| `NEXUM_AUTO_APPROVE`                | Approve confirmation-required tool calls without prompting; includes destructive workspace operations                     | `true`                                        |
-| `NEXUM_DECISION`                    | Bounded Decision Plane (System One). On by default; `false` disables it. Auto-disabled in a cloud tier.                    | `true`                                        |
-| `NEXUM_DECISION_MODEL`              | Dedicated decision model (independent of the primary generation model).                                                    | `tev1`                                        |
-| `NEXUM_PROFILE`                     | Plugin/settings profile mounted on the agent host (`nexum-cli`, `nexum-server`, `nexum-crypto-bot`, or a user profile id). | `nexum-cli`                                   |
-| `NEXUM_TOKEN_BUDGET`                | Session token budget (prompt + completion). Each run is capped at the remainder; `0` = unlimited.                          | `0`                                           |
-| `NEXUM_VERIFIER`                    | Critic pass on final answers; uses `quickModel` when set, otherwise the local primary model.                               | `true`                                        |
-| `NEXUM_TELEMETRY_ENABLED`           | Process-wide spans + metrics (`0` disables). The host serves Prometheus text at `GET /metrics`.                            | enabled                                       |
-| `NEXUM_OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP traces endpoint for span export.                                                                                 | unset                                         |
+| Variable                            | Description                                                                                                                | Default                      |
+| :---------------------------------- | :------------------------------------------------------------------------------------------------------------------------- | :--------------------------- |
+| `NEXUM_MODEL`                       | Default Ollama model                                                                                                       | `qwen3.5:4b`                 |
+| `NEXUM_HOST`                        | Ollama host endpoint                                                                                                       | `http://localhost:11434`     |
+| `NEXUM_TIER`                        | Execution tier (`local` or `cloud`)                                                                                        | `local`                      |
+| `OLLAMA_API_KEY`                    | Ollama Cloud API Key                                                                                                       | `undefined`                  |
+| `OLLAMA_API_KEYS`                   | Comma-separated API Key rotation pool                                                                                      | `undefined`                  |
+| `NEXUM_SHELL_IMAGE`                 | Shell sandbox Docker image                                                                                                 | `nexum-sandbox:latest`       |
+| `NEXUM_DOCKER_TOOL`                 | Docker daemon tool (root-equivalent); enabled by default in trusted workspaces                                             | `true` in trusted workspaces |
+| `NEXUM_DOCKER_EGRESS`               | Docker-tool container bridge egress (loopback publishing only); enabled by default in trusted workspaces                   | `true` in trusted workspaces |
+| `NEXUM_TIMEOUT_MS`                  | Per-request timeout in milliseconds (cloud tier only — local never times out mid-generation)                               | unset (60s on cloud)         |
+| `NEXUM_TOOL_SELECTION_MODE`         | Dynamic tool pruning mode (`heuristic`, `llm`, `hybrid`)                                                                   | `hybrid`                     |
+| `NEXUM_AUTO_PLAN`                   | Route multi-step requests through the checkpointed plan orchestrator (`ask`, `always`, `off`)                              | `always`                     |
+| `NEXUM_AUTO_APPROVE`                | Opt in to approving confirmation-required tool calls without prompting; includes destructive workspace operations          | `false`                      |
+| `NEXUM_DECISION`                    | Bounded Decision Plane (System One). On by default; `false` disables it. Auto-disabled in a cloud tier.                    | `true`                       |
+| `NEXUM_DECISION_MODEL`              | Dedicated decision model (independent of the primary generation model).                                                    | `tev1`                       |
+| `NEXUM_PROFILE`                     | Plugin/settings profile mounted on the agent host (`nexum-cli`, `nexum-server`, `nexum-crypto-bot`, or a user profile id). | `nexum-cli`                  |
+| `NEXUM_TOKEN_BUDGET`                | Session token budget (prompt + completion). Each run is capped at the remainder; `0` = unlimited.                          | `0`                          |
+| `NEXUM_VERIFIER`                    | Critic pass on final answers; uses `quickModel` when set, otherwise the local primary model.                               | `true`                       |
+| `NEXUM_TELEMETRY_ENABLED`           | Process-wide spans + metrics (`0` disables). The host serves Prometheus text at `GET /metrics`.                            | enabled                      |
+| `NEXUM_OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP traces endpoint for span export.                                                                                 | unset                        |
 
 ---
 
@@ -76,7 +76,7 @@ The annotated template with every key, its default and its trust requirement is 
 
 The Decision Plane, critic pass, self-consistency, local worker, heuristic gate, and availability checks are enabled by default when their required local/cloud resources are available. The Decision Plane remains local-tier only. Multi-step requests use the checkpointed planner automatically. GitHub evolution delivery and runtime activation are also automatic when a GitHub destination is configured; CI, same-head human approval, merge confirmation, and merged-content verification remain mandatory.
 
-**Approval warning:** `autoApprove` defaults to `true` for unattended execution. This bypasses confirmation prompts for confirmation-required tool calls, including destructive workspace operations. Keep the sandbox enabled, use a trusted workspace with a narrow write scope, and set `NEXUM_AUTO_APPROVE=false` when interactive confirmation is required. The sandbox remains independently configurable with `NEXUM_SANDBOX`.
+**Approval behavior:** `autoApprove` defaults to `false`. Confirmation-required tool calls — including destructive workspace operations — prompt for approval, and headless sessions with no approval listener deny them (fail-closed). Unattended execution is an explicit opt-in: `autoApprove: true` / `NEXUM_AUTO_APPROVE=true`, or the `--yolo` flag. Enable it only in a trusted workspace with a narrow write scope and the sandbox enabled. The sandbox remains independently configurable with `NEXUM_SANDBOX`.
 
 ---
 

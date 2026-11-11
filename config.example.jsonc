@@ -55,7 +55,7 @@
   "maxActiveTools": 8, // optional, default: 8 tools exposed per turn
 
   // ── Approval & planning ──────────────────────────────────────────────────
-  "autoApprove": true, // optional, default: true — confirmation-required tools run unattended; use only in trusted workspaces  [until trust]
+  "autoApprove": false, // optional, default: false — set true (or NEXUM_AUTO_APPROVE=true / --yolo) to run confirmation-required tools unattended; use only in trusted workspaces  [until trust]
   "autoPlan": "always", // optional, default: always | ask | off  [until trust]
 
   // ── Hybrid local/cloud & quality gates ───────────────────────────────────

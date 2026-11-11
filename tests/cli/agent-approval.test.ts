@@ -69,7 +69,23 @@ describe("Agent approval gate", () => {
     expect(await fileExists(target)).toBe(true);
   });
 
-  it("auto-approves confirmation-required calls by default", async () => {
+  it("denies a destructive call by default (no autoApprove configured, no listener)", async () => {
+    const target = join(tempDir, "default-deny.txt");
+    await writeFile(target, "still here");
+
+    (globalThis as any).fetch = mockChatFetch([
+      { tool_calls: [{ function: { name: "delete_file", arguments: { path: "default-deny.txt" } } }] },
+      { content: "done" },
+    ]);
+
+    const agent = new Agent({ config: { workspaceRoot: tempDir, tier: "local", model: "m" } });
+
+    await agent.runUserMessage("delete the default-deny file");
+
+    expect(await fileExists(target)).toBe(true);
+  });
+
+  it("auto-approves confirmation-required calls when autoApprove is enabled", async () => {
     const target = join(tempDir, "auto.txt");
     await writeFile(target, "bye");
 
@@ -80,7 +96,7 @@ describe("Agent approval gate", () => {
 
     let approvalRequested = false;
     const agent = new Agent({
-      config: { workspaceRoot: tempDir, tier: "local", model: "m" },
+      config: { workspaceRoot: tempDir, tier: "local", model: "m", autoApprove: true },
       events: {
         onApprovalRequested: () => {
           approvalRequested = true;

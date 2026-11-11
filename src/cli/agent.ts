@@ -300,7 +300,7 @@ export class Agent {
       dockerTool: !!cfg.dockerTool,
       autoPlan: cfg.autoPlan ?? "always",
     };
-    this.autoApproveFlag = cfg.autoApprove ?? true;
+    this.autoApproveFlag = cfg.autoApprove ?? false;
 
     this.events = opts.events ?? {};
 
@@ -314,7 +314,7 @@ export class Agent {
     // ApprovalManager owns the human-in-the-loop gates (approvals +
     // clarifications) that used to be pending-promise maps here.
     this.approvals = new ApprovalManager({
-      autoApprove: cfg.autoApprove ?? true,
+      autoApprove: cfg.autoApprove ?? false,
       onApprovalRequested: (request) => this.emit("onApprovalRequested", request),
       onClarificationRequested: (request) => this.emit("onClarificationRequested", request),
       onMcpElicitationRequested: (request) => this.emit("onMcpElicitationRequested", request),

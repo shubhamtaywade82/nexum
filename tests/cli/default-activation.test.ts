@@ -57,7 +57,7 @@ describe("default activation", () => {
     expect(cfg.enableDecision).toBe(true);
     expect(cfg.enableSelfConsistency).toBe(true);
     expect(cfg.enableVerifier).toBe(true);
-    expect(cfg.autoApprove).toBe(true);
+    expect(cfg.autoApprove).toBe(false);
     expect(cfg.enableLocalWorker).toBe(true);
     expect(cfg.enableHeuristicGate).toBe(true);
     expect(cfg.enableAvailabilityCheck).toBe(true);
@@ -85,7 +85,7 @@ describe("default activation", () => {
     expect(loadConfig({ workspaceRoot: workspace }).enableVerifier).toBe(true);
   });
 
-  it("still lets env turn the on-by-default features off", () => {
+  it("still lets env turn the on-by-default features off, and auto-approve on", () => {
     process.env.NEXUM_DECISION = "false";
     process.env.NEXUM_SELF_CONSISTENCY = "false";
     const cfg = loadConfig({ workspaceRoot: workspace });
@@ -93,10 +93,10 @@ describe("default activation", () => {
     expect(cfg.enableDecision).toBe(false);
     expect(cfg.enableSelfConsistency).toBe(false);
 
-    process.env.NEXUM_AUTO_APPROVE = "false";
+    process.env.NEXUM_AUTO_APPROVE = "true";
     process.env.NEXUM_AUTO_PLAN = "ask";
     const overridden = loadConfig({ workspaceRoot: workspace });
-    expect(overridden.autoApprove).toBe(false);
+    expect(overridden.autoApprove).toBe(true);
     expect(overridden.autoPlan).toBe("ask");
   });
 });

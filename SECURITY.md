@@ -110,12 +110,12 @@ Desktop (macOS/Windows) — see §11.
 Commands run on the host with your privileges; nothing can be isolated.
 Nexum strips credential-looking variables (`*KEY*`, `*TOKEN*`, `*SECRET*`,
 `*PASSWORD*`, `*CREDENTIAL*`, `*PRIVATE*`) from the child environment.
-**Auto-approval is enabled by default**, so host shell and script-runner calls
-that would otherwise need confirmation can run without a human prompt. Disabling
-the sandbox while leaving auto-approval on removes both isolation and the
-interactive shell confirmation boundary. Do not use this combination on a
-workspace or machine you cannot afford to lose. Restore prompts with
-`NEXUM_AUTO_APPROVE=false`, or keep the sandbox enabled (the default).
+**Confirmation-required host commands prompt by default**, and in a headless
+session with no approval listener they are denied. Enabling auto-approval
+(`NEXUM_AUTO_APPROVE=true`) on top of a disabled sandbox removes both isolation
+and the interactive confirmation boundary. Do not use that combination on a
+workspace or machine you cannot afford to lose. Keep prompts (the default) by
+leaving `NEXUM_AUTO_APPROVE` unset, or keep the sandbox enabled.
 
 ## 4. `docker` tool (enabled by default in trusted workspaces)
 

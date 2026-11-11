@@ -328,6 +328,9 @@ export function serverProfileBundle(): ProfileBundle {
     capabilities: ["rpc", "automation", "tools", "skills", "subagents", "jobs", "compaction", "session-query"],
     tags: ["server"],
     settings: {
+      // Explicit unattended opt-in: the server profile is the automation
+      // path, so it opts into auto-approval by declaration (interactive CLI
+      // users get prompts by default — see src/cli/config.ts).
       "policy.autoApprove": true,
       "subagent.maxConcurrent": 16,
     },

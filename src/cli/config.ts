@@ -84,10 +84,12 @@ export interface CliConfig {
    * billing) — this only computes a cost estimate if you supply your own
    * real rate. Omit to leave cost tracking off (the honest default). */
   pricing?: { inputPerMillion: number; outputPerMillion: number };
-  /** Approve confirmation-required tool calls without prompting. On by default
-   * for unattended execution. This includes destructive workspace operations;
-   * keep sandboxing enabled and run only in a trusted, bounded workspace.
-   * Disable with NEXUM_AUTO_APPROVE=false. */
+  /** Approve confirmation-required tool calls without prompting. Off by
+   * default: destructive workspace operations prompt for approval, and
+   * headless consumers with no approval listener are denied (fail-closed).
+   * Unattended execution is an explicit opt-in — NEXUM_AUTO_APPROVE=true,
+   * autoApprove in config, or the --yolo flag. Keep sandboxing enabled and
+   * run only in a trusted, bounded workspace when enabling it. */
   autoApprove?: boolean;
   /** How a top-level multi-step request is handled: "always" (default) uses the
    * checkpointed plan orchestrator, "ask" waits for approval, "off" never routes.
@@ -534,7 +536,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     availabilityCheckTtlMs,
     enableAvailabilityCheck: readEnvFlag("AVAIL_CHECK", file.enableAvailabilityCheck ?? true),
     enableHeuristicGate: readEnvFlag("HEURISTIC_GATE", file.enableHeuristicGate ?? true),
-    autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? true),
+    autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? false),
     autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
     mcpServers: file.mcpServers,
