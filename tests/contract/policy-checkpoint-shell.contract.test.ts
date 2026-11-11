@@ -155,7 +155,8 @@ describe("PolicyEngine contract (items 7, 8)", () => {
 
   it("depleted budgets deny NEW mutations but reads still pass (item 7)", () => {
     const engine = new RulePolicyEngine();
-    const depleted = { toolCalls: 3, modelCalls: 5, totalTokens: 100, costUsd: 0, elapsedMs: -1 };
+    // The run's tracker sets `depleted` once a ceiling is reached (BudgetTracker.isDepleted).
+    const depleted = { toolCalls: 3, modelCalls: 5, totalTokens: 100, costUsd: 0, elapsedMs: 0, depleted: true };
     const denied = engine.check(policyRequest(writeTool, { budget: depleted }));
     expect(denied.allowed).toBe(false);
     expect(denied.rule).toBe("budget-guard");
