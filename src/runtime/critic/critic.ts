@@ -21,6 +21,7 @@
 import type { Capability } from "../../models/catalog.js";
 import type { ModelGateway } from "../../models/gateway/model-gateway.js";
 import { extractJson } from "../../rag/reranker.js";
+import { readUsage, type UsageReading } from "../../models/usage-reading.js";
 
 export type CriticSeverity = "low" | "medium" | "high";
 
@@ -42,8 +43,8 @@ export interface Critique {
   summary: string;
   /** Where the critique came from — model or deterministic fallback. */
   source: "model" | "heuristic";
-  /** Token usage of the critique model call, when known. */
-  usage?: { promptTokens: number; completionTokens: number };
+  /** Token usage of the critique model call. `MISSING` when the provider did not report its counts. */
+  usage?: UsageReading;
 }
 
 export interface CriticOptions {
@@ -110,10 +111,7 @@ export class CriticService {
           String(raw.summary ?? "").slice(0, 500) ||
           (verdict === "pass" ? "Answer meets the bar." : "Answer needs revision."),
         source: "model",
-        usage: {
-          promptTokens: Number((response as Record<string, unknown>).prompt_eval_count ?? 0),
-          completionTokens: Number((response as Record<string, unknown>).eval_count ?? 0),
-        },
+        usage: readUsage(response),
       };
     } catch {
       return this.heuristicCritique(task, answer);

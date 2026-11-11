@@ -17,11 +17,10 @@
 import type { ChatMessage, ChatOptions, ChatResponse } from "../adapters/provider.js";
 import { Router } from "../router/router.js";
 import type { ModelCatalog } from "../catalog.js";
-import { ConcurrencyGate } from "../../core/concurrency/gate.js";
 import type { Capability } from "../catalog.js";
 import { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
-import { BudgetManager } from "../../runtime/budget/budget-manager.js";
 import { ModelCapabilityRegistry } from "../profiles/model-capability-registry.js";
+import { recordModelCall, type InferenceDispatcher } from "./inference-dispatcher.js";
 import { ScoredModelRouter } from "../router/scored-router.js";
 import type { ModelRouter, ModelSelection, RouteRequest } from "../router/model-selection.js";
 
@@ -49,9 +48,16 @@ export interface DefaultModelGatewayOptions {
   selectionRouter?: ModelRouter;
   /** Availability probe feeding the scored router (optional). */
   availability?: (model: string) => number | undefined;
-  /** Optional budget tracker to record token/cost usage per call. */
+  /**
+   * Optional budget tracker to record token/cost usage per call. Give the same tracker to the dispatcher: a call
+   * routed through the gateway records once, on whichever path carried it.
+   */
   budget?: BudgetTracker;
-  gates?: { local?: ConcurrencyGate; cloud?: ConcurrencyGate };
+  /**
+   * Dispatcher for explicit-model calls (`routeToModel`). Its lanes must include `catalog.local` and/or
+   * `catalog.cloud`, the router's own providers, so the model pin reaches the same providers the router uses.
+   */
+  dispatcher?: InferenceDispatcher;
 }
 
 export class DefaultModelGateway implements ModelGateway {
@@ -60,8 +66,7 @@ export class DefaultModelGateway implements ModelGateway {
   private readonly catalog: ModelCatalog;
   private readonly selectionRouter: ModelRouter;
   private readonly budget?: BudgetTracker;
-  private readonly localGate: ConcurrencyGate;
-  private readonly cloudGate: ConcurrencyGate;
+  private readonly dispatcher?: InferenceDispatcher;
 
   constructor(opts: DefaultModelGatewayOptions) {
     this.router = opts.router;
@@ -70,8 +75,7 @@ export class DefaultModelGateway implements ModelGateway {
     this.selectionRouter =
       opts.selectionRouter ?? new ScoredModelRouter({ registry: this.registry, availability: opts.availability });
     this.budget = opts.budget;
-    this.localGate = opts.gates?.local ?? new ConcurrencyGate({ maxConcurrent: 8, label: "model:local" });
-    this.cloudGate = opts.gates?.cloud ?? new ConcurrencyGate({ maxConcurrent: 3, label: "model:cloud" });
+    this.dispatcher = opts.dispatcher;
   }
 
   /** Scored selection over the registry — no execution (review item 18). */
@@ -85,47 +89,28 @@ export class DefaultModelGateway implements ModelGateway {
     return response;
   }
 
+  /**
+   * Pins one model on one tier. Goes through the dispatcher directly, not the router: the router chooses its own
+   * candidate and would overwrite the requested model name. The dispatcher records the call itself.
+   */
   async routeToModel(
     model: string,
     tier: "local" | "cloud",
     messages: ChatMessage[],
     opts?: ChatOptions,
   ): Promise<ChatResponse> {
-    const gate = tier === "cloud" ? this.cloudGate : this.localGate;
-    const response = await gate.run(() => this.router.route(capabilityForFallback(), messages, { ...opts, model }));
-    this.record(response);
-    return response;
+    if (!this.dispatcher) {
+      throw new Error(`routeToModel("${model}"): the gateway has no dispatcher, so an explicit model cannot be pinned`);
+    }
+    return this.dispatcher.dispatch({ lane: `catalog.${tier}`, purpose: "routeToModel", model }, messages, opts);
   }
 
   profiles(): ModelCapabilityRegistry {
     return this.registry;
   }
 
+  /** Router-path calls record here; the dispatcher's explicit-model calls record in the dispatcher. */
   private record(response: ChatResponse): void {
-    if (!this.budget) return;
-    const promptTokens = Number(response.prompt_eval_count ?? 0);
-    const completionTokens = Number(response.eval_count ?? 0);
-    const cost =
-      response.routedModel !== undefined
-        ? this.registry.estimateCostUsd(response.routedModel, promptTokens, completionTokens)
-        : undefined;
-    // cloud-aware consumption when the run carries a BudgetManager
-    // (review item 14: cloud calls + cloud spend are their own dimensions)
-    if (this.budget instanceof BudgetManager) {
-      this.budget.consumeModelCall({
-        promptTokens,
-        completionTokens,
-        costUsd: cost,
-        cloud: response.routedTier === "cloud",
-      });
-    } else {
-      this.budget.consumeModelCall({ promptTokens, completionTokens, costUsd: cost });
-    }
+    recordModelCall(this.budget, this.registry, response);
   }
-}
-
-function capabilityForFallback() {
-  // routeToModel exists to pin an explicit model; the capability tag only
-  // shapes candidate ordering, which the explicit model overrides.
-  return "tools" as Capability;
 }

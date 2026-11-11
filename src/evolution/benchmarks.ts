@@ -10,6 +10,7 @@ import { buildAgenticCases } from "../benchmark/cases-agentic.js";
 import { buildHarnessCases } from "../benchmark/cases-harness.js";
 import { buildExecutionCases } from "../benchmark/cases-execution.js";
 import { BenchmarkTarget, runBenchmark } from "../benchmark/runner.js";
+import { InferenceDispatcher } from "../models/gateway/inference-dispatcher.js";
 import { BenchmarkCase, BenchmarkResult } from "../benchmark/types.js";
 import { Provider } from "../models/adapters/provider.js";
 import { TaskExecutionResult } from "./evaluator.js";
@@ -66,7 +67,11 @@ export async function runHarnessBenchmark(
   const target: BenchmarkTarget = {
     model: provider.currentModel,
     tier: provider.currentTier,
-    provider,
+    provider: InferenceDispatcher.single("benchmark", provider).port({
+      lane: "benchmark",
+      purpose: "benchmark.harness",
+      model: provider.currentModel,
+    }),
   };
 
   const caseList = cases ?? (await getAllBenchmarkCases());

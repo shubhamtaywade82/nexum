@@ -17,6 +17,7 @@
  */
 
 import type { ChatMessage, OllamaToolSchema } from "../../models/adapters/provider.js";
+import { budgetUsageOf, readUsage } from "../../models/usage-reading.js";
 import { Capability } from "../../models/catalog.js";
 import type { ExecutionResult, ExecutionContext, ExecutionStatus, StrategyName } from "../../core/types.js";
 import { LoopDetector } from "../../core/loop/loop-detector.js";
@@ -65,16 +66,6 @@ export function extractToolCalls(response: {
     out.push({ name: fn.name, arguments: fn.arguments ?? {} });
   }
   return out;
-}
-
-function usageOf(response: Record<string, unknown>): {
-  promptTokens: number;
-  completionTokens: number;
-} {
-  return {
-    promptTokens: Number(response.prompt_eval_count ?? 0),
-    completionTokens: Number(response.eval_count ?? 0),
-  };
 }
 
 /** What the strategy's inner loop returns: the final text, plus an optional
@@ -209,8 +200,7 @@ export class ReActStrategy implements ExecutionStrategy {
             });
 
         lastText = response.message?.content || lastText;
-        const { promptTokens, completionTokens } = usageOf(response);
-        ctx.budget.consumeModelCall({ promptTokens, completionTokens });
+        ctx.budget.consumeModelCall(budgetUsageOf(readUsage(response)));
         hooks?.onModelUsed?.({ response, elapsedMs: Date.now() - turnStart, turn });
 
         // Push the assistant message exactly once, with tool_calls attached
@@ -434,15 +424,16 @@ export class ReActStrategy implements ExecutionStrategy {
           policy?.capability ?? "reasoning",
           ctx.context.messages() as ChatMessage[],
         );
-        ctx.budget.consumeModelCall(usageOf(revised as Record<string, unknown>));
+        ctx.budget.consumeModelCall(budgetUsageOf(readUsage(revised)));
         const revisedText = revised.message?.content ?? "";
         ctx.context.push({ role: "assistant", content: revisedText });
         return revisedText;
       },
     );
-    // Budget-account the critique calls themselves (token counts best-effort).
+    // Budget-account the critique model calls. A heuristic critique made no model call, so it is not counted as one.
     for (const critique of result.critiques) {
-      ctx.budget.consumeModelCall(critique.usage ?? { promptTokens: 0, completionTokens: 0 });
+      if (critique.source !== "model") continue;
+      ctx.budget.consumeModelCall(budgetUsageOf(critique.usage ?? { source: "MISSING" }));
     }
     return result;
   }

@@ -3,12 +3,12 @@ import { LearningEngine } from "../learning/index.js";
 import { ExperienceIngestionBridge } from "../learning/experience-bridge.js";
 import { SkillsRegistry } from "../skills/registry.js";
 import { SkillContent } from "../skills/types.js";
-import { Provider } from "../models/adapters/provider.js";
+import type { ChatPort } from "../models/gateway/inference-dispatcher.js";
 import { keepTrustForNexumWrite, WorkspaceTrustStore, workspaceDigest, workspaceSkillGate } from "./workspace-trust.js";
 
 export interface AgentLearningOptions {
   workspaceRoot: string;
-  provider: Provider;
+  provider: ChatPort;
   memory: MemoryStore;
   skillsHomeDir?: string;
   projectLanguage?: string;

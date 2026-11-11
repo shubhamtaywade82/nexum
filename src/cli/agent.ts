@@ -7,6 +7,7 @@ import { summarizePlan } from "../orchestration/plan-summary.js";
 import type { PullProgressEvent } from "@nemesis-oss/ollama-sdk";
 import { ChatMessage, ChatOptions, ChatResponse } from "../models/adapters/provider.js";
 import { Capability } from "../models/catalog.js";
+import { readUsage as readProviderUsage } from "../models/usage-reading.js";
 import { ModelStack } from "./services/model-stack.js";
 import { SessionManager } from "./services/session-manager.js";
 import { ApprovalManager } from "./services/approval-manager.js";
@@ -427,7 +428,7 @@ export class Agent {
 
     this.learning = new AgentLearning({
       workspaceRoot: cfg.workspaceRoot,
-      provider: this.stack.provider,
+      provider: this.stack.primaryPort("learning"),
       memory: this.memory,
       skillsHomeDir: opts.skillsHomeDir,
       trustStore: opts.trustStore,
@@ -438,7 +439,7 @@ export class Agent {
     const dynamicSelector = new DynamicToolSelector({
       mode: cfg.toolSelectionMode,
       maxActiveTools: cfg.maxActiveTools,
-      provider: this.stack.provider,
+      provider: this.stack.primaryPort("tool-selection"),
       // LLM-mode tool selection is a classification task, not a coding one — route it
       // through the "quick" capability (an always-resident local model, falling back
       // to cloud per Router.route/routeWithFallback) instead of the primary model.
@@ -475,11 +476,8 @@ export class Agent {
     }
 
     // ── Kernel wiring: gateways, broker, runtime ────────────────────────
-    this.modelGateway = new DefaultModelGateway({
-      router: this.stack.router,
-      catalog: this.stack.catalog,
-      registry: this.stack.modelProfiles,
-    });
+    // The stack's gateway shares the stack's dispatcher, so every call the kernel makes lands on one budget.
+    this.modelGateway = this.stack.gateway;
 
     // Every run is recorded durably (.nexum/runs/<runId>.events.jsonl) so
     // sessions can be searched, traced and replayed after the process exits.
@@ -1083,7 +1081,7 @@ export class Agent {
         let chatOpts = makeChatOpts();
         let chatResponse = capability
           ? await this.stack.routeWithFallback(capability, this.conversation.getMessages(), chatOpts)
-          : await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
+          : await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
 
         let assistantMessage = chatResponse.message as {
           content?: string;
@@ -1098,7 +1096,7 @@ export class Agent {
           );
           buffered = null;
           chatOpts = makeChatOpts();
-          chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
+          chatResponse = await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
         } else if (
           critiquing &&
           !(assistantMessage.tool_calls ?? []).length &&
@@ -1112,7 +1110,7 @@ export class Agent {
           );
           buffered = null;
           chatOpts = makeChatOpts();
-          chatResponse = await this.stack.provider.chat(this.conversation.getMessages(), chatOpts);
+          chatResponse = await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
         } else if (buffered) {
           for (const delta of buffered) {
             lastAssistantText += delta;
@@ -1554,7 +1552,9 @@ export class Agent {
    * instead of starting a new one when `goal` is empty and a checkpoint
    * exists. */
   async runPlan(goal: string): Promise<PlanStep[]> {
-    const planner: Planner = { replan: (remaining, history) => replanSteps(remaining, history, this.stack.provider) };
+    const planner: Planner = {
+      replan: (remaining, history) => replanSteps(remaining, history, this.stack.primaryPort("plan.replan")),
+    };
 
     if (!goal.trim() && this.hasResumablePlan()) {
       // Understand/Inspect have no distinct signal of their own (both happen
@@ -1580,7 +1580,7 @@ export class Agent {
     this.emit("onMissionPhase", "understand", "completed");
     this.emit("onMissionPhase", "inspect", "completed");
     this.emit("onMissionPhase", "plan", "running");
-    const steps = await generatePlan(goal, this.stack.provider);
+    const steps = await generatePlan(goal, this.stack.primaryPort("plan.generate"));
     this.emit("onMissionPhase", "plan", "completed");
     this.emit("onPlanUpdate", goal, steps, "running");
     this.emit("onMissionPhase", "execute", "running");
@@ -1722,15 +1722,14 @@ export class Agent {
   private readUsage(response: {
     [key: string]: unknown;
   }): { promptTokens: number; completionTokens: number; tokensPerSecond: number } | undefined {
-    const promptTokens = response.prompt_eval_count as number | undefined;
-    const completionTokens = response.eval_count as number | undefined;
+    // Both counts or nothing: a partial reading would show a zero the provider never reported.
+    const reading = readProviderUsage(response);
+    if (reading.source !== "PROVIDER") return undefined;
     const evalDurationNs = response.eval_duration as number | undefined;
-    if (typeof promptTokens !== "number" && typeof completionTokens !== "number") return undefined;
+    const completionTokens = reading.completionTokens ?? 0;
     const tokensPerSecond =
-      typeof completionTokens === "number" && typeof evalDurationNs === "number" && evalDurationNs > 0
-        ? completionTokens / (evalDurationNs / 1e9)
-        : 0;
-    return { promptTokens: promptTokens ?? 0, completionTokens: completionTokens ?? 0, tokensPerSecond };
+      typeof evalDurationNs === "number" && evalDurationNs > 0 ? completionTokens / (evalDurationNs / 1e9) : 0;
+    return { promptTokens: reading.promptTokens ?? 0, completionTokens, tokensPerSecond };
   }
 
   getRegistry() {

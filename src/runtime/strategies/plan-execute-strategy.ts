@@ -10,6 +10,7 @@
  */
 
 import type { ChatMessage } from "../../models/adapters/provider.js";
+import { budgetUsageOf, readUsage } from "../../models/usage-reading.js";
 import type { Capability } from "../../models/catalog.js";
 import type { ExecutionResult, ExecutionContext, StrategyName } from "../../core/types.js";
 import type { ExecutionStrategy } from "./execution-strategy.js";
@@ -107,11 +108,7 @@ export class PlanExecuteStrategy implements ExecutionStrategy {
 
       const planResponse = await ctx.modelGateway.route(this.planCapability, planMessages, { stream: false });
       const planSteps = parsePlan(planResponse.message?.content ?? "", this.maxSteps);
-      const { promptTokens: planPrompt, completionTokens: planCompletion } = {
-        promptTokens: Number(planResponse.prompt_eval_count ?? 0),
-        completionTokens: Number(planResponse.eval_count ?? 0),
-      };
-      ctx.budget.consumeModelCall({ promptTokens: planPrompt, completionTokens: planCompletion });
+      ctx.budget.consumeModelCall(budgetUsageOf(readUsage(planResponse)));
 
       ctx.events.publish({
         type: "execution.goal",

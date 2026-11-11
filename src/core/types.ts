@@ -91,6 +91,8 @@ export interface BudgetUsage {
   totalTokens: number;
   costUsd: number;
   elapsedMs: number;
+  /** Model calls whose token usage the provider did not report. Their tokens and cost are unknown, not zero. */
+  unmeteredModelCalls?: number;
 }
 
 export type BudgetDimension = keyof BudgetUsage;
@@ -140,8 +142,16 @@ export interface EventSink {
 export interface BudgetMeter {
   snapshot(): BudgetUsage;
   assertTimeLeft(): void;
+  /** True once a ceiling is reached (see BudgetTracker.isDepleted). Optional for meters that don't track ceilings. */
+  isDepleted?(): boolean;
   consumeToolCall(): void;
-  consumeModelCall(opts?: { promptTokens?: number; completionTokens?: number; costUsd?: number }): void;
+  consumeModelCall(opts?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    costUsd?: number;
+    /** Whether the provider reported this call's counts. MISSING is counted as an unmetered call. */
+    usageSource?: "PROVIDER" | "MISSING";
+  }): void;
 }
 
 /**

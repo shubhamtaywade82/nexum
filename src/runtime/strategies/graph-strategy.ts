@@ -16,6 +16,7 @@
  */
 
 import type { ChatMessage } from "../../models/adapters/provider.js";
+import { budgetUsageOf, readUsage } from "../../models/usage-reading.js";
 import type { Capability } from "../../models/catalog.js";
 import type { ExecutionResult, ExecutionContext, StrategyName } from "../../core/types.js";
 import type { ExecutionStrategy } from "./execution-strategy.js";
@@ -128,10 +129,7 @@ export class GraphStrategy implements ExecutionStrategy {
         },
       ];
       const planResponse = await ctx.modelGateway.route(this.planCapability, planMessages, { stream: false });
-      ctx.budget.consumeModelCall({
-        promptTokens: Number(planResponse.prompt_eval_count ?? 0),
-        completionTokens: Number(planResponse.eval_count ?? 0),
-      });
+      ctx.budget.consumeModelCall(budgetUsageOf(readUsage(planResponse)));
 
       const graph = new TaskGraph();
       const planNodes = parseGraphPlan(planResponse.message?.content ?? "", this.maxNodes);

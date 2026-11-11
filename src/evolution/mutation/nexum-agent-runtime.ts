@@ -32,6 +32,7 @@
  */
 
 import { ChatMessage, ChatResponse, OllamaToolSchema, Provider } from "../../models/adapters/provider.js";
+import { InferenceDispatcher } from "../../models/gateway/inference-dispatcher.js";
 import {
   AgentEditProposal,
   AgentMutationError,
@@ -62,8 +63,14 @@ export interface EngineeringChatClient {
  * model than the interactive agent without mutating the provider).
  */
 export function chatClientFromProvider(provider: Provider, model?: string): EngineeringChatClient {
+  // Dispatched on the process-wide gates, so parallel mutation attempts share one cloud cap.
+  const port = InferenceDispatcher.single("engineering", provider).port({
+    lane: "engineering",
+    purpose: "evolution.mutation",
+    model: model || undefined,
+  });
   return {
-    chat: (messages, opts) => provider.chat(messages, { tools: opts?.tools, ...(model ? { model } : {}) }),
+    chat: (messages, opts) => port.chat(messages, { tools: opts?.tools }),
   };
 }
 

@@ -1,4 +1,4 @@
-import { Provider } from "./adapters/provider.js";
+import type { ChatPort } from "./gateway/inference-dispatcher.js";
 
 export type LocalTaskType = "ts_interface" | "regex" | "parse" | "format" | "test_skeleton" | "boilerplate";
 export type LocalOutputType = "typescript" | "json" | "regex" | "text" | "code";
@@ -35,7 +35,7 @@ export interface LocalResult {
  * `{ success: false }` so the caller can fall back to the cloud model.
  */
 export class LocalWorker {
-  constructor(private readonly provider: Provider) {}
+  constructor(private readonly provider: ChatPort) {}
 
   async execute(task: LocalTask): Promise<LocalResult> {
     // First attempt

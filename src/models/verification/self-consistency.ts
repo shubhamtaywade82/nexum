@@ -1,4 +1,4 @@
-import { Provider } from "../adapters/provider.js";
+import type { ChatPort } from "../gateway/inference-dispatcher.js";
 
 export interface SelfConsistencyOptions {
   /** Number of samples to draw. Default 3. */
@@ -35,7 +35,7 @@ export class SelfConsistency {
   private readonly threshold: number;
 
   constructor(
-    private readonly provider: Provider,
+    private readonly provider: ChatPort,
     opts: SelfConsistencyOptions = {},
   ) {
     this.n = opts.n ?? 3;

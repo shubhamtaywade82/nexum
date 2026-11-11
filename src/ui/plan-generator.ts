@@ -1,4 +1,5 @@
-import { Provider, ChatMessage } from "../models/adapters/provider.js";
+import { ChatMessage } from "../models/adapters/provider.js";
+import type { ChatPort } from "../models/gateway/inference-dispatcher.js";
 import { HistoryEntry, PlanStep } from "../orchestration/types.js";
 
 export class PlanGenerationError extends Error {}
@@ -54,7 +55,7 @@ function validateSteps(parsed: unknown): PlanStep[] {
   });
 }
 
-export async function generatePlan(userRequest: string, provider: Provider): Promise<PlanStep[]> {
+export async function generatePlan(userRequest: string, provider: ChatPort): Promise<PlanStep[]> {
   const messages: ChatMessage[] = [
     { role: "system", content: PLAN_PROMPT },
     { role: "user", content: userRequest },
@@ -71,7 +72,7 @@ export async function generatePlan(userRequest: string, provider: Provider): Pro
 export async function replanSteps(
   remaining: PlanStep[],
   history: HistoryEntry[],
-  provider: Provider,
+  provider: ChatPort,
 ): Promise<PlanStep[]> {
   const failures = history
     .filter((h) => h.outcome.kind !== "success")

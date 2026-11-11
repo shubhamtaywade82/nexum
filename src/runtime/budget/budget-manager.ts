@@ -21,7 +21,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { BudgetTracker, CostBudgetError, ModelCallBudgetError } from "./budget-tracker.js";
+import { BudgetTracker, CostBudgetError, ModelCallBudgetError, type UsageConsumption } from "./budget-tracker.js";
 import type { BudgetUsage, ExecutionBudget, RunId } from "../../core/types.js";
 import { BudgetExhaustedError } from "../../models/errors.js";
 
@@ -152,9 +152,7 @@ export class BudgetManager extends BudgetTracker {
 
   // ── model-call accounting with cloud awareness ──────────────────────────
 
-  override consumeModelCall(
-    opts: { promptTokens?: number; completionTokens?: number; costUsd?: number; cloud?: boolean } = {},
-  ): void {
+  override consumeModelCall(opts: UsageConsumption & { cloud?: boolean } = {}): void {
     // count cloud calls / cloud spend BEFORE super() may throw, so the
     // cloud dimension stays accurate even when the token budget fires.
     if (opts.cloud) this.cloudCalls += 1;
@@ -166,6 +164,7 @@ export class BudgetManager extends BudgetTracker {
       completionTokens: opts.completionTokens ?? 0,
       costUsd: opts.costUsd ?? 0,
       cloud: opts.cloud ?? false,
+      usageSource: opts.usageSource,
     });
 
     const cloudLimit = this.budget.maxCloudCalls;
@@ -181,6 +180,17 @@ export class BudgetManager extends BudgetTracker {
   override consumeToolCall(): void {
     super.consumeToolCall();
     this.propagateUp("toolCall");
+  }
+
+  /** Adds the run-level dimensions (iterations, cloud calls, cloud spend) to the base ceilings. */
+  override isDepleted(): boolean {
+    const b = this.budget;
+    return (
+      super.isDepleted() ||
+      (b.maxIterations !== undefined && this.iterations >= b.maxIterations) ||
+      (b.maxCloudCalls !== undefined && this.cloudCalls >= b.maxCloudCalls) ||
+      (b.maxCloudSpendUsd !== undefined && this.cloudSpendUsd >= b.maxCloudSpendUsd)
+    );
   }
 
   // ── child derivation (review items 14 + 26) ─────────────────────────────
@@ -260,7 +270,13 @@ export class BudgetManager extends BudgetTracker {
 
   private propagateUp(
     kind: "toolCall" | "modelCall" | "iteration" | "cloudCall",
-    detail?: { promptTokens: number; completionTokens: number; costUsd: number; cloud: boolean },
+    detail?: {
+      promptTokens: number;
+      completionTokens: number;
+      costUsd: number;
+      cloud: boolean;
+      usageSource?: "PROVIDER" | "MISSING";
+    },
   ): void {
     if (!this.parent) return;
     try {
@@ -308,6 +324,7 @@ export class BudgetManager extends BudgetTracker {
     completionTokens: number;
     costUsd: number;
     cloud: boolean;
+    usageSource?: "PROVIDER" | "MISSING";
   }): void {
     this.descendantModelCalls += 1;
     this.descendantTotalTokens += detail.promptTokens + detail.completionTokens;

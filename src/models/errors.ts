@@ -31,6 +31,18 @@ export class TimeoutError extends TransportFailure {
   }
 }
 
+/**
+ * A cloud request was sent, and no answer came back: a timeout, a dropped connection, or a 5xx.
+ * The provider may have run it and billed for it, so it is not a transport failure to retry. Retrying on
+ * another paid candidate can bill the same request twice, so the router never does. Local candidates bill
+ * nothing and remain eligible.
+ */
+export class OutcomeUnknownError extends AgentRuntimeError {
+  constructor(message: string, cause?: unknown) {
+    super(message, "OUTCOME_UNKNOWN", cause);
+  }
+}
+
 export class ProviderError extends AgentRuntimeError {
   constructor(message: string, cause?: unknown) {
     super(message, "PROVIDER_ERROR", cause);

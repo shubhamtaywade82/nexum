@@ -2,6 +2,7 @@
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Provider } from "../models/adapters/provider.js";
+import { InferenceDispatcher } from "../models/gateway/inference-dispatcher.js";
 import { ModelCatalog, isEmbeddingModel } from "../models/catalog.js";
 import { loadConfig } from "../cli/config.js";
 import { Agent } from "../cli/agent.js";
@@ -77,10 +78,12 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
     return 1;
   }
 
+  // Every benchmark call is dispatched and accounted, with the target's model pinned on each call.
+  const dispatcher = new InferenceDispatcher({ lanes: { local, cloud } });
   const targets: BenchmarkTarget[] = models.map((m) => ({
     model: m.name,
     tier: m.tier,
-    provider: m.tier === "local" ? local : (cloud as Provider),
+    provider: dispatcher.port({ lane: m.tier === "local" ? "local" : "cloud", purpose: "benchmark", model: m.name }),
   }));
 
   // Execution cases spin up a real (shared, read-only) temp workspace once —

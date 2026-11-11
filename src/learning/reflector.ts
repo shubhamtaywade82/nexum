@@ -1,4 +1,5 @@
-import { Provider, ChatMessage } from "../models/adapters/provider.js";
+import { ChatMessage } from "../models/adapters/provider.js";
+import type { ChatPort } from "../models/gateway/inference-dispatcher.js";
 import { Episode, ReflectionResult } from "./types.js";
 
 /**
@@ -31,7 +32,7 @@ function buildPrompt(episode: Episode): string {
   ].join("\n");
 }
 
-export async function reflect(provider: Provider, episode: Episode): Promise<ReflectionResult> {
+export async function reflect(provider: ChatPort, episode: Episode): Promise<ReflectionResult> {
   const messages: ChatMessage[] = [{ role: "user", content: buildPrompt(episode) }];
 
   try {

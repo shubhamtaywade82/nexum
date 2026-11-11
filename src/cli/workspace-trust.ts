@@ -64,8 +64,14 @@ export const WORKSPACE_SAFE_KEYS: ReadonlySet<string> = new Set([
   "availabilityCheckTtlMs",
   "enableAvailabilityCheck",
   "enableHeuristicGate",
-  "pricing",
 ]);
+
+/**
+ * Keys only the user's own config may set, even in a trusted workspace. Trust means the
+ * user reviewed the repo's settings; it does not hand the repo the cost basis that budget
+ * enforcement reads. A repo that could set its own rate could report its spend as zero.
+ */
+export const USER_ONLY_CONFIG_KEYS: ReadonlySet<string> = new Set(["pricing"]);
 
 export type WorkspaceTrustStatus =
   /** digest matches the recorded one */
@@ -352,6 +358,17 @@ export function partitionWorkspaceConfig<T extends object>(config: T): { safe: P
     else withheld.push(key);
   }
   return { safe, withheld };
+}
+
+/** Drop the user-only keys from a workspace config that a trusted workspace would otherwise apply. */
+export function withholdUserOnlyKeys<T extends object>(config: T): { kept: Partial<T>; withheld: string[] } {
+  const kept: Partial<T> = {};
+  const withheld: string[] = [];
+  for (const [key, value] of Object.entries(config)) {
+    if (USER_ONLY_CONFIG_KEYS.has(key)) withheld.push(key);
+    else (kept as Record<string, unknown>)[key] = value;
+  }
+  return { kept, withheld };
 }
 
 // ── Review text (prompt and `nexum trust`) ──────────────────────────────────

@@ -25,6 +25,10 @@ import { SelfConsistency } from "../../models/verification/self-consistency.js";
 import { ModelCapabilityRegistry } from "../../models/profiles/model-capability-registry.js";
 import { DecisionGateway, SystemOneDecisionGateway, type SystemOneEnvironment } from "../../models/decision/index.js";
 import { OllamaSystemOneClient } from "../../models/decision/ollama-system-one-client.js";
+import { DefaultModelGateway } from "../../models/gateway/model-gateway.js";
+import { InferenceDispatcher, type ChatPort } from "../../models/gateway/inference-dispatcher.js";
+import { routeWithFallbackOn } from "../../models/gateway/route-fallback.js";
+import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
 
 export type StatusEmitter = (message: string) => void;
 
@@ -42,6 +46,8 @@ export interface ModelStackOptions {
    * an integration test against a local fake that ignores the cloud tier).
    */
   decisionGateway?: DecisionGateway;
+  /** Budget every model call is recorded against, through the dispatcher and the gateway. */
+  budget?: BudgetTracker;
 }
 
 /**
@@ -82,6 +88,13 @@ export class ModelStack {
   readonly catalog: ModelCatalog;
   readonly router: Router;
   readonly modelProfiles = new ModelCapabilityRegistry();
+  /**
+   * The one exit for model calls. Lanes: `primary` (the conversation's provider), `catalog.local` and
+   * `catalog.cloud` (the router's pools), `quick` (the quick-model provider). One cloud cap covers all lanes.
+   */
+  readonly dispatcher: InferenceDispatcher;
+  /** Capability routing and explicit-model calls, recording through the same dispatcher. */
+  readonly gateway: DefaultModelGateway;
 
   readonly heuristicRouter: HeuristicRouter | undefined;
   readonly localWorker: LocalWorker | undefined;
@@ -187,10 +200,29 @@ export class ModelStack {
       : cfg.tier === "cloud" && cloudProvider
         ? cloudProvider
         : localProvider;
-    this.localWorker = cfg.enableLocalWorker ? new LocalWorker(quickLocalProvider) : undefined;
-    this.verifier = cfg.enableVerifier && this.localWorker ? new Verifier(quickLocalProvider) : undefined;
+    this.dispatcher = new InferenceDispatcher({
+      lanes: {
+        primary: this.provider,
+        "catalog.local": localProvider,
+        "catalog.cloud": cloudProvider,
+        quick: quickLocalProvider,
+      },
+      budget: opts.budget,
+      registry: this.modelProfiles,
+    });
+    this.gateway = new DefaultModelGateway({
+      router: this.router,
+      catalog: this.catalog,
+      registry: this.modelProfiles,
+      budget: opts.budget,
+      dispatcher: this.dispatcher,
+    });
+
+    // The quick model runs on the cloud in cloud tier, so these helpers dispatch through the quick lane too.
+    this.localWorker = cfg.enableLocalWorker ? new LocalWorker(this.quickPort("local-worker")) : undefined;
+    this.verifier = cfg.enableVerifier && this.localWorker ? new Verifier(this.quickPort("verifier")) : undefined;
     this.selfConsistency = cfg.enableSelfConsistency
-      ? new SelfConsistency(quickLocalProvider, {
+      ? new SelfConsistency(this.quickPort("self-consistency"), {
           n: cfg.selfConsistencyN,
           threshold: cfg.selfConsistencyThreshold,
         })
@@ -256,14 +288,34 @@ export class ModelStack {
     return this.catalogRefreshed;
   }
 
-  /** Capability routing with primary-model fallback (never breaks a turn). */
+  /** A chat on the conversation's primary provider, accounted by the dispatcher. */
+  primaryChat(messages: ChatMessage[], opts?: ChatOptions, purpose = "chat.primary"): Promise<ChatResponse> {
+    return this.dispatcher.dispatch({ lane: "primary", purpose }, messages, opts);
+  }
+
+  /** The primary provider as a port, for callers that take a chat function. */
+  primaryPort(purpose: string): ChatPort {
+    return this.dispatcher.port({ lane: "primary", purpose });
+  }
+
+  /** The quick-model provider as a port (local worker, verifier, self-consistency). */
+  quickPort(purpose: string): ChatPort {
+    return this.dispatcher.port({ lane: "quick", purpose });
+  }
+
+  /**
+   * Capability routing with a primary-model fallback (never breaks a turn). The fallback runs only when the first
+   * attempt cannot have run; an unknown outcome on a paid candidate is surfaced, not sent again (see route-fallback.ts).
+   */
   async routeWithFallback(capability: Capability, messages: ChatMessage[], opts?: ChatOptions): Promise<ChatResponse> {
     await this.ensureCatalog();
-    try {
-      return await this.router.route(capability, messages, opts);
-    } catch {
-      return this.provider.chat(messages, opts);
-    }
+    return routeWithFallbackOn(
+      (c, m, o) => this.gateway.route(c, m, o),
+      this.primaryPort("route.fallback"),
+      capability,
+      messages,
+      opts,
+    );
   }
 
   // ── model management ───────────────────────────────────────────────────
@@ -302,7 +354,11 @@ export class ModelStack {
 
   async validateModel(): Promise<true | string> {
     try {
-      await this.provider.chat([{ role: "user", content: "respond with just a single dot" }], { stream: false });
+      await this.primaryChat(
+        [{ role: "user", content: "respond with just a single dot" }],
+        { stream: false },
+        "probe.validate",
+      );
       return true;
     } catch (e) {
       const msg = (e as Error).message ?? "";

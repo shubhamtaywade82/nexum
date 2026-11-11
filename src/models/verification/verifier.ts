@@ -1,4 +1,4 @@
-import { Provider } from "../adapters/provider.js";
+import type { ChatPort } from "../gateway/inference-dispatcher.js";
 
 export type VerifierVerdict = "VERIFIED" | "REJECT";
 
@@ -20,7 +20,7 @@ export interface VerifierResult {
  * so the same model can still catch obvious errors in its own output).
  */
 export class Verifier {
-  constructor(private readonly provider: Provider) {}
+  constructor(private readonly provider: ChatPort) {}
 
   async verify(task: string, draft: string): Promise<VerifierResult> {
     const prompt = [

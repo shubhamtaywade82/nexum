@@ -1,4 +1,5 @@
 import { Provider, ChatResponse } from "../../src/models/adapters/provider.js";
+import { InferenceDispatcher } from "../../src/models/gateway/inference-dispatcher.js";
 import { runBenchmark } from "../../src/benchmark/runner.js";
 import { AgenticBenchmarkCase, BenchmarkCase } from "../../src/benchmark/types.js";
 
@@ -33,15 +34,20 @@ describe("runBenchmark", () => {
     expect(results.find((r) => r.caseId === "always-fail")?.reason).toBe("nope");
   });
 
-  it("sets the provider's model/tier before invoking chat", async () => {
+  it("pins the target's model on each call and leaves the shared provider's own state alone", async () => {
     const provider = new Provider({ tier: "cloud", model: "placeholder" });
     const chatSpy = jest.spyOn(provider, "chat").mockResolvedValue(response("ok"));
+    const port = InferenceDispatcher.single("bench", provider).port({
+      lane: "bench",
+      purpose: "benchmark",
+      model: "qwen3:8b",
+    });
 
-    await runBenchmark([{ model: "qwen3:8b", tier: "local", provider }], [passingCase]);
+    await runBenchmark([{ model: "qwen3:8b", tier: "local", provider: port }], [passingCase]);
 
-    expect(provider.currentModel).toBe("qwen3:8b");
-    expect(provider.currentTier).toBe("local");
-    expect(chatSpy).toHaveBeenCalled();
+    expect(chatSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ model: "qwen3:8b" }));
+    expect(provider.currentModel).toBe("placeholder");
+    expect(provider.currentTier).toBe("cloud");
   });
 
   it("records a failing result with the error message when chat throws", async () => {
