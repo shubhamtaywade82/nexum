@@ -73,7 +73,11 @@ function usdToMicro(usd: number): number {
 export async function reconcileAccount(opts: ReconcileOptions): Promise<ReconcileResult> {
   const { ledger, source, accountId, label, cycleId, now, graceMs } = opts;
   const roundingSlack = opts.roundingSlackPerCallMicro ?? ROUNDING_SLACK_PER_CALL_MICRO;
-  const unavailable = (detail: string): ReconcileResult => ({ status: "UNAVAILABLE", releasedReservationIds: [], detail });
+  const unavailable = (detail: string): ReconcileResult => ({
+    status: "UNAVAILABLE",
+    releasedReservationIds: [],
+    detail,
+  });
 
   const [balances, usages] = await Promise.all([
     source.balanceAll().catch((err: unknown) => ({ error: String(err) }) as const),
@@ -102,7 +106,11 @@ export async function reconcileAccount(opts: ReconcileOptions): Promise<Reconcil
 
   const periodStart = new Date(included.period.from);
   if (Number.isNaN(periodStart.getTime())) {
-    return { status: "INCONSISTENT_BALANCE", releasedReservationIds: [], detail: "provider period start is not a date" };
+    return {
+      status: "INCONSISTENT_BALANCE",
+      releasedReservationIds: [],
+      detail: "provider period start is not a date",
+    };
   }
   if (periodStart.toISOString().slice(0, 10) !== cycle.startsAt.slice(0, 10)) {
     return {
@@ -115,7 +123,11 @@ export async function reconcileAccount(opts: ReconcileOptions): Promise<Reconcil
   const allowance = usdToMicro(included.allowance_usd);
   const remaining = usdToMicro(included.balance_usd);
   if (!(remaining >= 0 && allowance >= remaining)) {
-    return { status: "INCONSISTENT_BALANCE", releasedReservationIds: [], detail: "included balance is outside [0, allowance]" };
+    return {
+      status: "INCONSISTENT_BALANCE",
+      releasedReservationIds: [],
+      detail: "included balance is outside [0, allowance]",
+    };
   }
   const spendIncluded = allowance - remaining;
 

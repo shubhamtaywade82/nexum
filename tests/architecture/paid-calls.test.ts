@@ -21,6 +21,8 @@ const PROVIDER_IMPORTERS: Record<string, string> = {
   "src/evolution/cli.ts": "evolution composition root: constructs the providers",
   "src/evolution/benchmarks.ts": "wraps the given provider in a single-lane dispatcher before use",
   "src/evolution/mutation/nexum-agent-runtime.ts": "wraps the given provider in a single-lane dispatcher before use",
+  "src/host/inference-composition.ts":
+    "host composition root: constructs the primary and quick providers for POST /v1/inference",
 };
 
 /** The provider layer itself may use the class freely. */

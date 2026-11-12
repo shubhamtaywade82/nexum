@@ -20,6 +20,11 @@ export interface CloudAdmissionRequest {
   readonly tools?: unknown;
   /** The output allowance the caller asked for (`options.num_predict`). Omitted: the admission's default. */
   readonly maxOutputTokens?: number;
+  /**
+   * The caller's idempotency key. With it, a second admission under the same key does not run the call again: it is
+   * refused as IN_FLIGHT, ALREADY_COMPLETED or PAYLOAD_MISMATCH. Omitted: a fresh key, so the call always runs.
+   */
+  readonly idempotencyKey?: string;
 }
 
 /** A reservation the dispatcher holds for one call. The output cap is sent to the provider as `num_predict`. */

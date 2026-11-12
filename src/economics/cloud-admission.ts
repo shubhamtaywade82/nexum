@@ -132,7 +132,7 @@ export class LedgerCloudAdmission implements CloudAdmission {
     const outcome = this.ledger.reserve({
       accountId: this.accountId,
       cycleId: cycle.cycleId,
-      idempotencyKey: randomUUID(),
+      idempotencyKey: req.idempotencyKey ?? randomUUID(),
       payloadHash,
       taskId: req.taskId,
       model: req.model,
@@ -154,8 +154,24 @@ export class LedgerCloudAdmission implements CloudAdmission {
         reason: describeRejection(outcome.reason, boundMicro, outcome.exposure),
       };
     }
-    // A random key cannot match an earlier request, so a replay, in-flight or mismatch here is a ledger bug.
-    return { kind: "REFUSED", code: "LEDGER_INCONSISTENT", reason: `unexpected ledger outcome ${outcome.kind}` };
+    if (outcome.kind === "IN_FLIGHT") {
+      return { kind: "REFUSED", code: "IN_FLIGHT", reason: "a call with this idempotency key is still in flight" };
+    }
+    if (outcome.kind === "REPLAY") {
+      return {
+        kind: "REFUSED",
+        code: "ALREADY_COMPLETED",
+        reason: "a call with this idempotency key already completed",
+      };
+    }
+    if (outcome.kind === "PAYLOAD_MISMATCH") {
+      return {
+        kind: "REFUSED",
+        code: "PAYLOAD_MISMATCH",
+        reason: "this idempotency key was used for a different request",
+      };
+    }
+    return { kind: "REFUSED", code: "LEDGER_INCONSISTENT", reason: "unexpected ledger outcome" };
   }
 
   settle(lease: CloudLease, response: ChatResponse): void {

@@ -5,6 +5,8 @@
  * the H0 -> Hn evolutionary lineage, running benchmarks, and rolling back mutations.
  */
 
+import { readEnvFlag } from "../platform/environment.js";
+import { cloudIsConfigured } from "../economics/composition.js";
 import { installCloudBudget } from "../economics/composition.js";
 import { execFile } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
@@ -397,7 +399,7 @@ async function runCandidateEvaluation(
   values: Record<string, unknown>,
   candidateId: string,
 ): Promise<void> {
-  const cfg = loadConfig();
+  const cfg = evolutionConfig(loadConfig());
   installCloudBudget(cfg);
   const provider = new Provider({
     tier: cfg.tier,
@@ -427,7 +429,7 @@ async function runBenchmarkSuites(engine: EvolutionEngine, root: string): Promis
   const suites = plan?.recommendedBenchmarkCategories ?? ["execution", "agentic-looping"];
   console.log(`[Evolution] Running harness benchmark suites: ${suites.join(", ")}...`);
 
-  const cfg = loadConfig();
+  const cfg = evolutionConfig(loadConfig());
   installCloudBudget(cfg);
   const provider = new Provider({
     tier: cfg.tier,
@@ -908,7 +910,7 @@ export async function activateRuntimeIfNeeded(
 async function executeMutationCommand(root: string, values: Record<string, unknown>): Promise<void> {
   const rawRepo = (values.repo as string | undefined) ?? ".";
   const repoRoot = resolve(root, rawRepo);
-  const cfg = loadConfig();
+  const cfg = evolutionConfig(loadConfig());
   installCloudBudget(cfg);
   // The agent is told the process in the skill files of the repository it mutates, and only once that
   // repository is trusted: its skills are repository content, which must not steer the model before trust.
@@ -1759,4 +1761,18 @@ export async function runEvolutionCli(args: string[]): Promise<void> {
   } finally {
     registry.close();
   }
+}
+
+/**
+ * B3: the self-development loop does not reach the cloud unless the user opts in with NEXUM_EVOLUTION_CLOUD=1. Its
+ * cloud calls are admitted through the budget ledger, but the loop fans out across keys, so until it is bounded by an
+ * experiment budget it runs local-only by default. A configured cloud key is then ignored for evolution, with a notice.
+ */
+export function evolutionConfig(cfg: CliConfig): CliConfig {
+  if (readEnvFlag("EVOLUTION_CLOUD", false)) return cfg;
+  if (!cloudIsConfigured(cfg)) return cfg;
+  console.error(
+    "[evolution] cloud is frozen for the self-development loop (B3). Set NEXUM_EVOLUTION_CLOUD=1 to allow it. Running local-only.",
+  );
+  return { ...cfg, tier: "local", apiKey: undefined, apiKeys: undefined };
 }

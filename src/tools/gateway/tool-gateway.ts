@@ -43,7 +43,7 @@ import type {
   PolicyEngine,
   WorkspacePolicyContext,
 } from "../../core/policy/policy-engine.js";
-import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
+import type { BudgetMeter } from "../../core/types.js";
 import type { TaskSpec } from "../../core/types.js";
 
 /**
@@ -202,7 +202,12 @@ export interface InvokeContext {
   /** Capability tags to filter tools by (capability check stage). */
   capabilities?: string[];
   /** Run budget — the budget stage guards limits before executing. */
-  budget?: BudgetTracker;
+  budget?: BudgetMeter;
+  /**
+   * Whether this invocation counts against the run's tool-call ceiling. Default true. A re-execution after the human
+   * confirmed the same call passes false: the call was already counted when it was first attempted.
+   */
+  countAttempt?: boolean;
   /** Skip policy (runtime-internal calls, e.g. strategies re-reading files). */
   skipPolicy?: boolean;
   /** Skip the capability filter (runtime-internal calls). */
@@ -289,6 +294,10 @@ export class DefaultToolGateway implements ToolGateway {
     const raw = typeof nameOrRequest === "string" ? rawArgs : nameOrRequest.args;
     const invocationId =
       typeof nameOrRequest === "string" ? `tc_${randomUUID()}` : nameOrRequest.id || `tc_${randomUUID()}`;
+
+    // Tool-call ceiling (B7): every attempt is counted here, at the one entry point, so no strategy can skip it or
+    // count differently. Exhaustion throws, and the caller's run stops rather than treating it as a tool failure.
+    if (ctx.countAttempt !== false) ctx.budget?.consumeToolCall();
 
     // ── stage 0: resolve (registry + canonical aliases) ────────────────────
     const entry = this.resolve(name);

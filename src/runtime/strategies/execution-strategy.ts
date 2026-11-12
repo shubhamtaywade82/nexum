@@ -23,6 +23,7 @@ import type { ExecutionResult, ExecutionContext, ExecutionStatus, StrategyName }
 import { LoopDetector } from "../../core/loop/loop-detector.js";
 import type { PreparedToolCall, StrategyHooks, StrategyModelCallOptions } from "./strategy-hooks.js";
 import { CriticService, type CriticSeverity } from "../critic/critic.js";
+import { BudgetExhaustedError } from "../../models/errors.js";
 import { SelfCorrectionLoop, type SelfCorrectionResult } from "../critic/reflection.js";
 
 // A bare "rejected" reads to small models like a transient error, and they retry with a tweaked path or
@@ -280,8 +281,7 @@ export class ReActStrategy implements ExecutionStrategy {
           const allowed = (await hooks?.beforeToolCall?.({ name: call.name, args, turn })) ?? true;
           if (!allowed) continue;
 
-          ctx.budget.consumeToolCall();
-
+          // Tool-call ceiling is counted by the tool gateway (B7), for every attempt.
           let result;
           try {
             result = await ctx.toolGateway.invoke(call.name, args, {
@@ -290,6 +290,7 @@ export class ReActStrategy implements ExecutionStrategy {
               mode: ctx.mode,
               unattended: ctx.unattended,
               signal: ctx.signal,
+              budget: ctx.budget,
             });
 
             // Policy confirmation seam: the gateway never blocks on UX — it
@@ -312,6 +313,8 @@ export class ReActStrategy implements ExecutionStrategy {
                     mode: ctx.mode,
                     unattended: ctx.unattended,
                     signal: ctx.signal,
+                    budget: ctx.budget,
+                    countAttempt: false,
                     confirmed: true,
                   })
                 : {
@@ -321,6 +324,8 @@ export class ReActStrategy implements ExecutionStrategy {
                   };
             }
           } catch (e) {
+            // A run's budget ceiling stops the run; it is not a tool failure to show the model.
+            if (e instanceof BudgetExhaustedError) throw e;
             // Thrown tool failures become an observation, never a run crash:
             // the model gets the error and a retry-guidance nudge (matching
             // the legacy loop's catch path).

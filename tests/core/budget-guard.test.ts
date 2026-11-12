@@ -1,3 +1,4 @@
+import { ToolCallBudgetError } from "../../src/runtime/budget/budget-tracker.js";
 import { describe, it, expect } from "@jest/globals";
 import { BudgetTracker } from "../../src/runtime/budget/budget-tracker.js";
 import { BudgetManager } from "../../src/runtime/budget/budget-manager.js";
@@ -88,32 +89,35 @@ describe("BudgetGuardRule", () => {
 });
 
 describe("budget guard through the tool gateway", () => {
-  it("refuses a mutating tool once the run has used its tool-call allowance", async () => {
+  it("counts every attempt, denies a mutating tool once the allowance is spent, and then refuses further calls", async () => {
     const catalog = new ToolCatalog();
     catalog.register(def("read_file", false), async () => ({ content: "contents" }));
     catalog.register(def("write_file", true), async () => ({ content: "written" }));
     const gateway = new DefaultToolGateway({ catalog, policyEngine: new RulePolicyEngine() });
     const budget = new BudgetTracker({ runId: "r", sessionId: "s", budget: { maxToolCalls: 1 } });
 
-    budget.consumeToolCall(); // the strategy's single allowed tool call
+    // The first attempt uses the single allowance. It is a mutating tool, and the run is now depleted: denied.
     const denied = await gateway.invoke("write_file", {}, { budget, runId: "r", agentId: "a" });
     expect(denied.ok).toBe(false);
     expect(denied.error?.code).toBe("PolicyDenied");
     expect(denied.error?.message).toContain("run budget is depleted");
 
-    const read = await gateway.invoke("read_file", {}, { budget, runId: "r", agentId: "a" });
-    expect(read.ok).toBe(true);
+    // A second attempt is past the ceiling: the gateway throws, so the run stops rather than seeing a tool failure.
+    await expect(gateway.invoke("read_file", {}, { budget, runId: "r", agentId: "a" })).rejects.toBeInstanceOf(
+      ToolCallBudgetError,
+    );
+    expect(budget.snapshot().toolCalls).toBe(2);
   });
 
-  it("allows a mutating tool while the run still has allowance", async () => {
+  it("allows a mutating tool while the run still has allowance, counting the attempt once", async () => {
     const catalog = new ToolCatalog();
     catalog.register(def("write_file", true), async () => ({ content: "written" }));
     const gateway = new DefaultToolGateway({ catalog, policyEngine: new RulePolicyEngine() });
     const budget = new BudgetTracker({ runId: "r", sessionId: "s", budget: { maxToolCalls: 2 } });
 
-    budget.consumeToolCall();
     const result = await gateway.invoke("write_file", {}, { budget, runId: "r", agentId: "a" });
     expect(result.ok).toBe(true);
+    expect(budget.snapshot().toolCalls).toBe(1);
   });
 });
 

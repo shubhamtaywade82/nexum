@@ -26,6 +26,7 @@
  * 409 Conflict.
  */
 
+import { handleInferenceHttp, type InferenceService } from "./inference.js";
 import { randomUUID } from "node:crypto";
 import type { AgentPort } from "./agent-port.js";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
@@ -69,6 +70,8 @@ import { runChannel } from "../infrastructure/redis/channels.js";
 import { prometheusMetrics } from "../observability/process-telemetry.js";
 
 export interface NexumHostOptions {
+  /** Raw inference for callers that own their loop (POST /v1/inference). Absent: the route answers 503. */
+  inference?: InferenceService;
   createAgent: () => AgentPort;
   workspaceRoot: string;
   db: Database;
@@ -102,6 +105,7 @@ const STATIC_CAPABILITIES: Omit<NexumCapabilities, keyof DiscoveredCapabilities>
 };
 
 interface RequestContext {
+  inference?: InferenceService;
   registry: HostAgentRegistry;
   repos: Repos;
   db: Database;
@@ -142,6 +146,7 @@ export function createNexumHost(opts: NexumHostOptions): NexumHost {
   const idempotency = new IdempotencyStore();
 
   const ctx: RequestContext = {
+    inference: opts.inference,
     registry,
     repos,
     db: opts.db,
@@ -321,6 +326,15 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
     const message = "invalid or missing authentication token";
     if (segments[0] === "v1") writeOpenAiError(res, 401, "authentication_error", message, { code: "invalid_api_key" });
     else writeJson(res, 401, { error: "unauthorized", message });
+    return;
+  }
+
+  if (method === "POST" && segments.length === 2 && segments[0] === "v1" && segments[1] === "inference") {
+    if (!ctx.inference) {
+      writeJson(res, 503, { error: "inference_not_configured", message: "this host has no inference service" });
+      return;
+    }
+    await handleInferenceHttp(req, res, ctx.inference);
     return;
   }
 

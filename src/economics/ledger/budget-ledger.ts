@@ -227,21 +227,19 @@ export class BudgetLedger {
       throw new LedgerStateError(`ledger schema ${version} is newer than this build (${LEDGER_SCHEMA_VERSION})`);
     }
     if (version === LEDGER_SCHEMA_VERSION) return;
-    this.db.transaction(() => {
-      this.db.exec(LEDGER_SCHEMA_SQL);
-      this.db.pragma(`user_version = ${LEDGER_SCHEMA_VERSION}`);
-    }).immediate();
+    this.db
+      .transaction(() => {
+        this.db.exec(LEDGER_SCHEMA_SQL);
+        this.db.pragma(`user_version = ${LEDGER_SCHEMA_VERSION}`);
+      })
+      .immediate();
   }
 
   private prepareStatements() {
     return {
-      cycle: this.db.prepare(
-        "SELECT * FROM cycles WHERE account_id = ? AND cycle_id = ?",
-      ),
+      cycle: this.db.prepare("SELECT * FROM cycles WHERE account_id = ? AND cycle_id = ?"),
       cyclesOfAccount: this.db.prepare("SELECT * FROM cycles WHERE account_id = ?"),
-      reservationByKey: this.db.prepare(
-        "SELECT * FROM reservations WHERE account_id = ? AND idempotency_key = ?",
-      ),
+      reservationByKey: this.db.prepare("SELECT * FROM reservations WHERE account_id = ? AND idempotency_key = ?"),
       reservationById: this.db.prepare("SELECT * FROM reservations WHERE reservation_id = ?"),
       insertReservation: this.db.prepare(
         `INSERT INTO reservations (reservation_id, account_id, cycle_id, idempotency_key, payload_hash, task_id, model,
@@ -284,7 +282,9 @@ export class BudgetLedger {
       reservationsOfAccount: this.db.prepare(
         "SELECT * FROM reservations WHERE account_id = ? ORDER BY created_at, reservation_id",
       ),
-      eventsOf: this.db.prepare("SELECT kind, amount_micro, detail, at FROM usage_events WHERE reservation_id = ? ORDER BY event_id"),
+      eventsOf: this.db.prepare(
+        "SELECT kind, amount_micro, detail, at FROM usage_events WHERE reservation_id = ? ORDER BY event_id",
+      ),
     };
   }
 
@@ -302,24 +302,26 @@ export class BudgetLedger {
     capMicro: number | null;
   }): CycleRecord {
     if (input.capMicro !== null) assertMicro("capMicro", input.capMicro);
-    return this.db.transaction(() => {
-      const existing = this.stmts.cycle.get(input.accountId, input.cycleId) as CycleRow | undefined;
-      if (existing) {
-        if (existing.cap_micro !== input.capMicro) {
-          throw new LedgerStateError(
-            `cycle ${input.cycleId} already exists with cap ${existing.cap_micro}; refusing to change it to ${input.capMicro}`,
-          );
+    return this.db
+      .transaction(() => {
+        const existing = this.stmts.cycle.get(input.accountId, input.cycleId) as CycleRow | undefined;
+        if (existing) {
+          if (existing.cap_micro !== input.capMicro) {
+            throw new LedgerStateError(
+              `cycle ${input.cycleId} already exists with cap ${existing.cap_micro}; refusing to change it to ${input.capMicro}`,
+            );
+          }
+          return toCycle(existing);
         }
-        return toCycle(existing);
-      }
-      this.db
-        .prepare(
-          `INSERT INTO cycles (account_id, cycle_id, starts_at, ends_at, cap_micro, overexposed, purchased_baseline_micro)
+        this.db
+          .prepare(
+            `INSERT INTO cycles (account_id, cycle_id, starts_at, ends_at, cap_micro, overexposed, purchased_baseline_micro)
            VALUES (?, ?, ?, ?, ?, 0, NULL)`,
-        )
-        .run(input.accountId, input.cycleId, input.startsAt, input.endsAt, input.capMicro);
-      return toCycle(this.stmts.cycle.get(input.accountId, input.cycleId) as CycleRow);
-    }).immediate();
+          )
+          .run(input.accountId, input.cycleId, input.startsAt, input.endsAt, input.capMicro);
+        return toCycle(this.stmts.cycle.get(input.accountId, input.cycleId) as CycleRow);
+      })
+      .immediate();
   }
 
   cycle(accountId: string, cycleId: string): CycleRecord | undefined {
@@ -344,10 +346,13 @@ export class BudgetLedger {
    * exceeds everything the ledger can attribute, and by settlement. The flag is never cleared automatically.
    */
   flagOverexposed(accountId: string, cycleId: string, reason: string): void {
-    this.db.transaction(() => {
-      if (!this.cycle(accountId, cycleId)) throw new LedgerStateError(`cycle ${cycleId} is not open for ${accountId}`);
-      this.stmts.markOverexposed.run({ account_id: accountId, cycle_id: cycleId, reason });
-    }).immediate();
+    this.db
+      .transaction(() => {
+        if (!this.cycle(accountId, cycleId))
+          throw new LedgerStateError(`cycle ${cycleId} is not open for ${accountId}`);
+        this.stmts.markOverexposed.run({ account_id: accountId, cycle_id: cycleId, reason });
+      })
+      .immediate();
   }
 
   private exposureUnsafe(accountId: string, cycleId: string, capMicro: number | null): Exposure {
@@ -380,52 +385,54 @@ export class BudgetLedger {
    */
   reserve(req: ReserveRequest): ReserveOutcome {
     assertMicro("boundMicro", req.boundMicro);
-    return this.db.transaction((): ReserveOutcome => {
-      const prior = this.stmts.reservationByKey.get(req.accountId, req.idempotencyKey) as ReservationRow | undefined;
-      if (prior) {
-        const record = toReservation(prior);
-        if (prior.payload_hash !== req.payloadHash) return { kind: "PAYLOAD_MISMATCH", reservation: record };
-        if (record.state === "RESERVED" || record.state === "UNKNOWN_USAGE") {
-          return { kind: "IN_FLIGHT", reservation: record };
+    return this.db
+      .transaction((): ReserveOutcome => {
+        const prior = this.stmts.reservationByKey.get(req.accountId, req.idempotencyKey) as ReservationRow | undefined;
+        if (prior) {
+          const record = toReservation(prior);
+          if (prior.payload_hash !== req.payloadHash) return { kind: "PAYLOAD_MISMATCH", reservation: record };
+          if (record.state === "RESERVED" || record.state === "UNKNOWN_USAGE") {
+            return { kind: "IN_FLIGHT", reservation: record };
+          }
+          return { kind: "REPLAY", reservation: record };
         }
-        return { kind: "REPLAY", reservation: record };
-      }
 
-      const cycle = this.cycle(req.accountId, req.cycleId);
-      if (!cycle) return { kind: "REJECTED", reason: "CYCLE_NOT_OPEN" };
+        const cycle = this.cycle(req.accountId, req.cycleId);
+        if (!cycle) return { kind: "REJECTED", reason: "CYCLE_NOT_OPEN" };
 
-      const exposure = this.exposureUnsafe(req.accountId, req.cycleId, cycle.capMicro);
-      if (exposure.overexposed) return { kind: "REJECTED", reason: "CYCLE_OVEREXPOSED", exposure };
+        const exposure = this.exposureUnsafe(req.accountId, req.cycleId, cycle.capMicro);
+        if (exposure.overexposed) return { kind: "REJECTED", reason: "CYCLE_OVEREXPOSED", exposure };
 
-      const active = (this.stmts.activeCloud.get(req.accountId) as { n: number }).n;
-      if (active >= this.maxCloudConcurrency) return { kind: "REJECTED", reason: "CLOUD_CONCURRENCY", exposure };
+        const active = (this.stmts.activeCloud.get(req.accountId) as { n: number }).n;
+        if (active >= this.maxCloudConcurrency) return { kind: "REJECTED", reason: "CLOUD_CONCURRENCY", exposure };
 
-      if (cycle.capMicro !== null && exposure.totalMicro + req.boundMicro > cycle.capMicro) {
-        return { kind: "REJECTED", reason: "BUDGET_EXCEEDED", exposure };
-      }
+        if (cycle.capMicro !== null && exposure.totalMicro + req.boundMicro > cycle.capMicro) {
+          return { kind: "REJECTED", reason: "BUDGET_EXCEEDED", exposure };
+        }
 
-      const reservationId = randomUUID();
-      const at = this.now();
-      this.stmts.insertReservation.run({
-        reservation_id: reservationId,
-        account_id: req.accountId,
-        cycle_id: req.cycleId,
-        idempotency_key: req.idempotencyKey,
-        payload_hash: req.payloadHash,
-        task_id: req.taskId,
-        model: req.model,
-        price_version_id: req.priceVersionId,
-        bound_micro: req.boundMicro,
-        at,
-      });
-      this.stmts.event.run({ id: reservationId, kind: "RESERVED", amount: req.boundMicro, detail: null, at });
-      const after: Exposure = {
-        ...exposure,
-        reservedMicro: exposure.reservedMicro + req.boundMicro,
-        totalMicro: exposure.totalMicro + req.boundMicro,
-      };
-      return { kind: "ADMITTED", reservationId, exposure: after };
-    }).immediate();
+        const reservationId = randomUUID();
+        const at = this.now();
+        this.stmts.insertReservation.run({
+          reservation_id: reservationId,
+          account_id: req.accountId,
+          cycle_id: req.cycleId,
+          idempotency_key: req.idempotencyKey,
+          payload_hash: req.payloadHash,
+          task_id: req.taskId,
+          model: req.model,
+          price_version_id: req.priceVersionId,
+          bound_micro: req.boundMicro,
+          at,
+        });
+        this.stmts.event.run({ id: reservationId, kind: "RESERVED", amount: req.boundMicro, detail: null, at });
+        const after: Exposure = {
+          ...exposure,
+          reservedMicro: exposure.reservedMicro + req.boundMicro,
+          totalMicro: exposure.totalMicro + req.boundMicro,
+        };
+        return { kind: "ADMITTED", reservationId, exposure: after };
+      })
+      .immediate();
   }
 
   get(reservationId: string): ReservationRecord | undefined {
@@ -437,58 +444,71 @@ export class BudgetLedger {
     return (this.stmts.reservationsOfAccount.all(accountId) as ReservationRow[]).map(toReservation);
   }
 
-  events(reservationId: string): Array<{ kind: string; amountMicro: number | null; detail: string | null; at: string }> {
-    return (this.stmts.eventsOf.all(reservationId) as Array<{ kind: string; amount_micro: number | null; detail: string | null; at: string }>).map(
-      (e) => ({ kind: e.kind, amountMicro: e.amount_micro, detail: e.detail, at: e.at }),
-    );
+  events(
+    reservationId: string,
+  ): Array<{ kind: string; amountMicro: number | null; detail: string | null; at: string }> {
+    return (
+      this.stmts.eventsOf.all(reservationId) as Array<{
+        kind: string;
+        amount_micro: number | null;
+        detail: string | null;
+        at: string;
+      }>
+    ).map((e) => ({ kind: e.kind, amountMicro: e.amount_micro, detail: e.detail, at: e.at }));
   }
 
   /** Settles a reservation to the provider's reported cost. Allowed from RESERVED and from UNKNOWN_USAGE. */
   settle(reservationId: string, actualMicro: number, detail: string | null = null): SettleOutcome {
     assertMicro("actualMicro", actualMicro);
-    return this.db.transaction((): SettleOutcome => {
-      const record = this.requireState(reservationId, ["RESERVED", "UNKNOWN_USAGE"], "settle");
-      const at = this.now();
-      this.stmts.setState.run({ id: reservationId, state: "SETTLED", settled: actualMicro, proof: null, at });
-      this.stmts.event.run({ id: reservationId, kind: "SETTLED", amount: actualMicro, detail, at });
+    return this.db
+      .transaction((): SettleOutcome => {
+        const record = this.requireState(reservationId, ["RESERVED", "UNKNOWN_USAGE"], "settle");
+        const at = this.now();
+        this.stmts.setState.run({ id: reservationId, state: "SETTLED", settled: actualMicro, proof: null, at });
+        this.stmts.event.run({ id: reservationId, kind: "SETTLED", amount: actualMicro, detail, at });
 
-      const cycle = this.cycle(record.accountId, record.cycleId);
-      if (!cycle) throw new LedgerStateError(`reservation ${reservationId} has no cycle`);
-      const exposure = this.exposureUnsafe(record.accountId, record.cycleId, cycle.capMicro);
-      let overexposedNow = false;
-      if (cycle.capMicro !== null && exposure.totalMicro > cycle.capMicro && !cycle.overexposed) {
-        overexposedNow = true;
-        const reason = `settled ${actualMicro} against bound ${record.boundMicro}; total ${exposure.totalMicro} > cap ${cycle.capMicro}`;
-        this.stmts.markOverexposed.run({ account_id: record.accountId, cycle_id: record.cycleId, reason });
-        this.stmts.event.run({
-          id: reservationId,
-          kind: "OVEREXPOSED",
-          amount: exposure.totalMicro - cycle.capMicro,
-          detail: reason,
-          at,
-        });
-      }
-      return {
-        reservation: this.get(reservationId)!,
-        exposure: { ...exposure, overexposed: exposure.overexposed || overexposedNow },
-        overexposedNow,
-      };
-    }).immediate();
+        const cycle = this.cycle(record.accountId, record.cycleId);
+        if (!cycle) throw new LedgerStateError(`reservation ${reservationId} has no cycle`);
+        const exposure = this.exposureUnsafe(record.accountId, record.cycleId, cycle.capMicro);
+        let overexposedNow = false;
+        if (cycle.capMicro !== null && exposure.totalMicro > cycle.capMicro && !cycle.overexposed) {
+          overexposedNow = true;
+          const reason = `settled ${actualMicro} against bound ${record.boundMicro}; total ${exposure.totalMicro} > cap ${cycle.capMicro}`;
+          this.stmts.markOverexposed.run({ account_id: record.accountId, cycle_id: record.cycleId, reason });
+          this.stmts.event.run({
+            id: reservationId,
+            kind: "OVEREXPOSED",
+            amount: exposure.totalMicro - cycle.capMicro,
+            detail: reason,
+            at,
+          });
+        }
+        return {
+          reservation: this.get(reservationId)!,
+          exposure: { ...exposure, overexposed: exposure.overexposed || overexposedNow },
+          overexposedNow,
+        };
+      })
+      .immediate();
   }
 
   /** Releases a hold with proof that nothing ran on the provider. Refused without proof. */
   release(reservationId: string, proof: NoExecutionProof): ReservationRecord {
     if (!isNoExecutionProof(proof)) {
-      throw new LedgerStateError("a hold can only be released with proof that the provider did not execute the request");
+      throw new LedgerStateError(
+        "a hold can only be released with proof that the provider did not execute the request",
+      );
     }
-    return this.db.transaction((): ReservationRecord => {
-      this.requireState(reservationId, ["RESERVED", "UNKNOWN_USAGE"], "release");
-      const at = this.now();
-      const serialized = JSON.stringify(proof);
-      this.stmts.setState.run({ id: reservationId, state: "RELEASED", settled: null, proof: serialized, at });
-      this.stmts.event.run({ id: reservationId, kind: "RELEASED", amount: null, detail: serialized, at });
-      return this.get(reservationId)!;
-    }).immediate();
+    return this.db
+      .transaction((): ReservationRecord => {
+        this.requireState(reservationId, ["RESERVED", "UNKNOWN_USAGE"], "release");
+        const at = this.now();
+        const serialized = JSON.stringify(proof);
+        this.stmts.setState.run({ id: reservationId, state: "RELEASED", settled: null, proof: serialized, at });
+        this.stmts.event.run({ id: reservationId, kind: "RELEASED", amount: null, detail: serialized, at });
+        return this.get(reservationId)!;
+      })
+      .immediate();
   }
 
   /**
@@ -496,21 +516,25 @@ export class BudgetLedger {
    * sent again as a paid call until reconciliation resolves it.
    */
   markUnknown(reservationId: string, reason: string): ReservationRecord {
-    return this.db.transaction((): ReservationRecord => {
-      this.requireState(reservationId, ["RESERVED"], "markUnknown");
-      const at = this.now();
-      this.stmts.setState.run({ id: reservationId, state: "UNKNOWN_USAGE", settled: null, proof: null, at });
-      this.stmts.event.run({ id: reservationId, kind: "UNKNOWN", amount: null, detail: reason, at });
-      return this.get(reservationId)!;
-    }).immediate();
+    return this.db
+      .transaction((): ReservationRecord => {
+        this.requireState(reservationId, ["RESERVED"], "markUnknown");
+        const at = this.now();
+        this.stmts.setState.run({ id: reservationId, state: "UNKNOWN_USAGE", settled: null, proof: null, at });
+        this.stmts.event.run({ id: reservationId, kind: "UNKNOWN", amount: null, detail: reason, at });
+        return this.get(reservationId)!;
+      })
+      .immediate();
   }
 
   /** Records an event against a reservation without changing its state (reconciliation evidence). */
   note(reservationId: string, kind: "RECONCILED", detail: string, amountMicro: number | null = null): void {
-    this.db.transaction(() => {
-      this.requireState(reservationId, ["RESERVED", "UNKNOWN_USAGE", "SETTLED", "RELEASED"], "note");
-      this.stmts.event.run({ id: reservationId, kind, amount: amountMicro, detail, at: this.now() });
-    }).immediate();
+    this.db
+      .transaction(() => {
+        this.requireState(reservationId, ["RESERVED", "UNKNOWN_USAGE", "SETTLED", "RELEASED"], "note");
+        this.stmts.event.run({ id: reservationId, kind, amount: amountMicro, detail, at: this.now() });
+      })
+      .immediate();
   }
 
   /** Number of settled reservations in a cycle. Reconciliation uses it to bound per-call rounding. */
@@ -525,7 +549,9 @@ export class BudgetLedger {
   unknownHolds(accountId: string, cycleId: string): ReservationRecord[] {
     return (
       this.db
-        .prepare("SELECT * FROM reservations WHERE account_id = ? AND cycle_id = ? AND state = 'UNKNOWN_USAGE' ORDER BY created_at")
+        .prepare(
+          "SELECT * FROM reservations WHERE account_id = ? AND cycle_id = ? AND state = 'UNKNOWN_USAGE' ORDER BY created_at",
+        )
         .all(accountId, cycleId) as ReservationRow[]
     ).map(toReservation);
   }

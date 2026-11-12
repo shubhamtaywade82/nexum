@@ -43,6 +43,8 @@ export interface DispatchTarget {
   model?: string;
   /** The task the call belongs to. Recorded with a cloud reservation. */
   taskId?: string;
+  /** Caller's idempotency key for a paid call. See CloudAdmissionRequest.idempotencyKey. */
+  idempotencyKey?: string;
 }
 
 /** The narrow port callers depend on instead of a Provider: one chat, already accounted. */
@@ -151,6 +153,7 @@ export class InferenceDispatcher {
         messages,
         tools: opts.tools,
         maxOutputTokens: numPredictOf(opts),
+        ...(target.idempotencyKey !== undefined ? { idempotencyKey: target.idempotencyKey } : {}),
       });
       if (decision.kind === "REFUSED") throw new BudgetRefusedError(decision.reason, decision.code);
 

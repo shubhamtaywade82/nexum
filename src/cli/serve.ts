@@ -30,6 +30,7 @@
 import { CliConfig, loadConfig } from "./config.js";
 import { Agent } from "./agent.js";
 import { createNexumHost } from "../host/index.js";
+import { createInferenceService } from "../host/inference-composition.js";
 import { resolveServeAuth, serverTokenPath, type ServeAuth } from "../host/server-token.js";
 import { readEnv } from "../platform/environment.js";
 import { openDatabase, type NexumDatabase } from "../persistence/database.js";
@@ -106,6 +107,7 @@ export async function startNexumServer(opts: ServeCliOptions = {}): Promise<{ st
 
   const nexumHost = createNexumHost({
     createAgent,
+    inference: createInferenceService(cfg),
     workspaceRoot: cfg.workspaceRoot,
     db: database.db,
     eventBus,
