@@ -93,6 +93,7 @@ import { WebService, defaultWebService } from "../web-service/index.js";
 import { LOCAL_DELEGATION_SYSTEM_ADDENDUM } from "../tools/delegate-tool.js";
 import { detectEscalationHint, isLookupPrompt } from "./agent-escalation.js";
 import { EscalationLadder } from "./escalation-ladder.js";
+import { compactTranscriptForEscalation } from "./escalation-summary.js";
 // ── Kernel (agent execution kernel) ───────────────────────────────────
 import { ApprovalBroker, describeConfirmation } from "../core/policy/approval-broker.js";
 import { FILE_EDIT_TOOLS } from "../core/policy/rules.js";
@@ -1088,8 +1089,8 @@ export class Agent {
         });
         let chatOpts = makeChatOpts();
         let chatResponse = capability
-          ? await this.stack.routeWithFallback(capability, this.conversation.getMessages(), chatOpts)
-          : await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
+          ? await this.stack.routeWithFallback(capability, this.modelMessages(ladder, userMessage), chatOpts)
+          : await this.stack.primaryChat(this.modelMessages(ladder, userMessage), chatOpts);
 
         let assistantMessage = chatResponse.message as {
           content?: string;
@@ -1104,7 +1105,7 @@ export class Agent {
           );
           buffered = null;
           chatOpts = makeChatOpts();
-          chatResponse = await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
+          chatResponse = await this.stack.primaryChat(this.modelMessages(ladder, userMessage), chatOpts);
         } else if (
           critiquing &&
           !(assistantMessage.tool_calls ?? []).length &&
@@ -1118,7 +1119,7 @@ export class Agent {
           );
           buffered = null;
           chatOpts = makeChatOpts();
-          chatResponse = await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
+          chatResponse = await this.stack.primaryChat(this.modelMessages(ladder, userMessage), chatOpts);
         } else if (buffered) {
           for (const delta of buffered) {
             lastAssistantText += delta;
@@ -1470,6 +1471,16 @@ export class Agent {
    * provider model when capability is null). Undefined until the catalog
    * has profiled that model — callers then keep the count-based behavior.
    */
+  /**
+   * The transcript a model call sees. An escalated turn sends a compact summary, not the transcript (N-12); an
+   * unescalated turn sends the whole transcript, as before.
+   */
+  private modelMessages(ladder: EscalationLadder, userMessage: string): ChatMessage[] {
+    const messages = this.conversation.getMessages();
+    if (!ladder.escalated) return messages;
+    return compactTranscriptForEscalation(messages, { goal: userMessage, reason: ladder.reason ?? "" });
+  }
+
   budgetFor(capability: Capability | null): ModelBudget | undefined {
     const name = capability ? this.stack.catalog.modelsFor(capability)[0]?.name : this.stack.provider.currentModel;
     const profile = name ? this.stack.modelProfiles.get(name) : undefined;

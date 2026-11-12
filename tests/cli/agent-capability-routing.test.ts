@@ -285,7 +285,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     expect(onModelUsed).toHaveBeenCalledWith("local", "minicpm5-1b");
   });
 
-  it("escalates to the primary model when the quick model calls escalate_task, preserving full conversation history", async () => {
+  it("escalates to the primary model when the quick model calls escalate_task, sending a compact summary of the state (N-12)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ws-"));
     let call = 0;
     (globalThis as any).fetch = routeShow(
@@ -318,20 +318,22 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     expect(bodies[0].model).toBe("minicpm5-1b");
     expect(bodies[1].model).toBe("primary-model");
 
-    // Context preservation: the escalated call sees the original ask, plus
-    // minicpm5's escalate_task call and its result — same shared history, nothing reset.
+    // Compact escalation: the escalated call carries the request, the reason and the quick model's tool result as one
+    // summary message. It does not replay the intermediate tool-call messages (N-12).
     const turn1Messages = bodies[1].messages;
-    expect(turn1Messages.some((m) => m.role === "user" && String(m.content).includes("user settings module"))).toBe(
-      true,
-    );
+    const summary = turn1Messages
+      .filter((m) => m.role === "user")
+      .map((m) => String(m.content))
+      .join("\n");
+    expect(summary).toContain("user settings module");
+    expect(summary).toContain("needs a real multi-file refactor");
+    expect(summary).toContain("Reason: ");
+    expect(turn1Messages.some((m) => m.role === "tool")).toBe(false);
     expect(
       turn1Messages.some(
         (m) => m.role === "assistant" && JSON.stringify((m as any).tool_calls ?? "").includes("escalate_task"),
       ),
-    ).toBe(true);
-    expect(
-      turn1Messages.some((m) => m.role === "tool" && String(m.content).includes("needs a real multi-file refactor")),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("auto-escalates when a tool call errors and the quick model answers instead of retrying or calling escalate_task", async () => {
