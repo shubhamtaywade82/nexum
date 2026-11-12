@@ -22,5 +22,7 @@ export function createInferenceService(cfg: CliConfig): InferenceService {
   const quick = cfg.quickModel ? new Provider({ ...providerOpts, model: cfg.quickModel }) : primary;
   const admission = cloudIsConfigured(cfg) ? createCloudAdmission(cfg.budget) : undefined;
   const dispatcher = new InferenceDispatcher({ lanes: { primary, quick }, admission });
+  // Holds left by an earlier process are resolved against the provider's balance. Silent when there are none.
+  if (admission) void admission.reconcile(primary).catch(() => undefined);
   return new InferenceService({ dispatcher, prices: DEFAULT_PRICE_CATALOG });
 }
