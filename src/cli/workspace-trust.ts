@@ -71,7 +71,7 @@ export const WORKSPACE_SAFE_KEYS: ReadonlySet<string> = new Set([
  * user reviewed the repo's settings; it does not hand the repo the cost basis that budget
  * enforcement reads. A repo that could set its own rate could report its spend as zero.
  */
-export const USER_ONLY_CONFIG_KEYS: ReadonlySet<string> = new Set(["pricing"]);
+export const USER_ONLY_CONFIG_KEYS: ReadonlySet<string> = new Set(["pricing", "budget"]);
 
 export type WorkspaceTrustStatus =
   /** digest matches the recorded one */

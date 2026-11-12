@@ -91,3 +91,17 @@ export class ConcurrencyDeniedError extends AgentRuntimeError {
     super(message, "CONCURRENCY_DENIED", cause);
   }
 }
+
+/**
+ * A paid call refused before it was sent: the budget cannot cover its worst case, the cycle is overexposed, the
+ * model has no price, or no admission controller is configured. Not a provider failure, so the router does not fail
+ * over to another cloud candidate.
+ */
+export class BudgetRefusedError extends AgentRuntimeError {
+  constructor(
+    message: string,
+    public readonly reason: string,
+  ) {
+    super(message, "BUDGET_REFUSED");
+  }
+}

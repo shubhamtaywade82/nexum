@@ -1,3 +1,10 @@
+// Cloud calls are admitted by the process default. These tests exercise dispatch and routing, so they install
+// a recording admission; budget accounting is tested against the real ledger in tests/economics.
+import { beforeEach as beforeEachAdmission, afterEach as afterEachAdmission } from "@jest/globals";
+import { installDefaultCloudAdmission } from "../../src/models/gateway/inference-dispatcher.js";
+import { recordingCloudAdmission } from "../helpers/cloud-admission.js";
+beforeEachAdmission(() => installDefaultCloudAdmission(recordingCloudAdmission().admission));
+afterEachAdmission(() => installDefaultCloudAdmission(undefined));
 import { describe, it, expect } from "@jest/globals";
 import { Provider, ProviderError, type ChatResponse } from "../../src/models/adapters/provider.js";
 import { InferenceDispatcher } from "../../src/models/gateway/inference-dispatcher.js";

@@ -1,5 +1,4 @@
 import {
-  Provider,
   ChatMessage,
   ChatResponse,
   ChatOptions,
@@ -9,10 +8,12 @@ import {
   OutcomeUnknownError,
 } from "../adapters/provider.js";
 import { Capability, ModelCatalog } from "../catalog.js";
+import type { ChatPort } from "../gateway/inference-dispatcher.js";
 
 export interface RouterOptions {
-  local: Provider;
-  cloud?: Provider;
+  /** Lane ports: every candidate call goes through one, so it is dispatched and admitted. */
+  local: ChatPort;
+  cloud?: ChatPort;
   catalog: ModelCatalog;
   logger?: Pick<Console, "warn">;
 }
@@ -30,8 +31,8 @@ function asOutcomeUnknown(e: unknown, tier: "local" | "cloud"): OutcomeUnknownEr
 }
 
 export class Router {
-  private readonly local: Provider;
-  private readonly cloud?: Provider;
+  private readonly local: ChatPort;
+  private readonly cloud?: ChatPort;
   private readonly catalog: ModelCatalog;
   private readonly logger: Pick<Console, "warn">;
 
@@ -84,8 +85,8 @@ export class Router {
     // loop skips them. Local candidates bill nothing and stay eligible.
     let cloudOutcomeUnknown: OutcomeUnknownError | undefined;
     for (const candidate of candidates) {
-      const provider = candidate.tier === "local" ? this.local : this.cloud;
-      if (!provider) continue;
+      const port = candidate.tier === "local" ? this.local : this.cloud;
+      if (!port) continue;
       if (candidate.tier === "cloud" && cloudOutcomeUnknown) continue;
 
       // Per-request model, not provider.setModel(): mutating shared instance
@@ -94,7 +95,7 @@ export class Router {
       // plan steps) clobbered each other's model mid-flight, and the
       // routedModel stamped below named a model that never served the request.
       try {
-        const response = await provider.chat(messages, { ...opts, model: candidate.name });
+        const response = await port.chat(messages, { ...opts, model: candidate.name });
         response.routedTier = candidate.tier;
         response.routedModel = candidate.name;
         return response;

@@ -5,6 +5,7 @@
  * the H0 -> Hn evolutionary lineage, running benchmarks, and rolling back mutations.
  */
 
+import { installCloudBudget } from "../economics/composition.js";
 import { execFile } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -397,6 +398,7 @@ async function runCandidateEvaluation(
   candidateId: string,
 ): Promise<void> {
   const cfg = loadConfig();
+  installCloudBudget(cfg);
   const provider = new Provider({
     tier: cfg.tier,
     model: cfg.model,
@@ -426,6 +428,7 @@ async function runBenchmarkSuites(engine: EvolutionEngine, root: string): Promis
   console.log(`[Evolution] Running harness benchmark suites: ${suites.join(", ")}...`);
 
   const cfg = loadConfig();
+  installCloudBudget(cfg);
   const provider = new Provider({
     tier: cfg.tier,
     model: cfg.model,
@@ -906,6 +909,7 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   const rawRepo = (values.repo as string | undefined) ?? ".";
   const repoRoot = resolve(root, rawRepo);
   const cfg = loadConfig();
+  installCloudBudget(cfg);
   // The agent is told the process in the skill files of the repository it mutates, and only once that
   // repository is trusted: its skills are repository content, which must not steer the model before trust.
   const skillGuidance = loadMutationSkillGuidance(repoRoot, {

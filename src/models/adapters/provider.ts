@@ -233,14 +233,18 @@ const PRE_DISPATCH_NETWORK_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /** Walks the `cause` chain (fetch wraps the socket error in a TypeError) looking for a pre-dispatch code. */
-function isPreDispatchNetworkFailure(err: unknown): boolean {
+export function preDispatchNetworkCode(err: unknown): string | undefined {
   let current: unknown = err;
   for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth++) {
     const code = (current as { code?: unknown }).code;
-    if (typeof code === "string" && PRE_DISPATCH_NETWORK_CODES.has(code)) return true;
+    if (typeof code === "string" && PRE_DISPATCH_NETWORK_CODES.has(code)) return code;
     current = (current as { cause?: unknown }).cause;
   }
-  return false;
+  return undefined;
+}
+
+export function isPreDispatchNetworkFailure(err: unknown): boolean {
+  return preDispatchNetworkCode(err) !== undefined;
 }
 
 /**

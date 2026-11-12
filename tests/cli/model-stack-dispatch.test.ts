@@ -1,3 +1,10 @@
+// Cloud calls are admitted by the process default. These tests exercise dispatch and routing, so they install
+// a recording admission; budget accounting is tested against the real ledger in tests/economics.
+import { beforeEach as beforeEachAdmission, afterEach as afterEachAdmission } from "@jest/globals";
+import { installDefaultCloudAdmission } from "../../src/models/gateway/inference-dispatcher.js";
+import { recordingCloudAdmission } from "../helpers/cloud-admission.js";
+beforeEachAdmission(() => installDefaultCloudAdmission(recordingCloudAdmission().admission));
+afterEachAdmission(() => installDefaultCloudAdmission(undefined));
 import { ModelStack } from "../../src/cli/services/model-stack.js";
 import { OutcomeUnknownError, RateLimitError, type ChatResponse } from "../../src/models/adapters/provider.js";
 import type { CliConfig } from "../../src/cli/config.js";
@@ -55,7 +62,7 @@ describe("ModelStack.routeWithFallback", () => {
     const result = await stack.primaryChat(CHAT);
 
     expect(result.message.content).toBe("from primary");
-    expect(primary).toHaveBeenCalledWith(CHAT, {});
+    expect(primary).toHaveBeenCalledWith(CHAT, expect.objectContaining({ model: "gpt-oss:120b-cloud" }));
     expect(result.routedTier).toBe("cloud");
     expect(result.routedModel).toBe("gpt-oss:120b-cloud");
   });

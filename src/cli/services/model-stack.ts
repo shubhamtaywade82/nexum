@@ -29,6 +29,7 @@ import { DefaultModelGateway } from "../../models/gateway/model-gateway.js";
 import { InferenceDispatcher, type ChatPort } from "../../models/gateway/inference-dispatcher.js";
 import { routeWithFallbackOn } from "../../models/gateway/route-fallback.js";
 import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
+import type { CloudAdmission } from "../../models/gateway/cloud-admission.js";
 
 export type StatusEmitter = (message: string) => void;
 
@@ -48,6 +49,11 @@ export interface ModelStackOptions {
   decisionGateway?: DecisionGateway;
   /** Budget every model call is recorded against, through the dispatcher and the gateway. */
   budget?: BudgetTracker;
+  /**
+   * Admission for cloud calls, backed by the durable ledger. Without it the dispatcher refuses every cloud call:
+   * a paid request is never sent unreserved.
+   */
+  admission?: CloudAdmission;
 }
 
 /**
@@ -178,12 +184,6 @@ export class ModelStack {
       : undefined;
 
     this.catalog = new ModelCatalog(localProvider, cloudProvider, cfg.quickModel, cfg.tier);
-    this.router = new Router({
-      local: localProvider,
-      cloud: cloudProvider,
-      catalog: this.catalog,
-      logger: { warn: (msg: string) => this.emitStatus(msg) },
-    });
 
     this.heuristicRouter = cfg.enableHeuristicGate ? new HeuristicRouter() : undefined;
 
@@ -208,6 +208,14 @@ export class ModelStack {
         quick: quickLocalProvider,
       },
       budget: opts.budget,
+      admission: opts.admission,
+    });
+    // The router reaches providers only through the dispatcher's lanes, so its candidates are accounted and admitted.
+    this.router = new Router({
+      local: this.dispatcher.port({ lane: "catalog.local", purpose: "route" }),
+      cloud: cloudProvider ? this.dispatcher.port({ lane: "catalog.cloud", purpose: "route" }) : undefined,
+      catalog: this.catalog,
+      logger: { warn: (msg: string) => this.emitStatus(msg) },
     });
     this.gateway = new DefaultModelGateway({
       router: this.router,

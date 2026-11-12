@@ -1,23 +1,28 @@
 /**
  * InferenceDispatcher — the one place a chat request leaves Nexum for a provider.
  *
- * Every model call that can reach the cloud goes through a dispatcher. It picks the lane's provider, takes that
- * tier's concurrency slot, sends the request, and records what the provider reported. Callers hold a ChatPort (one
- * `chat` method bound to a named lane) rather than a Provider, so a call cannot skip the accounting by reaching
- * the provider directly.
+ * Every model call reaches a provider through a dispatcher. Local calls take the local slot and are recorded. Cloud
+ * calls take the cloud slot, then go through admission: a reservation for the worst case is taken before the request
+ * is sent, and it is settled, released or held as unknown from what happens. Callers hold a ChatPort (one `chat`
+ * method bound to a named lane) rather than a Provider, so a call cannot skip the accounting or the admission.
  *
- * Lanes name the provider a call uses: the conversation's primary provider, the router's local and cloud pools, the
- * quick-model provider. A lane keeps its own key pool and settings; the dispatcher does not reconfigure them.
- * Concurrency gates are per tier and shared by every lane, so the cloud cap of 3 holds across the process.
- *
- * Admission (refusing a call the budget cannot cover) is added on top of this point, not in each caller.
+ * A cloud call without an admission controller is refused. A cloud model without a price is refused before it is
+ * sent (see the pricing catalogue).
  */
 
 import { ConcurrencyGate } from "../../core/concurrency/gate.js";
 import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
 import { BudgetManager } from "../../runtime/budget/budget-manager.js";
 import {
+  PaymentRequiredError,
   ProviderError,
+  RateLimitError,
+  TransportFailure,
+  BudgetRefusedError,
+  OutcomeUnknownError,
+} from "../errors.js";
+import {
+  preDispatchNetworkCode,
   type ChatMessage,
   type ChatOptions,
   type ChatResponse,
@@ -27,14 +32,17 @@ import { DEFAULT_PRICE_CATALOG, type PriceCatalog } from "../profiles/pricing-ca
 import { budgetUsageOf, readUsage } from "../usage-reading.js";
 import { microUsdToUsd } from "../../economics/cost.js";
 import { priceReading } from "../../economics/usage-cost.js";
+import type { CloudAdmission, CloudLease } from "./cloud-admission.js";
 
 /** One chat call, as a caller names it: which provider lane, why, and optionally which model to pin. */
 export interface DispatchTarget {
   lane: string;
   /** Why the call happens, e.g. "chat.primary", "memory.summary". Kept with the usage record. */
   purpose: string;
-  /** Model to pin for this call. Omitted: the lane provider's configured model. */
+  /** Model to pin for this call. Omitted: the request's model, then the lane provider's configured model. */
   model?: string;
+  /** The task the call belongs to. Recorded with a cloud reservation. */
+  taskId?: string;
 }
 
 /** The narrow port callers depend on instead of a Provider: one chat, already accounted. */
@@ -45,8 +53,10 @@ export interface ChatPort {
 export interface InferenceDispatcherOptions {
   lanes: Record<string, Provider | undefined>;
   budget?: BudgetTracker;
-  /** Price source for cloud calls. Defaults to the shared catalogue. */
+  /** Price source for cost recording. Defaults to the shared catalogue. */
   prices?: PriceCatalog;
+  /** Admission for cloud calls. Without it every cloud call is refused. */
+  admission?: CloudAdmission;
   /** Override the process-wide gates (tests). Leave unset in production so every dispatcher shares one cap. */
   gates?: { local?: ConcurrencyGate; cloud?: ConcurrencyGate };
 }
@@ -60,17 +70,29 @@ const PROCESS_GATES = {
   cloud: new ConcurrencyGate({ maxConcurrent: 3, label: "model:cloud" }),
 };
 
+let defaultCloudAdmission: CloudAdmission | undefined;
+
+/**
+ * Installs the admission every dispatcher uses unless it was given its own. A composition root (the agent, the
+ * benchmark and evolution CLIs) calls this once at startup. Until it is called, every cloud call is refused.
+ */
+export function installDefaultCloudAdmission(admission: CloudAdmission | undefined): void {
+  defaultCloudAdmission = admission;
+}
+
 export class InferenceDispatcher {
   readonly localGate: ConcurrencyGate;
   readonly cloudGate: ConcurrencyGate;
   private readonly lanes: Record<string, Provider | undefined>;
   private readonly budget?: BudgetTracker;
   private readonly prices: PriceCatalog;
+  private readonly admission?: CloudAdmission;
 
   constructor(opts: InferenceDispatcherOptions) {
     this.lanes = opts.lanes;
     this.budget = opts.budget;
     this.prices = opts.prices ?? DEFAULT_PRICE_CATALOG;
+    this.admission = opts.admission;
     this.localGate = opts.gates?.local ?? PROCESS_GATES.local;
     this.cloudGate = opts.gates?.cloud ?? PROCESS_GATES.cloud;
   }
@@ -92,12 +114,13 @@ export class InferenceDispatcher {
   async dispatch(target: DispatchTarget, messages: ChatMessage[], opts: ChatOptions = {}): Promise<ChatResponse> {
     const provider = this.lanes[target.lane];
     if (!provider) throw new ProviderError(`no provider lane "${target.lane}" configured for ${target.purpose}`);
-    const tier = provider.currentTier;
-    const gate = tier === "cloud" ? this.cloudGate : this.localGate;
+    if (provider.currentTier === "cloud") return this.dispatchCloud(target, provider, messages, opts);
+
+    const model = target.model ?? opts.model ?? provider.currentModel;
     const callOpts: ChatOptions = target.model !== undefined ? { ...opts, model: target.model } : opts;
-    const response = await gate.run(() => provider.chat(messages, callOpts));
-    response.routedTier = tier;
-    response.routedModel = target.model ?? provider.currentModel;
+    const response = await this.localGate.run(() => provider.chat(messages, callOpts));
+    response.routedTier = "local";
+    response.routedModel = model;
     recordModelCall(this.budget, this.prices, response);
     return response;
   }
@@ -105,17 +128,95 @@ export class InferenceDispatcher {
   port(target: DispatchTarget): ChatPort {
     return { chat: (messages, opts) => this.dispatch(target, messages, opts) };
   }
+
+  private async dispatchCloud(
+    target: DispatchTarget,
+    provider: Provider,
+    messages: ChatMessage[],
+    opts: ChatOptions,
+  ): Promise<ChatResponse> {
+    const admission = this.admission ?? defaultCloudAdmission;
+    if (!admission) {
+      throw new BudgetRefusedError(
+        `cloud call for ${target.purpose} has no admission controller; it is refused, not sent`,
+        "NO_ADMISSION",
+      );
+    }
+    const model = target.model ?? opts.model ?? provider.currentModel;
+    return this.cloudGate.run(async () => {
+      const decision = admission.admit({
+        purpose: target.purpose,
+        taskId: target.taskId ?? "unassigned",
+        model,
+        messages,
+        tools: opts.tools,
+        maxOutputTokens: numPredictOf(opts),
+      });
+      if (decision.kind === "REFUSED") throw new BudgetRefusedError(decision.reason, decision.code);
+
+      const lease = decision.lease;
+      const callOpts: ChatOptions = {
+        ...opts,
+        model,
+        // The reservation is sized from this cap, so the provider must be held to it.
+        options: { ...(opts.options ?? {}), num_predict: lease.maxOutputTokens },
+      };
+      let response: ChatResponse;
+      try {
+        response = await provider.chat(messages, callOpts);
+      } catch (err) {
+        settleFailure(admission, lease, err);
+        throw err;
+      }
+      admission.settle(lease, response);
+      response.routedTier = "cloud";
+      response.routedModel = model;
+      recordModelCall(this.budget, this.prices, response);
+      return response;
+    });
+  }
+}
+
+function numPredictOf(opts: ChatOptions): number | undefined {
+  const value = opts.options?.num_predict;
+  return typeof value === "number" ? value : undefined;
+}
+
+/**
+ * Decides what a failed cloud call means for its reservation. Only a failure that proves nothing ran releases the hold:
+ * a 429 or 402 response, or a connection that never opened. Anything else (a timeout, a reset, a 5xx, an unclassified
+ * error) may have run the request, so its hold stays until reconciliation.
+ */
+function settleFailure(admission: CloudAdmission, lease: CloudLease, err: unknown): void {
+  if (err instanceof OutcomeUnknownError) {
+    admission.markUnknown(lease, err.message);
+    return;
+  }
+  if (err instanceof RateLimitError) {
+    admission.releaseUnexecuted(lease, { kind: "HTTP_STATUS", status: 429 });
+    return;
+  }
+  if (err instanceof PaymentRequiredError) {
+    admission.releaseUnexecuted(lease, { kind: "HTTP_STATUS", status: 402 });
+    return;
+  }
+  if (err instanceof TransportFailure) {
+    // Only a pre-dispatch network code proves the socket never opened. The error's own `code` ("TRANSPORT_FAILURE")
+    // is not a network code, so it is skipped by the classifier.
+    const code = preDispatchNetworkCode(err);
+    if (code !== undefined) {
+      admission.releaseUnexecuted(lease, { kind: "PRE_DISPATCH_TRANSPORT", code });
+      return;
+    }
+  }
+  admission.markUnknown(lease, `cloud call failed after dispatch: ${err instanceof Error ? err.message : String(err)}`);
 }
 
 /**
  * Records one provider response on a budget. Missing counters are unmetered, never zero: a cost needs both counts
  * from the provider, and an absent count is not a claim that the call was free (see usage-reading.ts).
  */
-export function recordModelCall(
-  budget: BudgetTracker | undefined,
-  prices: PriceCatalog,
-  response: ChatResponse,
-): void {
+export function recordModelCall(budget: BudgetTracker | undefined, prices: PriceCatalog, response: ChatResponse): void {
   if (!budget) return;
   const reading = readUsage(response);
   // Cost comes from the catalogue version in force now. A reading without the counts, or a model with no price

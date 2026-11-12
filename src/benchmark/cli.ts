@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { installCloudBudget } from "../economics/composition.js";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Provider } from "../models/adapters/provider.js";
@@ -50,6 +51,7 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
   const verbose = values.verbose ?? false;
 
   const cfg = loadConfig();
+  installCloudBudget(cfg);
 
   const local = new Provider({ tier: "local", model: cfg.model, host: cfg.tier === "local" ? cfg.host : undefined });
   const cloud = cfg.apiKey

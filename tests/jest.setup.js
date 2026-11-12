@@ -4,3 +4,9 @@
 // mock() keep working without touching every test file.
 import { jest } from "@jest/globals";
 globalThis.jest = jest;
+
+// The budget ledger lives in the user's state directory by default. Tests get a private file per worker process so
+// no run writes to a real ledger. Tests that exercise the ledger pass their own path.
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+process.env.NEXUM_LEDGER_PATH ??= join(tmpdir(), `nexum-test-ledger-${process.pid}.sqlite`);

@@ -111,6 +111,8 @@ import type { ExecutionRequest } from "../core/types.js";
 import type { StrategyHooks } from "../runtime/strategies/strategy-hooks.js";
 import { AgentConversationContext } from "./agent-conversation-context.js";
 import type { McpElicitationRequest, McpElicitationResponse } from "../core/user-input.js";
+import { createCloudAdmission } from "../economics/composition.js";
+import { installDefaultCloudAdmission } from "../models/gateway/inference-dispatcher.js";
 
 // Confirmation gate for irreversible actions lives in the kernel now
 // (src/kernel/policy/approval-broker.ts): the classification table and the
@@ -308,8 +310,14 @@ export class Agent {
     // ── services (review item 1) ─────────────────────────────────────────
     // ModelStack owns the providers/catalog/router/hybrid composition that
     // used to be 80 lines of constructor here.
+    // Cloud calls are admitted against the user's durable budget ledger. Without a cloud key or cloud tier there is
+    // no cloud provider, so no admission is needed and the ledger is not opened.
+    const cloudConfigured = cfg.tier === "cloud" || Boolean(cfg.apiKey) || (cfg.apiKeys?.length ?? 0) > 0;
+    const admission = cloudConfigured ? createCloudAdmission(cfg.budget) : undefined;
+    if (admission) installDefaultCloudAdmission(admission);
     this.stack = new ModelStack(cfg, (msg) => this.emit("onStatus", msg), {
       ...(opts.decisionGateway ? { decisionGateway: opts.decisionGateway } : {}),
+      ...(admission ? { admission } : {}),
     });
 
     // ApprovalManager owns the human-in-the-loop gates (approvals +

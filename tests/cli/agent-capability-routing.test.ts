@@ -1,3 +1,10 @@
+// Cloud calls are admitted by the process default. These tests exercise dispatch and routing, so they install
+// a recording admission; budget accounting is tested against the real ledger in tests/economics.
+import { beforeEach as beforeEachAdmission, afterEach as afterEachAdmission } from "@jest/globals";
+import { installDefaultCloudAdmission } from "../../src/models/gateway/inference-dispatcher.js";
+import { recordingCloudAdmission } from "../helpers/cloud-admission.js";
+beforeEachAdmission(() => installDefaultCloudAdmission(recordingCloudAdmission().admission));
+afterEachAdmission(() => installDefaultCloudAdmission(undefined));
 import { isolateModelSubsystems } from "../support/isolate-model-subsystems.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -663,7 +670,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
         workspaceRoot: dir,
         tier: "cloud",
         apiKey: "k",
-        model: "gemma4:31b",
+        model: "gpt-oss:120b-cloud",
         enableSelfConsistency: true,
       },
       events: { onModelUsed },
@@ -672,8 +679,8 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     const reply = await agent.runUserMessage("What architecture should I use for this microservice?");
 
     expect(reply).toBe("answered by cloud primary");
-    expect(chatBodies()[0].model).toBe("gemma4:31b");
-    expect(onModelUsed).toHaveBeenCalledWith("cloud", "gemma4:31b");
+    expect(chatBodies()[0].model).toBe("gpt-oss:120b-cloud");
+    expect(onModelUsed).toHaveBeenCalledWith("cloud", "gpt-oss:120b-cloud");
 
     // delegate_to_local is still offered to the cloud primary, so it can
     // correctly hand off narrow subtasks to local instead of never having
@@ -703,7 +710,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
         workspaceRoot: dir,
         tier: "cloud",
         apiKey: "k",
-        model: "gemma4:31b",
+        model: "gpt-oss:120b-cloud",
         enableHeuristicGate: false,
       },
       events: { onModelUsed },
@@ -747,7 +754,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
         workspaceRoot: dir,
         tier: "cloud",
         apiKey: "k",
-        model: "gemma4:31b",
+        model: "gpt-oss:120b-cloud",
         toolSelectionMode: "heuristic",
       },
     });
@@ -758,7 +765,7 @@ describe("Agent capability routing — quick-first with self-escalation", () => 
     await new Promise((r) => setTimeout(r, 0));
 
     const bodies = chatBodies();
-    expect(bodies[0].model).toBe("gemma4:31b"); // the turn's own answer
+    expect(bodies[0].model).toBe("gpt-oss:120b-cloud"); // the turn's own answer
     expect(bodies[1].model).toBe("minicpm5-1b"); // summarization — a different model/connection entirely
   });
 });

@@ -84,6 +84,8 @@ export interface CliConfig {
    * billing) — this only computes a cost estimate if you supply your own
    * real rate. Omit to leave cost tracking off (the honest default). */
   pricing?: { inputPerMillion: number; outputPerMillion: number };
+  /** Cloud spend budget (user-only). See BudgetConfig. */
+  budget: BudgetConfig;
   /** Approve confirmation-required tool calls without prompting. Off by
    * default: destructive workspace operations prompt for approval, and
    * headless consumers with no approval listener are denied (fail-closed).
@@ -184,6 +186,8 @@ interface ConfigFile {
    * billing) — this only computes a cost estimate if you supply your own
    * real rate. Omit to leave cost tracking off (the honest default). */
   pricing?: { inputPerMillion: number; outputPerMillion: number };
+  /** User-only budget section; a workspace config cannot set it. */
+  budget?: BudgetFileConfig;
   mcpServers?: McpCliServerConfig[];
   enableDecision?: boolean;
   /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
@@ -543,6 +547,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? false),
     autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
+    budget: resolveBudgetConfig(file.budget),
     mcpServers: file.mcpServers,
     // Decision Plane (System One): on by default in the local tier; auto-disabled
     // in a cloud tier (System One is local-only — the gateway itself enforces this
@@ -562,4 +567,45 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
 function resolveWriteScope(raw: string | undefined, workspaceRoot: string): string | undefined {
   if (!raw) return undefined;
   return isAbsolute(raw) ? raw : resolve(workspaceRoot, raw);
+}
+
+/**
+ * Cloud spend budget. User-only: a workspace config cannot raise the cap, move the ledger, or change the account
+ * (see USER_ONLY_CONFIG_KEYS). `monthlyCapUsd: null` is for an account whose balance is in percentage mode, which has
+ * no USD ceiling to enforce.
+ */
+export interface BudgetFileConfig {
+  monthlyCapUsd?: number | null;
+  accountId?: string;
+  maxOutputTokens?: number;
+}
+
+export interface BudgetConfig {
+  readonly monthlyCapUsd: number | null;
+  readonly accountId: string;
+  readonly maxOutputTokens: number;
+  /** SQLite file of the shared budget ledger. Per user, never per workspace. */
+  readonly ledgerPath: string;
+}
+
+export const DEFAULT_MONTHLY_CAP_USD = 46;
+export const DEFAULT_BUDGET_ACCOUNT = "default";
+
+export function resolveBudgetConfig(file: BudgetFileConfig | undefined): BudgetConfig {
+  const cap = file?.monthlyCapUsd === undefined ? DEFAULT_MONTHLY_CAP_USD : file.monthlyCapUsd;
+  if (cap !== null && (typeof cap !== "number" || !Number.isFinite(cap) || cap <= 0)) {
+    throw new Error(`budget.monthlyCapUsd must be a positive number or null, got ${JSON.stringify(cap)}`);
+  }
+  const accountId = file?.accountId ?? DEFAULT_BUDGET_ACCOUNT;
+  if (accountId.trim() === "") throw new Error("budget.accountId must not be empty");
+  const maxOutputTokens = file?.maxOutputTokens ?? 4096;
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    throw new Error(`budget.maxOutputTokens must be a positive integer, got ${String(maxOutputTokens)}`);
+  }
+  return {
+    monthlyCapUsd: cap,
+    accountId,
+    maxOutputTokens,
+    ledgerPath: readEnv("LEDGER_PATH") || join(globalStateDir(), "economics.sqlite"),
+  };
 }
