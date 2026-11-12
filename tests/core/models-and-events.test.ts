@@ -44,7 +44,7 @@ describe("ModelCapabilityRegistry", () => {
     expect(registry.withLegacyCapability("reasoning").map((p) => p.id)).toEqual(["qwq", "gpt-oss:120b"]);
   });
 
-  it("estimates cost from profile metadata", () => {
+  it("keeps no price on the profile: cost is read from the price catalogue only", () => {
     const registry = new ModelCapabilityRegistry();
     registry.upsert({
       id: "cloud-model",
@@ -59,11 +59,8 @@ describe("ModelCapabilityRegistry", () => {
         streaming: true,
       },
       constraints: defaultConstraints(),
-      cost: { input: 2, output: 4 },
     });
-    // 1M input tokens at $2/M + 0.5M output at $4/M = $4
-    expect(registry.estimateCostUsd("cloud-model", 1_000_000, 500_000)).toBe(4);
-    expect(registry.estimateCostUsd("unknown", 1, 1)).toBeUndefined();
+    expect(registry.get("cloud-model")).not.toHaveProperty("cost");
   });
 
   it("profileFromLegacy marks quick models as fast", () => {

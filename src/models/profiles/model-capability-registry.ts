@@ -8,7 +8,7 @@
  */
 
 import { Capability } from "../catalog.js";
-import { ModelProfile, ModelCost, UNKNOWN_SCORE, profileFromLegacy } from "./model-profile.js";
+import { ModelProfile, UNKNOWN_SCORE, profileFromLegacy } from "./model-profile.js";
 import type { ModelInfo } from "../catalog.js";
 
 export interface ProfileQuery {
@@ -96,13 +96,4 @@ export class ModelCapabilityRegistry {
     return this.all().filter((p) => p.legacyCapabilities.includes(capability));
   }
 
-  /** Rough per-call cost estimate in USD, when cost metadata exists. */
-  estimateCostUsd(id: string, promptTokens: number, completionTokens: number): number | undefined {
-    const profile = this.profiles.get(id);
-    if (!profile?.cost) return undefined;
-    const cost: ModelCost = profile.cost;
-    return (
-      Math.round(((promptTokens / 1_000_000) * cost.input + (completionTokens / 1_000_000) * cost.output) * 1e6) / 1e6
-    );
-  }
 }

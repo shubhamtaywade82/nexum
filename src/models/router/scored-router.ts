@@ -18,6 +18,8 @@
 
 import type { ModelProfile } from "../profiles/model-profile.js";
 import { ModelCapabilityRegistry } from "../profiles/model-capability-registry.js";
+import { DEFAULT_PRICE_CATALOG, type PriceCatalog } from "../profiles/pricing-catalog.js";
+import { costFromDisjointCounts, microUsdToUsd } from "../../economics/cost.js";
 import {
   CAPABILITY_WEIGHTS,
   ModelRouter,
@@ -38,17 +40,25 @@ export interface ScoredRouterOptions {
   availability?: (model: string) => number | undefined;
   /** Local-first flat bonus (default 0.05). */
   localBonus?: number;
+  /** Price source for cost estimates. Defaults to the shared catalogue. */
+  prices?: PriceCatalog;
 }
 
 export class ScoredModelRouter implements ModelRouter {
   private readonly registry: ModelCapabilityRegistry;
   private readonly availabilityFn: (model: string) => number | undefined;
   private readonly localBonus: number;
+  private readonly prices: PriceCatalog;
 
   constructor(opts: ScoredRouterOptions) {
     this.registry = opts.registry;
+    this.prices = opts.prices ?? DEFAULT_PRICE_CATALOG;
     this.availabilityFn = opts.availability ?? (() => undefined);
     this.localBonus = opts.localBonus ?? 0.05;
+  }
+
+  private estimatePerCallUsd(modelId: string): number | undefined {
+    return estimatePerCallCostUsd(modelId, this.prices, new Date());
   }
 
   select(request: RouteRequest): ModelSelection[] {
@@ -70,7 +80,7 @@ export class ScoredModelRouter implements ModelRouter {
         tier: profile.tier,
         score: Math.max(0, Math.min(1, Math.round(adjusted * 1e4) / 1e4)),
         reasons,
-        estimatedCostUsd: profile.cost ? estimateCost(profile) : undefined,
+        estimatedCostUsd: this.estimatePerCallUsd(profile.id),
         profile,
       };
     });
@@ -109,7 +119,7 @@ export class ScoredModelRouter implements ModelRouter {
       if (t >= 0 && t < c.minToolCalling) return false;
     }
     if (c.maxCostUsd !== undefined) {
-      const estimate = profile.cost ? estimateCost(profile) : undefined;
+      const estimate = this.estimatePerCallUsd(profile.id);
       if (estimate !== undefined && estimate > c.maxCostUsd) return false;
     }
     return true;
@@ -141,7 +151,7 @@ export class ScoredModelRouter implements ModelRouter {
         case "latency":
           return LATENCY_CLASS_SCORE[profile.constraints.latencyClass] ?? 0.3;
         case "cost": {
-          const perCall = profile.cost ? estimateCost(profile) : undefined;
+          const perCall = this.estimatePerCallUsd(profile.id);
           if (perCall === undefined) return UNKNOWN_NEUTRAL;
           // cheaper is better: $0.001 → ~0.95, $0.10 → ~0.2, $1 → 0
           return Math.max(0, 1 - Math.log10(Math.max(0.001, perCall) * 1000) / 3);
@@ -173,12 +183,20 @@ export class ScoredModelRouter implements ModelRouter {
   }
 }
 
-/** Rough per-call cost estimate from the profile's per-million pricing. */
-export function estimateCost(profile: ModelProfile): number | undefined {
-  if (!profile.cost) return undefined;
-  // assume ~2k prompt + 400 completion tokens per agentic turn
-  const promptTokens = 2000;
-  const completionTokens = 400;
-  const cost = (promptTokens / 1e6) * profile.cost.input + (completionTokens / 1e6) * profile.cost.output;
-  return Math.round(cost * 1e6) / 1e6;
+/** Assumed size of one agentic turn for routing estimates: about 2k prompt tokens and 400 completion tokens. */
+export const TYPICAL_TURN = { promptTokens: 2_000, completionTokens: 400 } as const;
+
+/**
+ * Estimated USD cost of one typical turn, priced by the catalogue version in force at `at`. Undefined for an unpriced
+ * model, which includes every local model. The estimate assumes no cache hits, so it is an upper bound.
+ */
+export function estimatePerCallCostUsd(modelId: string, prices: PriceCatalog, at: Date): number | undefined {
+  const version = prices.priceAt(modelId, at);
+  if (!version) return undefined;
+  return microUsdToUsd(
+    costFromDisjointCounts(
+      { promptTokens: TYPICAL_TURN.promptTokens, cachedPromptTokens: 0, completionTokens: TYPICAL_TURN.completionTokens },
+      version,
+    ),
+  );
 }

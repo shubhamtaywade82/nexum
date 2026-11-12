@@ -120,7 +120,7 @@ export type {
   RoutingDimension,
   SelectionReason,
 } from "./models/router/model-selection.js";
-export { ScoredModelRouter, estimateCost } from "./models/router/scored-router.js";
+export { ScoredModelRouter, estimatePerCallCostUsd } from "./models/router/scored-router.js";
 export type { ProviderAdapter } from "./models/router/model-selection.js";
 export { CAPABILITY_WEIGHTS } from "./models/router/model-selection.js";
 

@@ -208,7 +208,6 @@ export class ModelStack {
         quick: quickLocalProvider,
       },
       budget: opts.budget,
-      registry: this.modelProfiles,
     });
     this.gateway = new DefaultModelGateway({
       router: this.router,

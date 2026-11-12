@@ -42,20 +42,16 @@ export interface ModelConstraints {
   maxToolCount?: number;
 }
 
-export interface ModelCost {
-  /** USD per million input tokens. */
-  input: number;
-  /** USD per million output tokens. */
-  output: number;
-}
-
+/**
+ * Prices are not part of a profile. They live in the versioned PriceCatalog (`pricing-catalog.ts`), so there is one
+ * price source and a profile cannot carry a stale or zero price of its own.
+ */
 export interface ModelProfile {
   id: string;
   provider: string;
   tier: Tier;
   capabilities: ModelCapabilities;
   constraints: ModelConstraints;
-  cost?: ModelCost;
   /** Legacy enum tags preserved for Router compatibility during migration. */
   legacyCapabilities: Capability[];
 }

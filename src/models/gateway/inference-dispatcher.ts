@@ -23,8 +23,10 @@ import {
   type ChatResponse,
   type Provider,
 } from "../adapters/provider.js";
-import type { ModelCapabilityRegistry } from "../profiles/model-capability-registry.js";
+import { DEFAULT_PRICE_CATALOG, type PriceCatalog } from "../profiles/pricing-catalog.js";
 import { budgetUsageOf, readUsage } from "../usage-reading.js";
+import { microUsdToUsd } from "../../economics/cost.js";
+import { priceReading } from "../../economics/usage-cost.js";
 
 /** One chat call, as a caller names it: which provider lane, why, and optionally which model to pin. */
 export interface DispatchTarget {
@@ -43,7 +45,8 @@ export interface ChatPort {
 export interface InferenceDispatcherOptions {
   lanes: Record<string, Provider | undefined>;
   budget?: BudgetTracker;
-  registry?: ModelCapabilityRegistry;
+  /** Price source for cloud calls. Defaults to the shared catalogue. */
+  prices?: PriceCatalog;
   /** Override the process-wide gates (tests). Leave unset in production so every dispatcher shares one cap. */
   gates?: { local?: ConcurrencyGate; cloud?: ConcurrencyGate };
 }
@@ -62,12 +65,12 @@ export class InferenceDispatcher {
   readonly cloudGate: ConcurrencyGate;
   private readonly lanes: Record<string, Provider | undefined>;
   private readonly budget?: BudgetTracker;
-  private readonly registry?: ModelCapabilityRegistry;
+  private readonly prices: PriceCatalog;
 
   constructor(opts: InferenceDispatcherOptions) {
     this.lanes = opts.lanes;
     this.budget = opts.budget;
-    this.registry = opts.registry;
+    this.prices = opts.prices ?? DEFAULT_PRICE_CATALOG;
     this.localGate = opts.gates?.local ?? PROCESS_GATES.local;
     this.cloudGate = opts.gates?.cloud ?? PROCESS_GATES.cloud;
   }
@@ -95,7 +98,7 @@ export class InferenceDispatcher {
     const response = await gate.run(() => provider.chat(messages, callOpts));
     response.routedTier = tier;
     response.routedModel = target.model ?? provider.currentModel;
-    recordModelCall(this.budget, this.registry, response);
+    recordModelCall(this.budget, this.prices, response);
     return response;
   }
 
@@ -110,15 +113,19 @@ export class InferenceDispatcher {
  */
 export function recordModelCall(
   budget: BudgetTracker | undefined,
-  registry: ModelCapabilityRegistry | undefined,
+  prices: PriceCatalog,
   response: ChatResponse,
 ): void {
   if (!budget) return;
   const reading = readUsage(response);
-  const cost =
-    reading.source === "PROVIDER" && response.routedModel !== undefined && registry
-      ? registry.estimateCostUsd(response.routedModel, reading.promptTokens ?? 0, reading.completionTokens ?? 0)
-      : undefined;
+  // Cost comes from the catalogue version in force now. A reading without the counts, or a model with no price
+  // (every local model), has no cost: it is left undefined, never zero.
+  let cost: number | undefined;
+  if (response.routedTier === "cloud" && response.routedModel !== undefined) {
+    const version = prices.priceAt(response.routedModel, new Date());
+    const priced = version ? priceReading(reading, version) : undefined;
+    cost = priced !== undefined ? microUsdToUsd(priced.costMicroUsd) : undefined;
+  }
   const usage = { ...budgetUsageOf(reading), costUsd: cost };
   // cloud-aware consumption when the run carries a BudgetManager (review item 14)
   if (budget instanceof BudgetManager) {

@@ -44,7 +44,6 @@ export {
   type ModelProfile,
   type ModelCapabilities,
   type ModelConstraints,
-  type ModelCost,
   UNKNOWN_SCORE,
   profileFromLegacy,
   defaultConstraints,
