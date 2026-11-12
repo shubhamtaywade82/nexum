@@ -31,8 +31,11 @@ export interface ReconcileOptions {
   ledger: BudgetLedger;
   source: ProviderAccountSource;
   accountId: string;
-  /** The provider's label for this account (the pooled key's label). */
-  label: string;
+  /**
+   * The provider's label for this account (the pooled key's label). Omitted: the source must report exactly one
+   * account, and that account is this one.
+   */
+  label?: string;
   cycleId: string;
   now: Date;
   /** Holds younger than this are not released (see the module comment). */
@@ -71,7 +74,7 @@ function usdToMicro(usd: number): number {
 }
 
 export async function reconcileAccount(opts: ReconcileOptions): Promise<ReconcileResult> {
-  const { ledger, source, accountId, label, cycleId, now, graceMs } = opts;
+  const { ledger, source, accountId, cycleId, now, graceMs } = opts;
   const roundingSlack = opts.roundingSlackPerCallMicro ?? ROUNDING_SLACK_PER_CALL_MICRO;
   const unavailable = (detail: string): ReconcileResult => ({
     status: "UNAVAILABLE",
@@ -85,10 +88,17 @@ export async function reconcileAccount(opts: ReconcileOptions): Promise<Reconcil
   ]);
   if (!Array.isArray(balances)) return unavailable(`balance query failed: ${balances.error}`);
 
-  const row = balances.find((b) => b.label === label);
+  const row =
+    opts.label === undefined
+      ? balances.length === 1
+        ? balances[0]
+        : undefined
+      : balances.find((b) => b.label === opts.label);
   if (!row || !row.balance) {
-    return unavailable(row?.error ? `balance for ${label} failed: ${row.error}` : `no balance for account ${label}`);
+    const name = opts.label ?? "the only account";
+    return unavailable(row?.error ? `balance for ${name} failed: ${row.error}` : `no balance for ${name}`);
   }
+  const label = row.label;
   const corroboration = usages.find((u) => u.label === label)?.usage?.totals.request_count;
   const requests = corroboration === undefined ? "usage not reported" : `provider requests ${corroboration}`;
 

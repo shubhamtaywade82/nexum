@@ -320,6 +320,8 @@ export class Agent {
       ...(opts.decisionGateway ? { decisionGateway: opts.decisionGateway } : {}),
       ...(admission ? { admission } : {}),
     });
+    // Holds left by an earlier process are resolved against the provider's balance. Silent when there are none.
+    if (admission) void admission.reconcile(this.stack.provider).catch(() => undefined);
 
     // ApprovalManager owns the human-in-the-loop gates (approvals +
     // clarifications) that used to be pending-promise maps here.

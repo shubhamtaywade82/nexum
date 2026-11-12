@@ -25,6 +25,10 @@ import { priceVersionId, type PriceCatalog, type PriceVersion } from "../models/
 import { reservationBoundMicroUsd } from "./cost.js";
 import { priceReading } from "./usage-cost.js";
 import { BudgetLedger, isNoExecutionProof, type NoExecutionProof } from "./ledger/budget-ledger.js";
+import { reconcileAccount, type ProviderAccountSource, type ReconcileResult } from "./ledger/reconcile.js";
+
+/** A call's outcome cannot be reconciled until the provider's totals have had time to post it. */
+export const DEFAULT_RECONCILE_GRACE_MS = 15 * 60 * 1000;
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 /** A request above this output cap is refused. Callers must ask for less. */
@@ -203,6 +207,32 @@ export class LedgerCloudAdmission implements CloudAdmission {
   markUnknown(lease: CloudLease, reason: string): void {
     this.takeInFlight(lease);
     this.ledger.markUnknown(lease.reservationId, reason);
+  }
+
+  /** Whether the current cycle holds any unknown outcome waiting for reconciliation. */
+  hasUnknownHolds(): boolean {
+    return this.ledger.unknownHolds(this.accountId, monthKey(this.clock()).cycleId).length > 0;
+  }
+
+  /**
+   * Reconciles the current cycle against the provider's balance (N-7, N-8). A no-op, with no network call, unless the
+   * cycle holds an unknown outcome: an unknown hold cannot be released any other way.
+   */
+  async reconcile(
+    source: ProviderAccountSource,
+    opts: { label?: string; graceMs?: number } = {},
+  ): Promise<ReconcileResult | undefined> {
+    if (!this.hasUnknownHolds()) return undefined;
+    const now = this.clock();
+    return reconcileAccount({
+      ledger: this.ledger,
+      source,
+      accountId: this.accountId,
+      ...(opts.label !== undefined ? { label: opts.label } : {}),
+      cycleId: monthKey(now).cycleId,
+      now,
+      graceMs: opts.graceMs ?? DEFAULT_RECONCILE_GRACE_MS,
+    });
   }
 
   private takeInFlight(lease: CloudLease): InFlight {
