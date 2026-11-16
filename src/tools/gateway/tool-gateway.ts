@@ -44,7 +44,7 @@ import type {
   WorkspacePolicyContext,
 } from "../../core/policy/policy-engine.js";
 import { PolicyConfigurationError } from "../../core/policy/policy-engine.js";
-import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
+import type { BudgetContext } from "../../core/tools/invocation-context.js";
 import type { TaskSpec } from "../../core/types.js";
 
 /**
@@ -206,8 +206,8 @@ export interface InvokeContext {
   signal?: AbortSignal;
   /** Capability tags to filter tools by (capability check stage). */
   capabilities?: string[];
-  /** Run budget — the budget stage guards limits before executing. */
-  budget?: BudgetTracker;
+  /** Run budget as captured for this call — depletion is read from it, and the budget stage checks the clock. */
+  budget?: BudgetContext;
   /** Task being executed (policy context, review item 7). */
   task?: TaskSpec;
   /** Agent identity (policy context, review item 7). */
@@ -450,7 +450,7 @@ export class DefaultToolGateway implements ToolGateway {
         agent: ctx.agent,
         workspace: ctx.workspace,
         environment: ctx.environment,
-        budget: ctx.budget ? { ...ctx.budget.snapshot(), depleted: ctx.budget.isDepleted?.() === true } : undefined,
+        budget: ctx.budget ? { ...ctx.budget.usage, depleted: ctx.budget.depleted } : undefined,
       });
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);

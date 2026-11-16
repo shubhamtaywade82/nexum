@@ -26,6 +26,8 @@ import type {
   ToolGateway,
 } from "../../core/types.js";
 import type { TaskId, TraceId } from "../../core/identity.js";
+import type { EnvironmentPolicyContext, WorkspacePolicyContext } from "../../core/policy/policy-engine.js";
+import { budgetContextOf, type ToolInvocationContext } from "../../core/tools/invocation-context.js";
 import { BudgetTracker } from "../budget/budget-tracker.js";
 import { BudgetManager, RunBudget } from "../budget/budget-manager.js";
 
@@ -41,6 +43,8 @@ export interface CreateExecutionContextOptions {
   budget?: ExecutionRequest["budgets"];
   modelGateway: ModelGateway;
   toolGateway: ToolGateway;
+  workspace?: WorkspacePolicyContext;
+  environment?: EnvironmentPolicyContext;
   state?: StateStore;
   /** Request-scoped run metadata. */
   metadata?: Record<string, unknown>;
@@ -127,6 +131,8 @@ export function createExecutionContext(
     metadata: opts.metadata ?? {},
     modelGateway: opts.modelGateway,
     toolGateway: opts.toolGateway,
+    ...(opts.workspace ? { workspace: opts.workspace } : {}),
+    ...(opts.environment ? { environment: opts.environment } : {}),
     context: opts.context ?? new TransientContextManager(),
     events: opts.events ?? nullEventSink,
     budget: new BudgetTracker({ runId, sessionId, budget: opts.budget }),
@@ -202,9 +208,31 @@ export function childExecutionContext(
     metadata: { ...parent.metadata, delegated: true, ...(opts.metadata ?? {}) },
     modelGateway: parent.modelGateway,
     toolGateway: parent.toolGateway,
+    ...(parent.workspace ? { workspace: parent.workspace } : {}),
+    ...(parent.environment ? { environment: parent.environment } : {}),
     context: opts.context ?? new TransientContextManager(),
     events: opts.events ?? parent.events,
     budget,
+  };
+}
+
+/**
+ * The single place a run's authorization context is assembled for a tool call. Strategies call this
+ * instead of picking fields by hand, so no policy input the run owns can be left out. Call it BEFORE the
+ * strategy consumes budget for the call: depletion is judged at this moment.
+ */
+export function toolInvocationFor(ctx: ExecutionContext): ToolInvocationContext {
+  return {
+    agentId: ctx.agentId,
+    runId: ctx.runId,
+    ...(ctx.taskId ? { taskId: ctx.taskId } : {}),
+    task: ctx.task,
+    budget: budgetContextOf(ctx.budget),
+    ...(ctx.workspace ? { workspace: ctx.workspace } : {}),
+    ...(ctx.environment ? { environment: ctx.environment } : {}),
+    ...(ctx.mode !== undefined ? { mode: ctx.mode } : {}),
+    unattended: ctx.unattended === true,
+    signal: ctx.signal,
   };
 }
 

@@ -1,3 +1,4 @@
+import { budgetContextOf } from "../../src/core/tools/invocation-context.js";
 import { describe, it, expect } from "@jest/globals";
 import { BudgetTracker } from "../../src/runtime/budget/budget-tracker.js";
 import { BudgetManager } from "../../src/runtime/budget/budget-manager.js";
@@ -96,12 +97,16 @@ describe("budget guard through the tool gateway", () => {
     const budget = new BudgetTracker({ runId: "r", sessionId: "s", budget: { maxToolCalls: 1 } });
 
     budget.consumeToolCall(); // the strategy's single allowed tool call
-    const denied = await gateway.invoke("write_file", {}, { budget, runId: "r", agentId: "a" });
+    const denied = await gateway.invoke(
+      "write_file",
+      {},
+      { budget: budgetContextOf(budget), runId: "r", agentId: "a" },
+    );
     expect(denied.ok).toBe(false);
     expect(denied.error?.code).toBe("PolicyDenied");
     expect(denied.error?.message).toContain("run budget is depleted");
 
-    const read = await gateway.invoke("read_file", {}, { budget, runId: "r", agentId: "a" });
+    const read = await gateway.invoke("read_file", {}, { budget: budgetContextOf(budget), runId: "r", agentId: "a" });
     expect(read.ok).toBe(true);
   });
 
@@ -112,7 +117,11 @@ describe("budget guard through the tool gateway", () => {
     const budget = new BudgetTracker({ runId: "r", sessionId: "s", budget: { maxToolCalls: 2 } });
 
     budget.consumeToolCall();
-    const result = await gateway.invoke("write_file", {}, { budget, runId: "r", agentId: "a" });
+    const result = await gateway.invoke(
+      "write_file",
+      {},
+      { budget: budgetContextOf(budget), runId: "r", agentId: "a" },
+    );
     expect(result.ok).toBe(true);
   });
 });

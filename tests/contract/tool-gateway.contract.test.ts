@@ -1,3 +1,4 @@
+import { budgetContextOf } from "../../src/core/tools/invocation-context.js";
 import { testOnlyAllowAll } from "../support/policy.js";
 /**
  * CONTRACT TESTS — ToolGateway pipeline (review item 37).
@@ -142,7 +143,7 @@ describe("ToolGateway contract", () => {
     const { gateway } = catalogWith(new EchoTool());
     const budget = new BudgetTracker({ budget: { deadlineMs: 0 } });
     // deadline 0 → assertTimeLeft throws in the resource stage (fail fast)
-    const result = await gateway.invoke("echo", { text: "x" }, { budget });
+    const result = await gateway.invoke("echo", { text: "x" }, { budget: budgetContextOf(budget) });
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("Cancelled");
   });
