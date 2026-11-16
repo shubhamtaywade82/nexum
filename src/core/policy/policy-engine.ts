@@ -32,7 +32,7 @@
 
 import { ToolDefinition, ToolRisk, toolIsMutating, toolRiskAtLeast } from "../tools/tool-contract.js";
 import type { TaskSpec } from "../types.js";
-import type { BudgetUsage } from "../types.js";
+import type { BudgetUsage, ExecutionBudget } from "../types.js";
 import type { ExecutionProfile } from "./execution-profiles.js";
 
 export type AgentModePolicy = "ask" | "code" | "architect" | "review" | "debug" | "autonomous";
@@ -81,7 +81,7 @@ export interface PolicyRequest {
    * Budget snapshot for the run. `depleted` is set by the caller from the run's own tracker when a ceiling is
    * reached; BudgetGuardRule denies mutating tools while it is set.
    */
-  budget?: BudgetUsage & { depleted?: boolean };
+  budget?: BudgetUsage & { depleted?: boolean; limits?: ExecutionBudget };
 }
 
 export interface PolicyDecision {

@@ -28,6 +28,7 @@ import type {
 import type { TaskId, TraceId } from "../../core/identity.js";
 import type { EnvironmentPolicyContext, WorkspacePolicyContext } from "../../core/policy/policy-engine.js";
 import { budgetContextOf, type ToolInvocationContext } from "../../core/tools/invocation-context.js";
+import { applyUnattendedCeilings } from "../../core/policy/unattended-policy.js";
 import { BudgetTracker } from "../budget/budget-tracker.js";
 import { BudgetManager, RunBudget } from "../budget/budget-manager.js";
 
@@ -135,7 +136,11 @@ export function createExecutionContext(
     ...(opts.environment ? { environment: opts.environment } : {}),
     context: opts.context ?? new TransientContextManager(),
     events: opts.events ?? nullEventSink,
-    budget: new BudgetTracker({ runId, sessionId, budget: opts.budget }),
+    budget: new BudgetTracker({
+      runId,
+      sessionId,
+      budget: request.unattended === true ? applyUnattendedCeilings(opts.budget) : opts.budget,
+    }),
   };
 }
 
@@ -154,7 +159,8 @@ export function createManagedExecutionContext(
     new BudgetManager({
       runId: ctx.runId,
       sessionId: ctx.sessionId,
-      budget: opts.budget as RunBudget | undefined,
+      budget: (request.unattended === true ? applyUnattendedCeilings(opts.budget) : opts.budget) as
+        RunBudget | undefined,
     });
   return { ...ctx, budget: manager };
 }

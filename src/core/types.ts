@@ -144,6 +144,8 @@ export interface BudgetMeter {
   assertTimeLeft(): void;
   /** True once a ceiling is reached (see BudgetTracker.isDepleted). Optional for meters that don't track ceilings. */
   isDepleted?(): boolean;
+  /** The ceilings this meter enforces. Unattended policy requires them to be present. */
+  limits?(): ExecutionBudget;
   consumeToolCall(): void;
   consumeModelCall(opts?: {
     promptTokens?: number;

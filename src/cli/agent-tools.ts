@@ -9,6 +9,7 @@ import { DefaultToolGateway } from "../tools/gateway/tool-gateway.js";
 import { ToolCatalog, type LegacyToolMetadata } from "../tools/gateway/tool-catalog.js";
 import { mountToolPack, ToolPack } from "../tools/gateway/tool-pack.js";
 import { parityPosture } from "../core/policy/postures.js";
+import { withUnattendedPolicy, type UnattendedPolicy } from "../core/policy/unattended-policy.js";
 import {
   agentCorePack,
   databasePack,
@@ -35,6 +36,33 @@ import { WorkspaceGuard, type WorkspaceGuardOptions } from "../core/fs/workspace
 import { ShellTool } from "../tools/shell.js";
 
 export type ToolOnOutput = (stream: "stdout" | "stderr", chunk: string) => void;
+
+/**
+ * What an unattended CLI run (auto-approve) may do: workspace edits, read-only search and reads, and the
+ * shell only inside its sandbox. Destructive shell commands, git publishing, deletions and host execution
+ * are refused, not asked. The shell declares network access, but the sandbox runs with --network=none, and
+ * host execution is refused by allowHostProcess, so allowNetwork is set for the sandboxed shell only.
+ */
+export const CLI_UNATTENDED_POLICY: UnattendedPolicy = {
+  permittedTools: [
+    "read_file",
+    "list_directory",
+    "search_code",
+    "write_file",
+    "append_file",
+    "apply_patch",
+    "patch_file",
+    "edit_file_lines",
+    "copy_file",
+    "move_file",
+    "rename_symbol",
+    "run_shell",
+  ],
+  maxRisk: "high",
+  allowNetwork: true,
+  allowHostProcess: false,
+  allowExternalMutation: false,
+};
 
 export type McpRegistrationOptions = McpServerToolsOptions;
 
@@ -73,7 +101,7 @@ export class AgentToolManager {
   constructor() {
     this.gateway = new DefaultToolGateway({
       catalog: this.kernelCatalog,
-      policyEngine: parityPosture(),
+      policyEngine: withUnattendedPolicy(parityPosture(), CLI_UNATTENDED_POLICY),
       validation: "strict",
       label: "tool-gateway",
     });

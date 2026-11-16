@@ -18,6 +18,7 @@
 import { DefaultAgentRuntime, AgentRegistry } from "../../runtime/agent/agent-runtime.js";
 import type { CriticPolicy } from "../../runtime/strategies/execution-strategy.js";
 import { createManagedExecutionContext } from "../../runtime/context/execution-context.js";
+import { DENY_ALL_UNATTENDED, withUnattendedPolicy } from "../../core/policy/unattended-policy.js";
 import { profilePosture } from "../../core/policy/postures.js";
 import { IdempotencyManager } from "../../tools/idempotency.js";
 import { DefaultToolGateway, ToolGateway } from "../../tools/gateway/tool-gateway.js";
@@ -83,7 +84,7 @@ export class DevAgent {
     const posture = profilePosture(opts.profile ?? "development");
     this.toolGateway = new DefaultToolGateway({
       catalog: this.catalog,
-      policyEngine: posture,
+      policyEngine: withUnattendedPolicy(posture, DENY_ALL_UNATTENDED),
       validation: "strict",
       label: `devagent:${opts.profile ?? "development"}`,
       idempotency: this.idempotency,

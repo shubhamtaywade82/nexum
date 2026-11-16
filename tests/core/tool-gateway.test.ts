@@ -160,10 +160,10 @@ describe("DefaultToolGateway", () => {
     const gateway = new DefaultToolGateway({ catalog, policyEngine: new RulePolicyEngine() });
     const result = await gateway.invoke("trade", {});
     expect(result.error?.code).toBe("ConfirmationRequired");
-    // ...and proceeds when the run is explicitly unattended.
+    // The unattended flag alone is not approval: without an unattended policy the call is still refused.
     const unattended = await gateway.invoke("trade", {}, { unattended: true });
-    expect(unattended.ok).toBe(true);
-    expect(unattended.data).toEqual({ placed: true });
+    expect(unattended.ok).toBe(false);
+    expect(unattended.error?.code).toBe("ConfirmationRequired");
   });
 
   it("times out long-running tools", async () => {

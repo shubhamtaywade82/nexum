@@ -351,10 +351,11 @@ export class DefaultToolGateway implements ToolGateway {
     if (!decision.allowed) {
       return failure("PolicyDenied", decision.reason);
     }
-    if (decision.requireConfirmation && !ctx.unattended && !ctx.confirmed) {
+    if (decision.requireConfirmation && !ctx.confirmed) {
       // The gateway has no UX of its own: confirmation is surfaced as a
       // structured outcome so the embedding application (CLI/TUI approval
-      // broker) can resolve it. Unattended runs bypass by contract.
+      // broker) can resolve it. The unattended flag is never approval: an
+      // unattended engine turns these into escalations before they reach here.
       return {
         ok: false,
         data: { error: "ConfirmationRequired", message: decision.reason, args },
@@ -450,7 +451,9 @@ export class DefaultToolGateway implements ToolGateway {
         agent: ctx.agent,
         workspace: ctx.workspace,
         environment: ctx.environment,
-        budget: ctx.budget ? { ...ctx.budget.usage, depleted: ctx.budget.depleted } : undefined,
+        budget: ctx.budget
+          ? { ...ctx.budget.usage, depleted: ctx.budget.depleted, limits: ctx.budget.limits }
+          : undefined,
       });
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);

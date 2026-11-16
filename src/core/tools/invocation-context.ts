@@ -6,13 +6,15 @@
  * run owns is carried, typed with the domain's own types, rather than re-threaded as loose optionals.
  */
 
-import type { AgentId, BudgetMeter, BudgetUsage, RunId, TaskSpec } from "../types.js";
+import type { AgentId, BudgetMeter, BudgetUsage, ExecutionBudget, RunId, TaskSpec } from "../types.js";
 import type { TaskId } from "../identity.js";
 import type { EnvironmentPolicyContext, WorkspacePolicyContext } from "../policy/policy-engine.js";
 
 /** The run's budget as the policy saw it when the call was authorized. */
 export interface BudgetContext {
   readonly usage: BudgetUsage;
+  /** The ceilings in force for the run. */
+  readonly limits: ExecutionBudget;
   /** True when a ceiling was already reached before this call. Judged before the call consumes anything. */
   readonly depleted: boolean;
   /** Live deadline check, so a call cannot start after the run's wall-clock budget is spent. */
@@ -41,6 +43,7 @@ export interface ToolInvocationContext {
 export function budgetContextOf(meter: BudgetMeter): BudgetContext {
   return {
     usage: meter.snapshot(),
+    limits: { ...(meter.limits?.() ?? {}) },
     depleted: meter.isDepleted?.() === true,
     assertTimeLeft: () => meter.assertTimeLeft(),
   };
