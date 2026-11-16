@@ -6,7 +6,7 @@
  */
 
 import { EventBus, RuntimeEvent } from "./events/bus.js";
-import { applyTaskTransition } from "./task-machine.js";
+import { transitionTask, type TaskGraphStep } from "./task-machine.js";
 import { ACTOR_IDS, ActorId, ActorState, ChatEntry, RuntimeState, Task, ThemeName, ToolCall } from "./types.js";
 import { createMissionState, deriveMissionPhases, missionCrumb } from "./mission-derive.js";
 
@@ -153,6 +153,30 @@ function appendChunk(
     [...conversation, { kind: "text", role, text: chunk, at: Date.now(), model, crumb }],
     MAX_CONVERSATION,
   );
+}
+
+/**
+ * Every applied task transition and every refused one, as log lines, so a dependency that blocks other work
+ * is visible in the log rather than appearing only as a changed status.
+ */
+function taskTransitionLogs(step: TaskGraphStep) {
+  const at = Date.now();
+  const lines: Array<{ at: number; level: "info" | "warn" | "error"; source: string; message: string }> =
+    step.transitions.map((t) => ({
+      at,
+      level: t.to === "failed" ? "error" : "info",
+      source: "tasks",
+      message: `task ${t.taskId}: ${t.from} → ${t.to}${t.reason ? ` (${t.reason})` : ""}`,
+    }));
+  if (step.rejected) {
+    const r = step.rejected;
+    const message =
+      r.kind === "unknown-task"
+        ? `task transition refused: unknown task ${r.taskId}`
+        : `task transition refused: ${r.taskId} ${r.from} → ${r.to} is not allowed`;
+    lines.push({ at, level: "warn" as const, source: "tasks", message });
+  }
+  return lines;
 }
 
 function taskDetail(tasks: Task[]): string {
@@ -345,9 +369,14 @@ export function reduce(state: RuntimeState, event: RuntimeEvent): RuntimeState {
       return withActor({ ...state, tasks }, "tasks", { health: "active", detail: taskDetail(tasks) });
     }
     case "task.progress": {
-      const tasks = applyTaskTransition(state.tasks, event.taskId, event.status, event.progress);
+      const step = transitionTask(state.tasks, event.taskId, event.status, {
+        progress: event.progress,
+        reason: event.reason,
+      });
+      const tasks = step.tasks;
+      const logs = bounded([...state.logs, ...taskTransitionLogs(step)], MAX_LOGS);
       const anyFailed = tasks.some((t) => t.status === "failed");
-      return withActor({ ...state, tasks }, "tasks", {
+      return withActor({ ...state, tasks, logs }, "tasks", {
         health: anyFailed ? "error" : tasks.some((t) => t.status === "running") ? "active" : "healthy",
         detail: taskDetail(tasks),
       });
