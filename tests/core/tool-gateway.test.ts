@@ -1,3 +1,4 @@
+import { testOnlyAllowAll } from "../support/policy.js";
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import {
   DefaultToolGateway,
@@ -106,14 +107,14 @@ describe("DefaultToolGateway", () => {
   };
 
   it("executes through the full happy pipeline", async () => {
-    const gateway = new DefaultToolGateway({ catalog: makeCatalog() });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog: makeCatalog() });
     const result = await gateway.invoke("echo", { text: "hi" });
     expect(result.ok).toBe(true);
     expect(result.data).toEqual({ echoed: "hi" });
   });
 
   it("returns UnknownTool failure for unregistered tools", async () => {
-    const gateway = new DefaultToolGateway({ catalog: makeCatalog() });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog: makeCatalog() });
     const result = await gateway.invoke("nope", {});
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("UnknownTool");
@@ -121,11 +122,15 @@ describe("DefaultToolGateway", () => {
   });
 
   it("enforces schema validation in strict mode but not in off mode", async () => {
-    const strict = new DefaultToolGateway({ catalog: makeCatalog(), validation: "strict" });
+    const strict = new DefaultToolGateway({
+      policyEngine: testOnlyAllowAll(),
+      catalog: makeCatalog(),
+      validation: "strict",
+    });
     const strictResult = await strict.invoke("echo", {});
     expect(strictResult.error?.code).toBe("ValidationError");
 
-    const off = new DefaultToolGateway({ catalog: makeCatalog(), validation: "off" });
+    const off = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog: makeCatalog(), validation: "off" });
     const offResult = await off.invoke("echo", {});
     expect(offResult.ok).toBe(true);
     expect(offResult.data).toEqual({ echoed: undefined });
@@ -162,14 +167,14 @@ describe("DefaultToolGateway", () => {
   });
 
   it("times out long-running tools", async () => {
-    const gateway = new DefaultToolGateway({ catalog: makeCatalog() });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog: makeCatalog() });
     const result = await gateway.invoke("slow", {});
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("Timeout");
   });
 
   it("wraps handler exceptions as structured failures", async () => {
-    const gateway = new DefaultToolGateway({ catalog: makeCatalog() });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog: makeCatalog() });
     const result = await gateway.invoke("boomer", {});
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("Error");
@@ -179,7 +184,7 @@ describe("DefaultToolGateway", () => {
   it("honors abort signals", async () => {
     const controller = new AbortController();
     controller.abort();
-    const gateway = new DefaultToolGateway({ catalog: makeCatalog() });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog: makeCatalog() });
     const result = await gateway.invoke("echo", { text: "hi" }, { signal: controller.signal });
     expect(result.ok).toBe(false);
     // fail fast: the budget/resource stage observes the pre-aborted signal
@@ -190,7 +195,7 @@ describe("DefaultToolGateway", () => {
   it("registers legacy tools with inferred risk metadata", async () => {
     const catalog = new ToolCatalog();
     catalog.registerLegacy(new LegacyGreetTool(), "Filesystem");
-    const gateway = new DefaultToolGateway({ catalog });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog });
     const result = await gateway.invoke("greet", { name: "nexum" });
     expect(result.ok).toBe(true);
     expect(result.data).toEqual({ hello: "nexum" });
@@ -198,7 +203,7 @@ describe("DefaultToolGateway", () => {
   });
 
   it("discover filters by capability", () => {
-    const gateway = new DefaultToolGateway({ catalog: makeCatalog() });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog: makeCatalog() });
     expect(gateway.discover(["testing"]).map((d) => d.id)).toContain("echo");
     expect(gateway.discover(["no-such"]).map((d) => d.id)).toEqual([]);
   });
@@ -222,7 +227,11 @@ describe("DefaultToolGateway call semantics", () => {
       await new Promise((r) => setTimeout(r, 40));
       return { wrote: true };
     });
-    const gateway = new DefaultToolGateway({ catalog, idempotency: new IdempotencyManager() });
+    const gateway = new DefaultToolGateway({
+      policyEngine: testOnlyAllowAll(),
+      catalog,
+      idempotency: new IdempotencyManager(),
+    });
 
     const results = await Promise.all([
       gateway.invoke("mutate", { path: "x" }),
@@ -241,7 +250,11 @@ describe("DefaultToolGateway call semantics", () => {
       if (attempts === 1) throw new Error("network reset");
       return { ok: true };
     });
-    const gateway = new DefaultToolGateway({ catalog, idempotency: new IdempotencyManager() });
+    const gateway = new DefaultToolGateway({
+      policyEngine: testOnlyAllowAll(),
+      catalog,
+      idempotency: new IdempotencyManager(),
+    });
 
     expect((await gateway.invoke("flaky", { id: 1 })).ok).toBe(false);
     expect((await gateway.invoke("flaky", { id: 1 })).ok).toBe(true);
@@ -260,7 +273,7 @@ describe("DefaultToolGateway call semantics", () => {
           observed?.addEventListener("abort", () => reject(new Error("aborted by timeout")));
         }),
     );
-    const gateway = new DefaultToolGateway({ catalog });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog });
 
     const result = await gateway.invoke("hang", {});
 
@@ -279,7 +292,7 @@ describe("DefaultToolGateway call semantics", () => {
           observed?.addEventListener("abort", () => reject(new Error("cancelled")));
         }),
     );
-    const gateway = new DefaultToolGateway({ catalog });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog });
     const run = new AbortController();
 
     const pending = gateway.invoke("wait", {}, { signal: run.signal });

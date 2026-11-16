@@ -19,7 +19,6 @@ import type {
   ExecutionContext,
   ExecutionRequest,
   ModelGateway,
-  PolicyEngine,
   RunId,
   SessionId,
   StateStore,
@@ -42,7 +41,6 @@ export interface CreateExecutionContextOptions {
   budget?: ExecutionRequest["budgets"];
   modelGateway: ModelGateway;
   toolGateway: ToolGateway;
-  policyEngine?: PolicyEngine;
   state?: StateStore;
   /** Request-scoped run metadata. */
   metadata?: Record<string, unknown>;
@@ -129,7 +127,6 @@ export function createExecutionContext(
     metadata: opts.metadata ?? {},
     modelGateway: opts.modelGateway,
     toolGateway: opts.toolGateway,
-    policyEngine: opts.policyEngine ?? defaultPolicyEngineRef,
     context: opts.context ?? new TransientContextManager(),
     events: opts.events ?? nullEventSink,
     budget: new BudgetTracker({ runId, sessionId, budget: opts.budget }),
@@ -205,25 +202,11 @@ export function childExecutionContext(
     metadata: { ...parent.metadata, delegated: true, ...(opts.metadata ?? {}) },
     modelGateway: parent.modelGateway,
     toolGateway: parent.toolGateway,
-    policyEngine: parent.policyEngine,
     context: opts.context ?? new TransientContextManager(),
     events: opts.events ?? parent.events,
     budget,
   };
 }
-
-/**
- * Placeholder PolicyEngine used when the embedding application does not
- * supply one — a permissive engine so kernel code paths stay functional in
- * headless mode. Applications should always register a real engine in
- * production (see src/core/policy/policy-engine.ts).
- */
-import type { PolicyDecision, PolicyRequest } from "../../core/policy/policy-engine.js";
-const defaultPolicyEngineRef: PolicyEngine = {
-  check(_request: PolicyRequest): PolicyDecision {
-    return { allowed: true, requireConfirmation: false, reason: "no policy engine registered" };
-  },
-};
 
 // Re-exported task type guard for callers building TaskSpecs dynamically.
 export function taskFrom(input: string | TaskSpec): TaskSpec {

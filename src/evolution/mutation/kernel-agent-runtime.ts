@@ -58,6 +58,7 @@ import { mutationScopeViolation } from "./path-scope.js";
 
 import { ToolCatalog } from "../../tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../tools/gateway/tool-gateway.js";
+import { RulePolicyEngine } from "../../core/policy/policy-engine.js";
 import { ToolDefinition, ToolHandler } from "../../core/tools/tool-contract.js";
 import { ModelCapabilityRegistry } from "../../models/profiles/model-capability-registry.js";
 import type { ModelGateway } from "../../models/gateway/model-gateway.js";
@@ -296,10 +297,12 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
     });
 
     // ── Kernel wiring ──
+    // Explicit policy (change 4 replaces this default with the unattended proposal policy).
     const toolGateway = new DefaultToolGateway({
       catalog,
       label: "evolution-proposal-gateway",
       validation: "strict",
+      policyEngine: new RulePolicyEngine(),
     });
 
     const executionRequest: ExecutionRequest = {

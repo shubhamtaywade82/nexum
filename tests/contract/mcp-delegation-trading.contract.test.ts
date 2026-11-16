@@ -1,3 +1,4 @@
+import { testOnlyAllowAll } from "../support/policy.js";
 /**
  * CONTRACT TESTS — MCP adapter boundary + delegation + trading execution
  * (review items 19, 20, 25, 26, 30, 31, 37).
@@ -11,7 +12,6 @@ import { createExecutionContext } from "../../src/runtime/context/execution-cont
 import { BudgetManager } from "../../src/runtime/budget/budget-manager.js";
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
-import { AllowAllPolicyEngine } from "../../src/core/policy/policy-engine.js";
 import type { ExecutionRequest, ExecutionResult, ExecutionContext } from "../../src/core/types.js";
 import type { ModelGateway } from "../../src/models/gateway/model-gateway.js";
 import { TradingExecutionPipeline } from "../../src/domains/trading/execution/pipeline.js";
@@ -116,7 +116,7 @@ describe("Delegation contract (items 25, 26)", () => {
       select: () => [],
     } as unknown as ModelGateway;
     const catalog = new ToolCatalog();
-    const gateway = new DefaultToolGateway({ catalog, policyEngine: new AllowAllPolicyEngine() });
+    const gateway = new DefaultToolGateway({ catalog, policyEngine: testOnlyAllowAll() });
     const budget = new BudgetManager({ budget: { maxToolCalls: 10, maxModelCalls: 10 } });
     const request: ExecutionRequest = { agentId: "devagent", task: { goal: "parent goal" } };
     return {

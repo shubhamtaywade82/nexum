@@ -1,3 +1,4 @@
+import { testOnlyAllowAll } from "./policy.js";
 import { AgentConversation } from "../../src/cli/agent-conversation.js";
 import type { Agent } from "../../src/cli/agent.js";
 import { ApprovalManager } from "../../src/cli/services/approval-manager.js";
@@ -48,7 +49,7 @@ function fakeToolGateway(): DefaultToolGateway {
     // Opted in by mistake, but high-risk: still agent-only.
     .register(fakeTool("fake_high_opted_in", "high", { uiInvocable: true }), record("fake_high_opted_in"))
     .register(fakeTool("fake_place_order", "high", { financial: true }), record("fake_place_order", { placed: true }));
-  return new DefaultToolGateway({ catalog });
+  return new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog });
 }
 
 type EventHandler = (...args: unknown[]) => void;

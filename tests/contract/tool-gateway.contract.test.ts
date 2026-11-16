@@ -1,3 +1,4 @@
+import { testOnlyAllowAll } from "../support/policy.js";
 /**
  * CONTRACT TESTS — ToolGateway pipeline (review item 37).
  *
@@ -56,7 +57,7 @@ class MutatingTool extends Tool {
 function catalogWith(...tools: Tool[]): { catalog: ToolCatalog; gateway: DefaultToolGateway } {
   const catalog = new ToolCatalog();
   for (const t of tools) catalog.registerLegacy(t, "Filesystem");
-  const gateway = new DefaultToolGateway({ catalog, validation: "strict" });
+  const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog, validation: "strict" });
   return { catalog, gateway };
 }
 
@@ -163,7 +164,7 @@ describe("ToolGateway contract", () => {
     const def = catalog.definition("mutate");
     if (def) def.execution.idempotencyKey = "required";
     const idempotency = new IdempotencyManager();
-    const gateway = new DefaultToolGateway({ catalog, idempotency });
+    const gateway = new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog, idempotency });
 
     // concurrent duplicate: the second is refused while the first is in flight
     const first = gateway.invoke("mutate", { path: "a.txt" });

@@ -23,7 +23,6 @@
 
 import type { ChatMessage } from "../models/adapters/provider.js";
 import type { ToolGateway } from "../tools/gateway/tool-gateway.js";
-import type { PolicyEngine } from "./policy/policy-engine.js";
 import type { ModelGateway } from "../models/gateway/model-gateway.js";
 import type { StrategyHooks } from "./strategies/strategy-hooks.js";
 import type { TaskId, TraceId } from "./identity.js";
@@ -205,8 +204,8 @@ export interface ExecutionContext {
   readonly metadata: Record<string, unknown>;
 
   readonly modelGateway: ModelGateway;
+  /** Authorization lives in the ToolGateway's own policy engine; a context carries no second one. */
   readonly toolGateway: ToolGateway;
-  readonly policyEngine: PolicyEngine;
   readonly context: ContextManager;
   readonly events: EventSink;
   readonly budget: BudgetMeter;
