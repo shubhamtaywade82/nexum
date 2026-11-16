@@ -102,18 +102,21 @@ describe("McpHub", () => {
       expect(JSON.stringify(read.data)).not.toContain("FIXTURE");
     });
 
-    it("should run an MCP tool through the gateway", async () => {
+    it("should gate an MCP tool through the gateway until it is confirmed, then run it", async () => {
       const hub = await startHub([fixtureServer()]);
       const tools = agentTools();
       tools.registerMcpTools(hub.tools());
 
-      const result = await tools.gateway.invoke("echo", { text: "hi" });
+      // The server's readOnlyHint is not authorization: the call asks first.
+      const gated = await tools.gateway.invoke("echo", { text: "hi" }, { runId: "r", agentId: "a" });
+      expect(gated.error?.code).toBe("ConfirmationRequired");
 
+      const result = await tools.gateway.invoke("echo", { text: "hi" }, { runId: "r", agentId: "a", confirmed: true });
       expect(result.ok).toBe(true);
       expect(JSON.stringify(result.data)).toContain("echo:hi");
     });
 
-    it("should enforce the risk the server's own hints imply, and keep every MCP tool agent-only", async () => {
+    it("should classify every MCP tool locally, not by its server's hints, and keep every MCP tool agent-only", async () => {
       const hub = await startHub([fixtureServer()]);
       const tools = agentTools();
       tools.registerMcpTools(hub.tools());
@@ -122,7 +125,9 @@ describe("McpHub", () => {
 
       expect(definitions.wipe.risk).toBe("high");
       expect(definitions.wipe.policy.confirmation).toBe("required");
-      expect(definitions.echo.risk).toBe("low");
+      // echo's readOnlyHint no longer classifies it: it stays high risk until the local configuration says otherwise.
+      expect(definitions.echo.risk).toBe("high");
+      expect(definitions.echo.policy.confirmation).toBe("required");
       expect([definitions.echo, definitions.wipe].some(isUiInvocable)).toBe(false);
     });
   });

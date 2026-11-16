@@ -85,7 +85,7 @@ describe("Agent approval gate", () => {
     expect(await fileExists(target)).toBe(true);
   });
 
-  it("auto-approves confirmation-required calls when autoApprove is enabled", async () => {
+  it("autoApprove refuses delete_file unattended: no prompt, and the file is not deleted", async () => {
     const target = join(tempDir, "auto.txt");
     await writeFile(target, "bye");
 
@@ -106,8 +106,9 @@ describe("Agent approval gate", () => {
 
     await agent.runUserMessage("delete the auto file");
 
+    // Deletion is irreversible and not in the CLI's unattended allowlist: it is refused, never asked.
     expect(approvalRequested).toBe(false);
-    expect(await fileExists(target)).toBe(false);
+    expect(await fileExists(target)).toBe(true);
   });
 
   it("requests approval before delete_file and actually deletes once approved", async () => {

@@ -19,7 +19,6 @@ import type {
   ExecutionContext,
   ExecutionRequest,
   ModelGateway,
-  PolicyEngine,
   RunId,
   SessionId,
   StateStore,
@@ -27,6 +26,9 @@ import type {
   ToolGateway,
 } from "../../core/types.js";
 import type { TaskId, TraceId } from "../../core/identity.js";
+import type { EnvironmentPolicyContext, WorkspacePolicyContext } from "../../core/policy/policy-engine.js";
+import { budgetContextOf, type ToolInvocationContext } from "../../core/tools/invocation-context.js";
+import { applyUnattendedCeilings } from "../../core/policy/unattended-policy.js";
 import { BudgetTracker } from "../budget/budget-tracker.js";
 import { BudgetManager, RunBudget } from "../budget/budget-manager.js";
 
@@ -42,7 +44,8 @@ export interface CreateExecutionContextOptions {
   budget?: ExecutionRequest["budgets"];
   modelGateway: ModelGateway;
   toolGateway: ToolGateway;
-  policyEngine?: PolicyEngine;
+  workspace?: WorkspacePolicyContext;
+  environment?: EnvironmentPolicyContext;
   state?: StateStore;
   /** Request-scoped run metadata. */
   metadata?: Record<string, unknown>;
@@ -129,10 +132,15 @@ export function createExecutionContext(
     metadata: opts.metadata ?? {},
     modelGateway: opts.modelGateway,
     toolGateway: opts.toolGateway,
-    policyEngine: opts.policyEngine ?? defaultPolicyEngineRef,
+    ...(opts.workspace ? { workspace: opts.workspace } : {}),
+    ...(opts.environment ? { environment: opts.environment } : {}),
     context: opts.context ?? new TransientContextManager(),
     events: opts.events ?? nullEventSink,
-    budget: new BudgetTracker({ runId, sessionId, budget: opts.budget }),
+    budget: new BudgetTracker({
+      runId,
+      sessionId,
+      budget: request.unattended === true ? applyUnattendedCeilings(opts.budget) : opts.budget,
+    }),
   };
 }
 
@@ -151,7 +159,8 @@ export function createManagedExecutionContext(
     new BudgetManager({
       runId: ctx.runId,
       sessionId: ctx.sessionId,
-      budget: opts.budget as RunBudget | undefined,
+      budget: (request.unattended === true ? applyUnattendedCeilings(opts.budget) : opts.budget) as
+        RunBudget | undefined,
     });
   return { ...ctx, budget: manager };
 }
@@ -205,7 +214,8 @@ export function childExecutionContext(
     metadata: { ...parent.metadata, delegated: true, ...(opts.metadata ?? {}) },
     modelGateway: parent.modelGateway,
     toolGateway: parent.toolGateway,
-    policyEngine: parent.policyEngine,
+    ...(parent.workspace ? { workspace: parent.workspace } : {}),
+    ...(parent.environment ? { environment: parent.environment } : {}),
     context: opts.context ?? new TransientContextManager(),
     events: opts.events ?? parent.events,
     budget,
@@ -213,17 +223,24 @@ export function childExecutionContext(
 }
 
 /**
- * Placeholder PolicyEngine used when the embedding application does not
- * supply one — a permissive engine so kernel code paths stay functional in
- * headless mode. Applications should always register a real engine in
- * production (see src/core/policy/policy-engine.ts).
+ * The single place a run's authorization context is assembled for a tool call. Strategies call this
+ * instead of picking fields by hand, so no policy input the run owns can be left out. Call it BEFORE the
+ * strategy consumes budget for the call: depletion is judged at this moment.
  */
-import type { PolicyDecision, PolicyRequest } from "../../core/policy/policy-engine.js";
-const defaultPolicyEngineRef: PolicyEngine = {
-  check(_request: PolicyRequest): PolicyDecision {
-    return { allowed: true, requireConfirmation: false, reason: "no policy engine registered" };
-  },
-};
+export function toolInvocationFor(ctx: ExecutionContext): ToolInvocationContext {
+  return {
+    agentId: ctx.agentId,
+    runId: ctx.runId,
+    ...(ctx.taskId ? { taskId: ctx.taskId } : {}),
+    task: ctx.task,
+    budget: budgetContextOf(ctx.budget),
+    ...(ctx.workspace ? { workspace: ctx.workspace } : {}),
+    ...(ctx.environment ? { environment: ctx.environment } : {}),
+    ...(ctx.mode !== undefined ? { mode: ctx.mode } : {}),
+    unattended: ctx.unattended === true,
+    signal: ctx.signal,
+  };
+}
 
 // Re-exported task type guard for callers building TaskSpecs dynamically.
 export function taskFrom(input: string | TaskSpec): TaskSpec {

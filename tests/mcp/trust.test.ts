@@ -250,23 +250,25 @@ describe("McpTrustPolicy — tool decisions", () => {
 });
 
 describe("mcpTrustPolicyFromConfig", () => {
-  it("builds rules only from gated entries; plain entries stay trusted", async () => {
+  it("every listed entry is trusted by its listing; servers nobody lists are not", async () => {
     const policy = mcpTrustPolicyFromConfig([
-      { name: "sqlite", command: "npx" }, // no gates → no rule
+      { name: "sqlite", command: "npx" }, // listed, no gates: trusted by listing
       { name: "risky", command: "npx", trust: "ask" },
       { name: "fs", command: "npx", tools: { deny: ["write_*"] } },
       { name: "web", command: "npx", maxRisk: "low" },
     ]);
-    // plain entry: trusted via default
-    const plain = await policy.decideServer("sqlite", "x");
-    expect(plain.allowed).toBe(true);
-    expect(plain.source.kind).toBe("default");
-    // gated entries got rules
+    const listed = await policy.decideServer("sqlite", "x");
+    expect(listed.allowed).toBe(true);
+    expect(listed.source.kind).toBe("server-rule");
+    // not listed anywhere: untrusted, so it cannot connect
+    const unlisted = await policy.decideServer("ghost", "x");
+    expect(unlisted.allowed).toBe(false);
+    expect(unlisted.source.kind).toBe("default");
+    // gated entries
     expect((await policy.decideServer("risky", "x")).allowed).toBe(false); // ask + no approvals
     expect(policy.decideTool("fs", "write_file", "medium").allowed).toBe(false);
     expect(policy.decideTool("web", "fetch", "high").allowed).toBe(false);
   });
-
   it("carries the approval store through for ask servers", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nexum-trust-"));
     const store = new McpApprovalStore(join(dir, "t.json"));

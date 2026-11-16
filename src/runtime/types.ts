@@ -154,6 +154,10 @@ export interface Task {
   /** 0..1 progress for running tasks; undefined when not measurable. */
   progress?: number;
   worker?: string;
+  /** Set while the task is blocked by a failed dependency: the failed root task. */
+  blockedBy?: string;
+  /** Why the task is blocked, carrying the failed dependency's reason. */
+  blockReason?: string;
 }
 
 export type ToolCallStatus = "running" | "completed" | "failed";

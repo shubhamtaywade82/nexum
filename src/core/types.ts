@@ -23,8 +23,8 @@
 
 import type { ChatMessage } from "../models/adapters/provider.js";
 import type { ToolGateway } from "../tools/gateway/tool-gateway.js";
-import type { PolicyEngine } from "./policy/policy-engine.js";
 import type { ModelGateway } from "../models/gateway/model-gateway.js";
+import type { EnvironmentPolicyContext, WorkspacePolicyContext } from "./policy/policy-engine.js";
 import type { StrategyHooks } from "./strategies/strategy-hooks.js";
 import type { TaskId, TraceId } from "./identity.js";
 
@@ -144,6 +144,8 @@ export interface BudgetMeter {
   assertTimeLeft(): void;
   /** True once a ceiling is reached (see BudgetTracker.isDepleted). Optional for meters that don't track ceilings. */
   isDepleted?(): boolean;
+  /** The ceilings this meter enforces. Unattended policy requires them to be present. */
+  limits?(): ExecutionBudget;
   consumeToolCall(): void;
   consumeModelCall(opts?: {
     promptTokens?: number;
@@ -205,8 +207,12 @@ export interface ExecutionContext {
   readonly metadata: Record<string, unknown>;
 
   readonly modelGateway: ModelGateway;
+  /** Authorization lives in the ToolGateway's own policy engine; a context carries no second one. */
   readonly toolGateway: ToolGateway;
-  readonly policyEngine: PolicyEngine;
+  /** Workspace the run is pinned to, when the embedding application knows it. */
+  readonly workspace?: WorkspacePolicyContext;
+  /** Execution profile / trading mode the run executes under, when the application sets one. */
+  readonly environment?: EnvironmentPolicyContext;
   readonly context: ContextManager;
   readonly events: EventSink;
   readonly budget: BudgetMeter;

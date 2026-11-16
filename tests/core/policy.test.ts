@@ -114,7 +114,12 @@ describe("individual rules", () => {
     expect(rule.evaluate(req(def({ risk: "critical", policy: { confirmation: "never" } })))).toBeNull();
   });
   it("AllowAllPolicyEngine always allows", () => {
-    expect(new AllowAllPolicyEngine().check(req(def({ risk: "critical" }))).allowed).toBe(true);
+    expect(
+      new AllowAllPolicyEngine({
+        acknowledgeNoPolicy: true,
+        reason: "policy.test: asserts the allow-all engine itself",
+      }).check(req(def({ risk: "critical" }))).allowed,
+    ).toBe(true);
   });
 });
 

@@ -1,6 +1,5 @@
 import { Registry } from "../tools/registry.js";
 import { Tool } from "../tools/tool.js";
-import { connectMcpServer } from "../mcp/client.js";
 import { connectMcpServerTools, type McpServerToolsOptions } from "../mcp/adapter/mcp-server-tools.js";
 import type { McpToolAdapter } from "../mcp/adapter/mcp-tool-adapter.js";
 import type { LocalWorker } from "../models/local-worker.js";
@@ -10,6 +9,7 @@ import { DefaultToolGateway } from "../tools/gateway/tool-gateway.js";
 import { ToolCatalog, type LegacyToolMetadata } from "../tools/gateway/tool-catalog.js";
 import { mountToolPack, ToolPack } from "../tools/gateway/tool-pack.js";
 import { parityPosture } from "../core/policy/postures.js";
+import { withUnattendedPolicy, type UnattendedPolicy } from "../core/policy/unattended-policy.js";
 import {
   agentCorePack,
   databasePack,
@@ -36,6 +36,33 @@ import { WorkspaceGuard, type WorkspaceGuardOptions } from "../core/fs/workspace
 import { ShellTool } from "../tools/shell.js";
 
 export type ToolOnOutput = (stream: "stdout" | "stderr", chunk: string) => void;
+
+/**
+ * What an unattended CLI run (auto-approve) may do: workspace edits, read-only search and reads, and the
+ * shell only inside its sandbox. Destructive shell commands, git publishing, deletions and host execution
+ * are refused, not asked. The shell declares network access, but the sandbox runs with --network=none, and
+ * host execution is refused by allowHostProcess, so allowNetwork is set for the sandboxed shell only.
+ */
+export const CLI_UNATTENDED_POLICY: UnattendedPolicy = {
+  permittedTools: [
+    "read_file",
+    "list_directory",
+    "search_code",
+    "write_file",
+    "append_file",
+    "apply_patch",
+    "patch_file",
+    "edit_file_lines",
+    "copy_file",
+    "move_file",
+    "rename_symbol",
+    "run_shell",
+  ],
+  maxRisk: "high",
+  allowNetwork: true,
+  allowHostProcess: false,
+  allowExternalMutation: false,
+};
 
 export type McpRegistrationOptions = McpServerToolsOptions;
 
@@ -74,7 +101,7 @@ export class AgentToolManager {
   constructor() {
     this.gateway = new DefaultToolGateway({
       catalog: this.kernelCatalog,
-      policyEngine: parityPosture(),
+      policyEngine: withUnattendedPolicy(parityPosture(), CLI_UNATTENDED_POLICY),
       validation: "strict",
       label: "tool-gateway",
     });
@@ -180,13 +207,10 @@ export class AgentToolManager {
   /** Options for MCP registration with trust gating (P2 trust tier).
    * Without opts the connect-freely legacy path is used unchanged. */
   async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<Tool[]> {
-    if (!opts.trust && !opts.security && !opts.elicitation && !opts.env) {
-      // Legacy path — no policy, no overrides, and no protocol callbacks; behavior identical to before.
-      const tools = await connectMcpServer(command, args);
-      for (const tool of tools) this.registerTool(tool, "MCP");
-      return tools;
+    // Fail closed: a server connects only under an explicit trust policy, refused before anything is spawned.
+    if (!opts.trust) {
+      throw new Error(`[mcp-trust] refusing to connect "${command}": no MCP trust policy was provided`);
     }
-
     const { tools } = await connectMcpServerTools(command, args, opts);
     return this.registerMcpTools(tools).registered;
   }

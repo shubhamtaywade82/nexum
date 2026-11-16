@@ -16,7 +16,7 @@
  */
 
 import type { Task, TaskStatus } from "./types.js";
-import { applyTaskTransition } from "./task-machine.js";
+import { transitionTask } from "./task-machine.js";
 import type { VerificationReport, VerifierService } from "./critic/verifier.js";
 
 export type GateOutcome = "completed" | "failed" | "blocked" | "skipped";
@@ -52,7 +52,7 @@ export async function gateTaskCompletion(
   const onFailure = options.onFailure ?? "failed";
   if ((options.requireChecks ?? true) && verifier.ids().length === 0) {
     return {
-      tasks: applyTaskTransition(tasks, taskId, onFailure),
+      tasks: transitionTask(tasks, taskId, onFailure, { reason: "no verification checks registered" }).tasks,
       outcome: onFailure,
       reason: "no verification checks registered",
     };
@@ -61,7 +61,7 @@ export async function gateTaskCompletion(
   const report = await verifier.verify(answer);
   if (report.pass) {
     return {
-      tasks: applyTaskTransition(tasks, taskId, "completed", 1),
+      tasks: transitionTask(tasks, taskId, "completed", { progress: 1 }).tasks,
       outcome: "completed",
       report,
       reason: `${report.results.length} check(s) passed`,
@@ -69,10 +69,11 @@ export async function gateTaskCompletion(
   }
 
   const failed = report.results.filter((r) => !r.pass);
+  const reason = failed.map((r) => `${r.checkId}${r.detail ? `: ${r.detail}` : ""}`).join("; ");
   return {
-    tasks: applyTaskTransition(tasks, taskId, onFailure),
+    tasks: transitionTask(tasks, taskId, onFailure, { reason }).tasks,
     outcome: onFailure,
     report,
-    reason: failed.map((r) => `${r.checkId}${r.detail ? `: ${r.detail}` : ""}`).join("; "),
+    reason,
   };
 }

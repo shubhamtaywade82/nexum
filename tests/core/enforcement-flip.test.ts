@@ -212,10 +212,11 @@ describe("gateway confirmation contract", () => {
     expect(result.data).toEqual({ ran: "rm -rf dist" });
   });
 
-  it("unattended runs bypass the confirmation gate by contract", async () => {
+  it("an unattended flag alone is not approval: a destructive command is refused, not run", async () => {
     const gw = shellGateway();
     const result = await gw.invoke("run_shell", { command: "rm -rf dist" }, { unattended: true });
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ConfirmationRequired");
   });
 
   it("validation: strict rejects missing required args as structured errors", async () => {

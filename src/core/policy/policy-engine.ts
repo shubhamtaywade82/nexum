@@ -32,7 +32,7 @@
 
 import { ToolDefinition, ToolRisk, toolIsMutating, toolRiskAtLeast } from "../tools/tool-contract.js";
 import type { TaskSpec } from "../types.js";
-import type { BudgetUsage } from "../types.js";
+import type { BudgetUsage, ExecutionBudget } from "../types.js";
 import type { ExecutionProfile } from "./execution-profiles.js";
 
 export type AgentModePolicy = "ask" | "code" | "architect" | "review" | "debug" | "autonomous";
@@ -81,7 +81,7 @@ export interface PolicyRequest {
    * Budget snapshot for the run. `depleted` is set by the caller from the run's own tracker when a ceiling is
    * reached; BudgetGuardRule denies mutating tools while it is set.
    */
-  budget?: BudgetUsage & { depleted?: boolean };
+  budget?: BudgetUsage & { depleted?: boolean; limits?: ExecutionBudget };
 }
 
 export interface PolicyDecision {
@@ -366,9 +366,30 @@ export class RulePolicyEngine implements PolicyEngine {
   }
 }
 
-/** Permissive engine for headless/embedded use. */
+/** Thrown when an authorization component is constructed without the explicit configuration it requires. */
+export class PolicyConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PolicyConfigurationError";
+  }
+}
+
+/**
+ * Permits every call. This is never a default: it exists for tests and for embedders whose
+ * authorization lives outside Nexum. Construction demands an explicit acknowledgement and a reason,
+ * so an allow-all engine cannot be wired in by omission.
+ */
 export class AllowAllPolicyEngine implements PolicyEngine {
+  readonly reason: string;
+
+  constructor(ack: { acknowledgeNoPolicy: true; reason: string }) {
+    if (!ack || ack.acknowledgeNoPolicy !== true || typeof ack.reason !== "string" || ack.reason.trim() === "") {
+      throw new PolicyConfigurationError("AllowAllPolicyEngine requires { acknowledgeNoPolicy: true, reason }");
+    }
+    this.reason = ack.reason;
+  }
+
   check(): PolicyDecision {
-    return { allowed: true, requireConfirmation: false, reason: "allow-all engine", rule: "allow-all" };
+    return { allowed: true, requireConfirmation: false, reason: `allow-all engine: ${this.reason}`, rule: "allow-all" };
   }
 }

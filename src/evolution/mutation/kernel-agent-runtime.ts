@@ -58,6 +58,8 @@ import { mutationScopeViolation } from "./path-scope.js";
 
 import { ToolCatalog } from "../../tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../tools/gateway/tool-gateway.js";
+import { RulePolicyEngine } from "../../core/policy/policy-engine.js";
+import { withUnattendedPolicy } from "../../core/policy/unattended-policy.js";
 import { ToolDefinition, ToolHandler } from "../../core/tools/tool-contract.js";
 import { ModelCapabilityRegistry } from "../../models/profiles/model-capability-registry.js";
 import type { ModelGateway } from "../../models/gateway/model-gateway.js";
@@ -296,10 +298,16 @@ export class KernelEvolutionAgentRuntime implements EngineeringAgentRuntime {
     });
 
     // ── Kernel wiring ──
+    // The proposal runner is unattended, so it gets an explicit policy: it may read and propose, and nothing
+    // else. Its runs are bounded by the unattended ceilings applied at run creation.
     const toolGateway = new DefaultToolGateway({
       catalog,
       label: "evolution-proposal-gateway",
       validation: "strict",
+      policyEngine: withUnattendedPolicy(new RulePolicyEngine(), {
+        permittedTools: ["list_files", "read_file", "search_files", "propose_edit", "finish", "decline"],
+        maxRisk: "low",
+      }),
     });
 
     const executionRequest: ExecutionRequest = {

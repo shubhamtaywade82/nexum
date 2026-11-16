@@ -1,3 +1,4 @@
+import { testOnlyAllowAll } from "../support/policy.js";
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
 import { ToolDefinition } from "../../src/core/tools/tool-contract.js";
@@ -52,7 +53,7 @@ function makeGateway(
 ) {
   const catalog = new ToolCatalog();
   catalog.register(readDefinition(), handler);
-  return new DefaultToolGateway({ catalog });
+  return new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog });
 }
 
 function request(overrides: Partial<ExecutionRequest> = {}): ExecutionRequest {

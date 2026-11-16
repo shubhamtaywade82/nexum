@@ -325,3 +325,66 @@ describe("notification ids stay unique once the buffer is full", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+describe("task failure in the runtime store", () => {
+  it("a failed task blocks its dependents and logs the transition with the failure reason", () => {
+    let state = initialRuntimeState();
+    state = reduce(state, {
+      type: "task.created",
+      task: { id: "a", title: "a", status: "running", dependencies: [] },
+    } as never);
+    state = reduce(state, {
+      type: "task.created",
+      task: { id: "b", title: "b", status: "queued", dependencies: ["a"] },
+    } as never);
+
+    state = reduce(state, { type: "task.progress", taskId: "a", status: "failed", reason: "lint failed" } as never);
+
+    expect(state.tasks.find((t) => t.id === "b")).toMatchObject({
+      status: "blocked",
+      blockedBy: "a",
+      blockReason: 'dependency "a" failed: lint failed',
+    });
+    const messages = state.logs.map((l) => l.message);
+    expect(messages).toContain("task a: running → failed (lint failed)");
+    expect(messages).toContain('task b: queued → blocked (dependency "a" failed: lint failed)');
+  });
+
+  it("a refused task transition is logged as a warning and changes nothing", () => {
+    let state = initialRuntimeState();
+    state = reduce(state, {
+      type: "task.created",
+      task: { id: "done", title: "done", status: "completed", dependencies: [] },
+    } as never);
+    const before = state.tasks;
+
+    state = reduce(state, { type: "task.progress", taskId: "done", status: "running" } as never);
+
+    expect(state.tasks).toBe(before);
+    const refusal = state.logs.find((l) => l.message.startsWith("task transition refused"));
+    expect(refusal).toMatchObject({
+      level: "warn",
+      message: "task transition refused: done completed → running is not allowed",
+    });
+  });
+});
+
+describe("task log lines are sanitized like every other log line", () => {
+  it("strips terminal escapes and control characters from a failure reason before it reaches the log", () => {
+    let state = initialRuntimeState();
+    state = reduce(state, {
+      type: "task.created",
+      task: { id: "a", title: "a", status: "running", dependencies: [] },
+    } as never);
+    state = reduce(state, {
+      type: "task.progress",
+      taskId: "a",
+      status: "failed",
+      reason: "\u001b[31mred\u001b[0m\u0007 check",
+    } as never);
+    const joined = state.logs.map((l) => l.message).join("\n");
+    expect(joined).toContain("task a: running → failed");
+    expect(joined.includes("\u001b")).toBe(false);
+    expect(joined.includes("\u0007")).toBe(false);
+  });
+});

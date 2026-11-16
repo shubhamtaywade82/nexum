@@ -56,7 +56,7 @@ export type ExecutionEvent =
     }
   // ── task lifecycle ──────────────────────────────────────────────────────
   | { type: "task.created"; task: Task }
-  | { type: "task.progress"; taskId: string; status: Task["status"]; progress?: number }
+  | { type: "task.progress"; taskId: string; status: Task["status"]; progress?: number; reason?: string }
   // ── tool invocations ────────────────────────────────────────────────────
   | { type: "tool.started"; id: string; name: string; args: Record<string, unknown> }
   | { type: "tool.completed"; id: string; result: Record<string, unknown> }

@@ -43,7 +43,8 @@ import type {
   PolicyEngine,
   WorkspacePolicyContext,
 } from "../../core/policy/policy-engine.js";
-import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
+import { PolicyConfigurationError } from "../../core/policy/policy-engine.js";
+import type { BudgetContext } from "../../core/tools/invocation-context.js";
 import type { TaskSpec } from "../../core/types.js";
 
 /**
@@ -179,7 +180,11 @@ export function validateAgainstSchema(
 
 export interface ToolGatewayOptions {
   catalog: ToolCatalog;
-  policyEngine?: PolicyEngine;
+  /**
+   * The single authorization authority for every call through this gateway. Required: a gateway
+   * cannot be constructed without one, and no per-call flag can skip it.
+   */
+  policyEngine: PolicyEngine;
   /** Namespace used in concurrency gate labels. */
   label?: string;
   /**
@@ -201,12 +206,8 @@ export interface InvokeContext {
   signal?: AbortSignal;
   /** Capability tags to filter tools by (capability check stage). */
   capabilities?: string[];
-  /** Run budget — the budget stage guards limits before executing. */
-  budget?: BudgetTracker;
-  /** Skip policy (runtime-internal calls, e.g. strategies re-reading files). */
-  skipPolicy?: boolean;
-  /** Skip the capability filter (runtime-internal calls). */
-  skipCapabilityCheck?: boolean;
+  /** Run budget as captured for this call — depletion is read from it, and the budget stage checks the clock. */
+  budget?: BudgetContext;
   /** Task being executed (policy context, review item 7). */
   task?: TaskSpec;
   /** Agent identity (policy context, review item 7). */
@@ -232,15 +233,28 @@ const failure = (code: string, message: string): ToolResult => ({
   error: { code, message },
 });
 
+/** A decision is usable only if every field the gateway relies on is present and well-typed. */
+function isWellFormedDecision(value: unknown): value is PolicyDecision {
+  if (typeof value !== "object" || value === null) return false;
+  const d = value as Record<string, unknown>;
+  return typeof d.allowed === "boolean" && typeof d.requireConfirmation === "boolean" && typeof d.reason === "string";
+}
+
 export class DefaultToolGateway implements ToolGateway {
   private readonly catalog: ToolCatalog;
-  private readonly policyEngine?: PolicyEngine;
+  private readonly policyEngine: PolicyEngine;
   private readonly label: string;
   private readonly validation: "strict" | "off";
   private readonly idempotency?: IdempotencyManager;
   private readonly gates = new Map<string, ConcurrencyGate>();
 
   constructor(opts: ToolGatewayOptions) {
+    if (!opts || !opts.policyEngine || typeof opts.policyEngine.check !== "function") {
+      throw new PolicyConfigurationError(
+        "DefaultToolGateway requires an explicit PolicyEngine (policyEngine). " +
+          "AllowAllPolicyEngine, with { acknowledgeNoPolicy: true, reason }, is for tests only.",
+      );
+    }
     this.catalog = opts.catalog;
     this.policyEngine = opts.policyEngine;
     this.label = opts.label ?? "tool-gateway";
@@ -269,7 +283,6 @@ export class DefaultToolGateway implements ToolGateway {
   preview(name: string, args: Record<string, unknown>, ctx: InvokeContext = {}) {
     const entry = this.resolve(name);
     if (!entry) return null;
-    if (!this.policyEngine || ctx.skipPolicy) return { allowed: true, requireConfirmation: false, reason: "no engine" };
     return this.policyEngine.check({
       tool: entry.definition,
       args,
@@ -315,7 +328,7 @@ export class DefaultToolGateway implements ToolGateway {
     }
 
     // ── stage 3: capability check (review item 4) ──────────────────────────
-    if (!ctx.skipCapabilityCheck && ctx.capabilities && ctx.capabilities.length > 0) {
+    if (ctx.capabilities && ctx.capabilities.length > 0) {
       const toolCaps = entry.definition.capabilities;
       const allowed = toolCaps.length === 0 || toolCaps.some((c) => ctx.capabilities!.includes(c));
       if (!allowed) {
@@ -326,35 +339,28 @@ export class DefaultToolGateway implements ToolGateway {
       }
     }
 
-    // ── stage 4: policy check (review items 4, 7) ──────────────────────────
-    if (this.policyEngine && !ctx.skipPolicy) {
-      const decision = this.policyEngine.check({
-        tool: entry.definition,
-        args,
-        agentId: ctx.agentId ?? "unknown",
-        runId: ctx.runId ?? "unknown",
-        mode: ctx.mode,
-        unattended: ctx.unattended,
-        task: ctx.task,
-        agent: ctx.agent,
-        workspace: ctx.workspace,
-        environment: ctx.environment,
-        budget: ctx.budget ? { ...ctx.budget.snapshot(), depleted: ctx.budget.isDepleted?.() === true } : undefined,
-      });
-      ctx.onPolicyDecision?.({ ...decision, tool: entry.definition.id });
-      if (!decision.allowed) {
-        return failure("PolicyDenied", decision.reason);
-      }
-      if (decision.requireConfirmation && !ctx.unattended && !ctx.confirmed) {
-        // The gateway has no UX of its own: confirmation is surfaced as a
-        // structured outcome so the embedding application (CLI/TUI approval
-        // broker) can resolve it. Unattended runs bypass by contract.
-        return {
-          ok: false,
-          data: { error: "ConfirmationRequired", message: decision.reason, args },
-          error: { code: "ConfirmationRequired", message: decision.reason },
-        };
-      }
+    // ── stage 4: policy check (review items 4, 7) — fail closed ────────────
+    // The gateway's engine is the only authority. An engine that throws, or answers with anything
+    // other than a well-formed decision, denies the call: the handler never runs.
+    const verdict = this.evaluatePolicy(entry.definition, args, ctx);
+    if (!verdict.ok) {
+      return failure("PolicyUnavailable", verdict.reason);
+    }
+    const decision = verdict.decision;
+    ctx.onPolicyDecision?.({ ...decision, tool: entry.definition.id });
+    if (!decision.allowed) {
+      return failure("PolicyDenied", decision.reason);
+    }
+    if (decision.requireConfirmation && !ctx.confirmed) {
+      // The gateway has no UX of its own: confirmation is surfaced as a
+      // structured outcome so the embedding application (CLI/TUI approval
+      // broker) can resolve it. The unattended flag is never approval: an
+      // unattended engine turns these into escalations before they reach here.
+      return {
+        ok: false,
+        data: { error: "ConfirmationRequired", message: decision.reason, args },
+        error: { code: "ConfirmationRequired", message: decision.reason },
+      };
     }
 
     // ── stage 5: budget/resource guard (review item 4) ─────────────────────
@@ -425,6 +431,39 @@ export class DefaultToolGateway implements ToolGateway {
   }
 
   // ── internals ─────────────────────────────────────────────────────────
+
+  /** Asks the engine for a decision; a throw or a malformed answer becomes a denial reason. */
+  private evaluatePolicy(
+    tool: ToolDefinition,
+    args: Record<string, unknown>,
+    ctx: InvokeContext,
+  ): { ok: true; decision: PolicyDecision } | { ok: false; reason: string } {
+    let decision: unknown;
+    try {
+      decision = this.policyEngine.check({
+        tool,
+        args,
+        agentId: ctx.agentId ?? "unknown",
+        runId: ctx.runId ?? "unknown",
+        mode: ctx.mode,
+        unattended: ctx.unattended,
+        task: ctx.task,
+        agent: ctx.agent,
+        workspace: ctx.workspace,
+        environment: ctx.environment,
+        budget: ctx.budget
+          ? { ...ctx.budget.usage, depleted: ctx.budget.depleted, limits: ctx.budget.limits }
+          : undefined,
+      });
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      return { ok: false, reason: `policy engine failed for "${tool.id}": ${reason}` };
+    }
+    if (!isWellFormedDecision(decision)) {
+      return { ok: false, reason: `policy engine returned no decision for "${tool.id}"` };
+    }
+    return { ok: true, decision };
+  }
 
   private resolve(name: string): ToolCatalogEntry | undefined {
     const canonical = canonicalToolName(name);

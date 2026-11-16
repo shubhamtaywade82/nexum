@@ -1,3 +1,4 @@
+import { testOnlyAllowAll } from "../support/policy.js";
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
 import { ToolDefinition } from "../../src/core/tools/tool-contract.js";
@@ -133,7 +134,7 @@ describe("DefaultAgentRuntime + ReActStrategy (kernel-native path)", () => {
         { tool_calls: [{ function: { name: "read_file", arguments: '{"path":"a"}' } }] },
         { content: "unreachable" },
       ]),
-      toolGateway: new DefaultToolGateway({ catalog }),
+      toolGateway: new DefaultToolGateway({ policyEngine: testOnlyAllowAll(), catalog }),
       signal: controller.signal,
     });
 

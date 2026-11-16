@@ -87,6 +87,11 @@ export class BudgetTracker implements BudgetMeter {
     this.startedAt = this.nowFn();
   }
 
+  /** The ceilings this tracker enforces. */
+  limits(): ExecutionBudget {
+    return { ...this.budget };
+  }
+
   /** Current consumption. `elapsedMs` is computed live. */
   snapshot(): BudgetUsage {
     return { ...this.usage, elapsedMs: Math.max(0, this.nowFn() - this.startedAt) };

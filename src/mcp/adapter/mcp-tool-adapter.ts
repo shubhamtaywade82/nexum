@@ -13,7 +13,7 @@
 
 import { Tool } from "../../tools/tool.js";
 import type { ToolCallContext, ToolDefinition } from "../../core/tools/tool-contract.js";
-import { mcpSecurityMetadata, McpSecurityOverride } from "./security-metadata.js";
+import { mcpSecurityMetadata, mcpServerHints, McpSecurityOverride } from "./security-metadata.js";
 import type { McpDiscoveredTool } from "./mcp-client-factory.js";
 
 export interface McpToolDescriptor {
@@ -34,6 +34,8 @@ export interface McpClientLike {
 
 export class McpToolAdapter extends Tool {
   readonly security: Pick<ToolDefinition, "risk" | "sideEffects" | "execution" | "policy" | "network">;
+  /** The server's own annotations, for display only. Authorization never reads them (see security-metadata.ts). */
+  readonly serverHints: Readonly<Record<string, boolean>>;
 
   constructor(
     private readonly client: McpClientLike,
@@ -41,6 +43,7 @@ export class McpToolAdapter extends Tool {
     serverOverride: McpSecurityOverride = {},
   ) {
     super();
+    this.serverHints = mcpServerHints(descriptor.annotations);
     this.security = mcpSecurityMetadata(
       {
         name: descriptor.name,

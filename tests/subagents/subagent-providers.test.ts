@@ -1,3 +1,4 @@
+import { testOnlyAllowAll } from "../support/policy.js";
 /**
  * SubagentService + providers: real execution paths, lifecycle accounting,
  * and provider registration honesty.
@@ -18,7 +19,6 @@ import { createExecutionContext } from "../../src/runtime/context/execution-cont
 import { BudgetManager } from "../../src/runtime/budget/budget-manager.js";
 import { ToolCatalog } from "../../src/tools/gateway/tool-catalog.js";
 import { DefaultToolGateway } from "../../src/tools/gateway/tool-gateway.js";
-import { AllowAllPolicyEngine } from "../../src/core/policy/policy-engine.js";
 import type { AgentRuntime, ExecutionContext, ExecutionRequest, ExecutionResult } from "../../src/core/types.js";
 import type { ModelGateway } from "../../src/models/gateway/model-gateway.js";
 
@@ -63,7 +63,7 @@ function parentContext(): ExecutionContext {
     profiles: () => null as never,
     select: () => [],
   } as unknown as ModelGateway;
-  const toolGateway = new DefaultToolGateway({ catalog: new ToolCatalog(), policyEngine: new AllowAllPolicyEngine() });
+  const toolGateway = new DefaultToolGateway({ catalog: new ToolCatalog(), policyEngine: testOnlyAllowAll() });
   const request: ExecutionRequest = { agentId: "devagent", task: { goal: "parent goal" } };
   return {
     ...createExecutionContext(request, { modelGateway, toolGateway }),

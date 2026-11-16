@@ -1,3 +1,4 @@
+import { testOnlyAllowAll } from "../support/policy.js";
 /**
  * CONTRACT TESTS — PolicyEngine + Checkpoint/Recovery + Shell sandbox
  * accounting (review item 37's remaining boundaries: items 7, 8, 13, 27).
@@ -13,7 +14,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { RulePolicyEngine, AllowAllPolicyEngine } from "../../src/core/policy/policy-engine.js";
+import { RulePolicyEngine } from "../../src/core/policy/policy-engine.js";
 import { executionProfile } from "../../src/core/policy/execution-profiles.js";
 import { defineToolMetadata } from "../../src/core/tools/tool-contract.js";
 import type { ToolDefinition } from "../../src/core/tools/tool-contract.js";
@@ -176,7 +177,7 @@ describe("PolicyEngine contract (items 7, 8)", () => {
   });
 
   it("AllowAllPolicyEngine permits everything for headless/embedded use", () => {
-    const decision = new AllowAllPolicyEngine().check(policyRequest(shellTool));
+    const decision = testOnlyAllowAll().check(policyRequest(shellTool));
     expect(decision.allowed).toBe(true);
   });
 });

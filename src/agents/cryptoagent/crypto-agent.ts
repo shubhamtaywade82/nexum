@@ -14,6 +14,7 @@
 
 import { DefaultAgentRuntime, AgentRegistry, type AgentDescriptor } from "../../runtime/agent/agent-runtime.js";
 import { createManagedExecutionContext } from "../../runtime/context/execution-context.js";
+import { DENY_ALL_UNATTENDED, withUnattendedPolicy } from "../../core/policy/unattended-policy.js";
 import { profilePosture } from "../../core/policy/postures.js";
 import { tradingProfile, TradingExecutionMode } from "../../core/policy/execution-profiles.js";
 import { IdempotencyManager } from "../../tools/idempotency.js";
@@ -80,7 +81,7 @@ export class CryptoAgent {
     const posture = profilePosture(tradingProfile(this.tradingMode));
     this.toolGateway = new DefaultToolGateway({
       catalog: this.catalog,
-      policyEngine: posture,
+      policyEngine: withUnattendedPolicy(posture, DENY_ALL_UNATTENDED),
       validation: "strict",
       label: `crypto-agent:${this.tradingMode}`,
       idempotency: new IdempotencyManager(),

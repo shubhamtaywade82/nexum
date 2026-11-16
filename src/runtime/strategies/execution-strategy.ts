@@ -23,6 +23,7 @@ import type { ExecutionResult, ExecutionContext, ExecutionStatus, StrategyName }
 import { LoopDetector } from "../../core/loop/loop-detector.js";
 import type { PreparedToolCall, StrategyHooks, StrategyModelCallOptions } from "./strategy-hooks.js";
 import { CriticService, type CriticSeverity } from "../critic/critic.js";
+import { toolInvocationFor } from "../context/execution-context.js";
 import { SelfCorrectionLoop, type SelfCorrectionResult } from "../critic/reflection.js";
 
 // A bare "rejected" reads to small models like a transient error, and they retry with a tweaked path or
@@ -280,17 +281,14 @@ export class ReActStrategy implements ExecutionStrategy {
           const allowed = (await hooks?.beforeToolCall?.({ name: call.name, args, turn })) ?? true;
           if (!allowed) continue;
 
+          // Captured BEFORE this call consumes its own allowance: the call that spends the last slot is
+          // legitimate, and only a call made once the run is already depleted is refused as a mutation.
+          const invocation = toolInvocationFor(ctx);
           ctx.budget.consumeToolCall();
 
           let result;
           try {
-            result = await ctx.toolGateway.invoke(call.name, args, {
-              agentId: ctx.agentId,
-              runId: ctx.runId,
-              mode: ctx.mode,
-              unattended: ctx.unattended,
-              signal: ctx.signal,
-            });
+            result = await ctx.toolGateway.invoke(call.name, args, invocation);
 
             // Policy confirmation seam: the gateway never blocks on UX — it
             // returns a structured ConfirmationRequired outcome. With a
@@ -306,14 +304,7 @@ export class ReActStrategy implements ExecutionStrategy {
                 turn,
               });
               result = approved
-                ? await ctx.toolGateway.invoke(call.name, args, {
-                    agentId: ctx.agentId,
-                    runId: ctx.runId,
-                    mode: ctx.mode,
-                    unattended: ctx.unattended,
-                    signal: ctx.signal,
-                    confirmed: true,
-                  })
+                ? await ctx.toolGateway.invoke(call.name, args, { ...invocation, confirmed: true })
                 : {
                     ok: false,
                     data: { error: "ApprovalRejected", message: APPROVAL_REJECTED_MESSAGE },
