@@ -29,6 +29,8 @@ export interface McpClientLike {
     name: string;
     arguments: Record<string, unknown>;
     timeoutMs?: number;
+    /** Aborted when the run is cancelled; the server is told, so it stops its work. */
+    signal?: AbortSignal;
   }): Promise<Record<string, unknown>>;
 }
 
@@ -77,15 +79,18 @@ export class McpToolAdapter extends Tool {
       name: this.descriptor.name,
       arguments: args,
       timeoutMs,
+      signal: callCtx?.signal,
     });
 
     try {
       const res = (await raceAbort(request, callCtx?.signal, timeoutMs)) as Record<string, unknown>;
       if (res && (res.isError || res.error)) {
         const schemaString = JSON.stringify(this.descriptor.inputSchema ?? {});
+        // The server's own explanation is in its text content. The result's _meta (for example a stable error code) is
+        // kept whole, because the spread below carries it.
         return {
           error: "McpError",
-          message: `${res.message ?? res.error ?? "MCP Tool Error"}. Expected Schema: ${schemaString}`,
+          message: `${serverText(res) || res.message || res.error || "MCP Tool Error"}. Expected Schema: ${schemaString}`,
           ...res,
         };
       }
@@ -100,6 +105,19 @@ export class McpToolAdapter extends Tool {
       };
     }
   }
+}
+
+/** The text of an MCP result's text content, joined, or "" when the server sent none. */
+function serverText(res: Record<string, unknown>): string {
+  const content = Array.isArray(res.content) ? res.content : [];
+  return content
+    .map((part) =>
+      part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+        ? (part as { text: string }).text
+        : "",
+    )
+    .filter((text) => text.length > 0)
+    .join("\n");
 }
 
 /** Race a call against the abort signal + a hard timeout. */
