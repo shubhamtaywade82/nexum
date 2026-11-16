@@ -368,3 +368,23 @@ describe("task failure in the runtime store", () => {
     });
   });
 });
+
+describe("task log lines are sanitized like every other log line", () => {
+  it("strips terminal escapes and control characters from a failure reason before it reaches the log", () => {
+    let state = initialRuntimeState();
+    state = reduce(state, {
+      type: "task.created",
+      task: { id: "a", title: "a", status: "running", dependencies: [] },
+    } as never);
+    state = reduce(state, {
+      type: "task.progress",
+      taskId: "a",
+      status: "failed",
+      reason: "\u001b[31mred\u001b[0m\u0007 check",
+    } as never);
+    const joined = state.logs.map((l) => l.message).join("\n");
+    expect(joined).toContain("task a: running → failed");
+    expect(joined.includes("\u001b")).toBe(false);
+    expect(joined.includes("\u0007")).toBe(false);
+  });
+});

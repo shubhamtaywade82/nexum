@@ -34,7 +34,9 @@ export interface TaskTransition {
 
 export type TaskTransitionRejection =
   | { kind: "unknown-task"; taskId: string; to: TaskStatus }
-  | { kind: "invalid-transition"; taskId: string; from: TaskStatus; to: TaskStatus };
+  | { kind: "invalid-transition"; taskId: string; from: TaskStatus; to: TaskStatus }
+  /** A task blocked by a failed dependency cannot run, or be re-queued, until that dependency is retried. */
+  | { kind: "dependency-failed"; taskId: string; blockedBy: string; to: TaskStatus };
 
 export interface TaskGraphStep {
   tasks: Task[];
@@ -144,6 +146,16 @@ export function transitionTask(
       transitions: [],
       rejected: { kind: "invalid-transition", taskId, from: task.status, to: status },
     };
+  }
+  if (statusChanges && task.blockedBy !== undefined && status !== "cancelled") {
+    const root = tasks.find((t) => t.id === task.blockedBy);
+    if (root?.status === "failed") {
+      return {
+        tasks,
+        transitions: [],
+        rejected: { kind: "dependency-failed", taskId, blockedBy: task.blockedBy, to: status },
+      };
+    }
   }
   if (!statusChanges && options.progress === undefined) return { tasks, transitions: [] };
 

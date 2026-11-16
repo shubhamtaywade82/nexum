@@ -143,3 +143,20 @@ describe("release with several failing roots", () => {
     expect(retriedC.tasks.find((t) => t.id === "d")?.status).toBe("queued");
   });
 });
+
+describe("a dependency-blocked task cannot become runnable while its dependency still fails", () => {
+  it("refuses to make a blocked dependent runnable while its failed dependency is still failed", () => {
+    const failed = transitionTask([task("a", "running"), task("b", "queued", ["a"])], "a", "failed").tasks;
+    const forced = transitionTask(failed, "b", "queued");
+
+    expect(forced.rejected).toEqual({ kind: "dependency-failed", taskId: "b", blockedBy: "a", to: "queued" });
+    expect(forced.tasks).toBe(failed);
+  });
+
+  it("still allows cancelling a dependency-blocked task", () => {
+    const failed = transitionTask([task("a", "running"), task("b", "queued", ["a"])], "a", "failed").tasks;
+    const cancelled = transitionTask(failed, "b", "cancelled");
+    expect(cancelled.rejected).toBeUndefined();
+    expect(cancelled.tasks.find((t) => t.id === "b")?.status).toBe("cancelled");
+  });
+});

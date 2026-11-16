@@ -166,15 +166,17 @@ function taskTransitionLogs(step: TaskGraphStep) {
       at,
       level: t.to === "failed" ? "error" : "info",
       source: "tasks",
-      message: `task ${t.taskId}: ${t.from} → ${t.to}${t.reason ? ` (${t.reason})` : ""}`,
+      message: sanitizeText(`task ${t.taskId}: ${t.from} → ${t.to}${t.reason ? ` (${t.reason})` : ""}`),
     }));
   if (step.rejected) {
     const r = step.rejected;
     const message =
       r.kind === "unknown-task"
         ? `task transition refused: unknown task ${r.taskId}`
-        : `task transition refused: ${r.taskId} ${r.from} → ${r.to} is not allowed`;
-    lines.push({ at, level: "warn" as const, source: "tasks", message });
+        : r.kind === "dependency-failed"
+          ? `task transition refused: ${r.taskId} stays blocked until dependency ${r.blockedBy} is retried`
+          : `task transition refused: ${r.taskId} ${r.from} → ${r.to} is not allowed`;
+    lines.push({ at, level: "warn" as const, source: "tasks", message: sanitizeText(message) });
   }
   return lines;
 }
