@@ -32,6 +32,17 @@ export async function connectMcpServerTools(
   opts: McpServerToolsOptions = {},
 ): Promise<ConnectedMcpServer> {
   const serverName = opts.serverName ?? `stdio:${command}`;
+  // Fail closed, and decide before anything is started. The fingerprint depends only on the command and its arguments,
+  // so the decision needs no connection. A server with no policy, or one the policy does not allow, is never spawned,
+  // and its tools are never listed.
+  if (!opts.trust) {
+    throw new Error(`[mcp-trust] refusing to connect "${command}": no MCP trust policy was provided`);
+  }
+  const decision = await opts.trust.decideServer(serverName, mcpServerFingerprint({ kind: "stdio", command, args }));
+  if (!decision.allowed) {
+    throw new Error(`[mcp-trust] ${decision.reason}`);
+  }
+
   const connection = await connectMcpServerV2({
     kind: "stdio",
     command,
@@ -40,18 +51,8 @@ export async function connectMcpServerTools(
     ...(opts.elicitation ? { elicitation: opts.elicitation } : {}),
   });
 
-  let security: McpSecurityOverride = { ...opts.security };
-  let toolSecurity: Record<string, McpSecurityOverride> = {};
-  if (opts.trust) {
-    const fingerprint = mcpServerFingerprint(connection.descriptor);
-    const decision = await opts.trust.decideServer(serverName, fingerprint);
-    if (!decision.allowed) {
-      await connection.close();
-      throw new Error(`[mcp-trust] ${decision.reason}`);
-    }
-    security = { ...security, ...decision.rule?.security };
-    toolSecurity = decision.rule?.toolSecurity ?? {};
-  }
+  const security: McpSecurityOverride = { ...opts.security, ...decision.rule?.security };
+  const toolSecurity: Record<string, McpSecurityOverride> = decision.rule?.toolSecurity ?? {};
 
   const tools: McpToolAdapter[] = [];
   for (const discovered of connection.tools) {
@@ -61,12 +62,16 @@ export async function connectMcpServerTools(
       ? { ...security, ...toolSecurity[discovered.name] }
       : security;
     const metadata = mcpSecurityMetadata(discovered, override);
-    if (opts.trust && !opts.trust.decideTool(serverName, discovered.name, metadata.risk).allowed) continue;
+    if (!opts.trust.decideTool(serverName, discovered.name, metadata.risk).allowed) continue;
     tools.push(
       new McpToolAdapter(
         {
           callTool: async (request) => {
-            const result = await connection.client.callTool({ name: request.name, arguments: request.arguments });
+            // The call's cancellation and timeout reach the server, so a stopped run stops there too.
+            const result = await connection.client.callTool(
+              { name: request.name, arguments: request.arguments },
+              { signal: request.signal, timeout: request.timeoutMs },
+            );
             return result as unknown as Record<string, unknown>;
           },
         },

@@ -5,32 +5,20 @@
  * security overrides).
  */
 
-import { connectMcpServerV2 } from "./adapter/mcp-client-factory.js";
-import { McpToolAdapter } from "./adapter/mcp-tool-adapter.js";
+import { connectMcpServerTools, type McpServerToolsOptions } from "./adapter/mcp-server-tools.js";
 import type { Tool } from "../tools/tool.js";
 
-export async function connectMcpServer(command: string, args: string[] = []): Promise<Tool[]> {
-  const connection = await connectMcpServerV2({ kind: "stdio", command, args });
-  return connection.tools.map(
-    (t) =>
-      new McpToolAdapter(
-        {
-          callTool: async (request) => {
-            const result = await connection.client.callTool({
-              name: request.name,
-              arguments: request.arguments,
-            });
-            return result as unknown as Record<string, unknown>;
-          },
-        },
-        {
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          annotations: t.annotations,
-        },
-      ),
-  );
+/**
+ * Connects one stdio server. It requires a trust policy in `opts.trust`; without one, or when the policy does not allow
+ * the server, it refuses before the server process starts.
+ */
+export async function connectMcpServer(
+  command: string,
+  args: string[] = [],
+  opts: McpServerToolsOptions = {},
+): Promise<Tool[]> {
+  const { tools } = await connectMcpServerTools(command, args, opts);
+  return tools;
 }
 
 export {

@@ -56,7 +56,8 @@ describe("AgentToolManager.registerMcpServer — trust gating", () => {
     await expect(mgr.registerMcpServer("npx", ["srv"])).rejects.toThrow(/\[mcp-trust\]/);
     expect(mockConnect).not.toHaveBeenCalled();
   });
-  it("trust:untrusted → refuses, closes the connection, registers nothing", async () => {
+  it("trust:untrusted → refused before the server is spawned, so there is nothing to close", async () => {
+    mockConnect.mockClear();
     const conn = fakeConnection([discovered("alpha")]);
     mockConnect.mockResolvedValueOnce(conn);
 
@@ -66,7 +67,8 @@ describe("AgentToolManager.registerMcpServer — trust gating", () => {
     await expect(mgr.registerMcpServer("npx", ["srv"], { serverName: "evil", trust: policy })).rejects.toThrow(
       /untrusted by policy/,
     );
-    expect(conn.close).toHaveBeenCalledTimes(1);
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(conn.close).not.toHaveBeenCalled();
   });
 
   it("trust:ask → denied without approval, allowed with a TOFU record", async () => {
