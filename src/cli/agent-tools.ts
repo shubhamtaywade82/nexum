@@ -221,9 +221,10 @@ export class AgentToolManager {
    * `read_file` or `run_shell` would silently replace the built-in tool, its workspace guard and
    * its policy metadata.
    *
-   * Each adapter's own security metadata (risk from the server's read-only / destructive hints,
-   * confirmation, timeout, side effects) is what the gateway enforces. The generic "MCP" category
-   * defaults would register every MCP tool, destructive ones included, as read-risk.
+   * Each adapter's own security metadata (risk from the overrides in the trust policy, a tool with none
+   * being high risk; confirmation, timeout, side effects) is what the gateway enforces. The server's own
+   * hints are never used for this. The generic "MCP" category defaults would register every MCP tool,
+   * destructive ones included, as read-risk.
    */
   registerMcpTools(tools: McpToolAdapter[]): { registered: McpToolAdapter[]; skipped: string[] } {
     const registered: McpToolAdapter[] = [];

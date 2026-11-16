@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpHub } from "../../src/host/mcp-hub.js";
@@ -26,13 +26,24 @@ async function processExited(pid: number): Promise<boolean> {
 }
 
 describe("McpHub", () => {
+  it("refuses to connect a server when no trust policy was given, and starts no process", async () => {
+    const pidFile = join(dir, "no-policy-pids");
+    const hub = new McpHub([fixtureServer({}, pidFile)], undefined);
+    hubs.push(hub);
+    await hub.start();
+    expect(hub.describe()).toEqual([{ name: "fixture", trust: "trusted", status: "denied", tools: 0 }]);
+    expect(existsSync(pidFile)).toBe(false); // the fixture writes its pid when it starts; it never started
+  });
+
   const dir = mkdtempSync(join(tmpdir(), "mcp-hub-"));
   const hubs: McpHub[] = [];
   afterAll(async () => {
     await Promise.all(hubs.map((h) => h.stop()));
     rmSync(dir, { recursive: true, force: true });
   });
-  const startHub = async (servers: McpCliServerConfig[], trust?: ReturnType<typeof mcpTrustPolicyFromConfig>) => {
+  // The host always supplies a policy (the agent builds one from its configuration). Listed servers are trusted by rule,
+  // so the default here is the same policy the host builds for the same configuration.
+  const startHub = async (servers: McpCliServerConfig[], trust = mcpTrustPolicyFromConfig(servers)) => {
     const hub = new McpHub(servers, trust);
     hubs.push(hub);
     await hub.start();

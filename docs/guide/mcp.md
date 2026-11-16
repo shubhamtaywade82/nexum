@@ -54,11 +54,15 @@ Listing a server in your own `config.json` is consent to connect it — plain en
 }
 ```
 
-| Field     | Values                                              | Meaning                                                                                                |
-| --------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `trust`   | `trusted` \| `ask` \| `untrusted`                   | Server-level gate. `ask` = connect only with a recorded approval; `untrusted` = never connect          |
-| `tools`   | `{ "allow": [...], "deny": [...] }`                 | Tool-name patterns (`*` and `?`). Deny always wins; an allow list alone acts as a whitelist            |
-| `maxRisk` | `read` \| `low` \| `medium` \| `high` \| `critical` | Tools whose effective risk (inferred from MCP annotations + overrides) is above the ceiling are denied |
+| Field     | Values                                              | Meaning                                                                                                                                                   |
+| --------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trust`   | `trusted` \| `ask` \| `untrusted`                   | Server-level gate. `ask` = connect only with a recorded approval; `untrusted` = never connect                                                             |
+| `tools`   | `{ "allow": [...], "deny": [...] }`                 | Tool-name patterns (`*` and `?`). Deny always wins; an allow list alone acts as a whitelist                                                               |
+| `maxRisk` | `read` \| `low` \| `medium` \| `high` \| `critical` | Tools whose effective risk is above the ceiling are denied. Effective risk comes from `security` and `toolSecurity` overrides; a tool with none is `high` |
+
+**A server's own annotations are never used.** A server's `readOnlyHint` and similar hints are shown for information only. They do not set risk, because a server could declare its own tools read-only to lower their risk. A tool is `high` until its risk is set with an override.
+
+**A denied server never starts.** The trust decision is made before the server process is started, so a server that is not allowed runs no code and lists no tools. Calling the connection function without a policy is refused in the same way.
 
 **`ask` and trust-on-first-use.** An `ask` server connects only after an approval. Approvals live in `.nexum/mcp-trust.json` and are **pinned to the server's fingerprint** (hash of its command+args or URL) — if the server binary or URL changes, the old approval no longer applies and the server asks again. Programmatically, an `approver` callback can resolve the prompt interactively; without an approver or recorded approval, an `ask` server is denied — it never silently connects.
 
