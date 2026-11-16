@@ -1,54 +1,47 @@
 /**
- * MCP security metadata (review item 20).
+ * MCP security metadata (review item 20, hardened).
  *
- * MCP-discovered tools get the SAME treatment as native tools: explicit
- * risk, capabilities, side effects, idempotency, timeout, network
- * requirements, and confirmation requirement — inferred from the MCP
- * tool annotations when present, conservatively defaulted when absent,
- * and overridable per server.
+ * Authorization metadata for an MCP tool is decided ONLY by the local configuration. The server that
+ * owns the tool is a remote party: its annotations (readOnlyHint, destructiveHint, idempotentHint,
+ * openWorldHint) are advisory and must never be the reason a call runs without confirmation. A server
+ * that lies about readOnlyHint would otherwise lower risk, drop confirmation and clear external
+ * mutation in one stroke.
  *
- * The ToolGateway's policy/capability/budget stages then enforce MCP
- * tools exactly like filesystem/git tools — no "MCP is special" path.
+ * Defaults for an unclassified tool are the strictest the gateway understands: high risk, confirmation
+ * required, external mutation, no idempotency. Only an explicit local override (the user's trust
+ * configuration) can lower any of them. Annotations stay available as display hints; see
+ * `mcpServerHints`.
  */
 
 import type { ToolDefinition, ToolRisk } from "../../core/tools/tool-contract.js";
 import type { McpDiscoveredTool } from "./mcp-client-factory.js";
 import type { ConnectMcpServerOptions } from "./mcp-client-factory.js";
 
+/** Locally declared classification for an MCP tool or every tool of a server. */
 export interface McpSecurityOverride {
   risk?: ToolRisk;
   confirmation?: "never" | "optional" | "required";
   timeoutMs?: number;
   networkRequired?: boolean;
   externalMutation?: boolean;
+  /** Locally declared idempotency. A server's idempotentHint is never trusted for this. */
+  idempotent?: boolean;
 }
 
-/** Inference from MCP annotations → ToolDefinition metadata (item 20). */
+/**
+ * Authorization metadata for an MCP tool. The discovered tool's annotations are deliberately NOT read:
+ * `_tool` is accepted so callers keep one signature, and so that a future reader cannot quietly start
+ * using hints for authorization without changing this function.
+ */
 export function mcpSecurityMetadata(
-  tool: McpDiscoveredTool,
-  serverOverride: McpSecurityOverride = {},
+  _tool: McpDiscoveredTool,
+  localOverride: McpSecurityOverride = {},
 ): Pick<ToolDefinition, "risk" | "sideEffects" | "execution" | "policy" | "network"> {
-  const a = tool.annotations;
-
-  // risk: destructive hints escalate; read-only hints de-escalate
-  let risk: ToolRisk = "medium"; // conservative default for unknown MCP tools
-  if (a?.readOnlyHint === true) risk = "low";
-  if (a?.destructiveHint === true) risk = "high";
-  if (serverOverride.risk) risk = serverOverride.risk;
-
-  // side effects: unknown MCP tools are network + potentially mutating
-  const networkRequired = serverOverride.networkRequired ?? true;
-  const externalMutation = serverOverride.externalMutation ?? !(a?.readOnlyHint === true);
-
-  // idempotency from the annotation
-  const idempotent = a?.idempotentHint === true;
-
-  // confirmation: required for high/critical risk or financial-looking
-  const confirmation: "never" | "optional" | "required" =
-    serverOverride.confirmation ??
-    (risk === "high" || risk === "critical" ? "required" : a?.readOnlyHint === true ? "optional" : "optional");
-
-  const openWorld = a?.openWorldHint === true;
+  const risk: ToolRisk = localOverride.risk ?? "high";
+  const confirmation = localOverride.confirmation ?? "required";
+  const networkRequired = localOverride.networkRequired ?? true;
+  const externalMutation = localOverride.externalMutation ?? true;
+  const idempotent = localOverride.idempotent === true;
 
   return {
     risk,
@@ -60,7 +53,7 @@ export function mcpSecurityMetadata(
       financial: false,
     },
     execution: {
-      timeoutMs: serverOverride.timeoutMs ?? 60_000,
+      timeoutMs: localOverride.timeoutMs ?? 60_000,
       concurrency: 2, // remote servers: be gentle
       idempotent,
       reversible: false,
@@ -69,10 +62,23 @@ export function mcpSecurityMetadata(
     policy: { confirmation },
     network: {
       required: networkRequired,
-      egress: openWorld ? [] : [], // unknown hosts by default; profiles decide
-      proxyable: !openWorld,
+      egress: [], // unknown hosts by default; profiles decide
+      proxyable: true,
     },
   };
+}
+
+/**
+ * The server's own annotations, for display only (UI badges, audit logs). Never an input to
+ * authorization: `mcpSecurityMetadata` does not read them.
+ */
+export function mcpServerHints(annotations: McpDiscoveredTool["annotations"]): Readonly<Record<string, boolean>> {
+  if (!annotations) return {};
+  const hints: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(annotations as Record<string, unknown>)) {
+    if (typeof value === "boolean") hints[key] = value;
+  }
+  return Object.freeze(hints);
 }
 
 export type { ConnectMcpServerOptions };

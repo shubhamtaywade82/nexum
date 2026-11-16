@@ -52,6 +52,8 @@ export interface McpServerTrustRule {
   maxRisk?: ToolRisk;
   /** Security overrides merged into every allowed tool of matched servers. */
   security?: McpSecurityOverride;
+  /** Local classification per tool name (exact match). Overrides `security` for that tool. */
+  toolSecurity?: Record<string, McpSecurityOverride>;
 }
 
 export type McpTrustSource =
@@ -246,7 +248,13 @@ export class McpTrustPolicy {
     const hit = this.ruleFor(server);
     const level = hit?.rule.trust ?? this.defaultTrust;
     const ruleFields = hit
-      ? { trust: hit.rule.trust, tools: hit.rule.tools, maxRisk: hit.rule.maxRisk, security: hit.rule.security }
+      ? {
+          trust: hit.rule.trust,
+          tools: hit.rule.tools,
+          maxRisk: hit.rule.maxRisk,
+          security: hit.rule.security,
+          toolSecurity: hit.rule.toolSecurity,
+        }
       : undefined;
 
     if (level === "trusted") {
@@ -358,21 +366,29 @@ export interface McpServerTrustConfig {
   tools?: McpToolRule;
   /** Risk ceiling for this server's tools. */
   maxRisk?: ToolRisk;
+  /** Local classification applied to every tool of this server. */
+  security?: McpSecurityOverride;
+  /** Local classification per tool name. */
+  toolSecurity?: Record<string, McpSecurityOverride>;
 }
 
-/** Build a policy from config entries. Entries without a trust field are
- * explicitly listed by the user in their own config — that listing is
- * consent, so they default to "trusted" (current behavior preserved). */
+/** Build a policy from config entries. Every entry the user lists in their own config is consent to
+ * connect it, so listed servers default to "trusted". A server that no entry lists is NOT trusted: it
+ * cannot connect and cannot register tools. */
 export function mcpTrustPolicyFromConfig(
-  servers: Array<{ name: string; trust?: McpTrustLevel; tools?: McpToolRule; maxRisk?: ToolRisk }>,
+  servers: Array<McpServerTrustConfig & { name: string }>,
   opts: Pick<McpTrustPolicyOptions, "approver" | "approvals"> = {},
 ): McpTrustPolicy {
   return new McpTrustPolicy({
-    rules: servers
-      .filter((s) => s.trust !== undefined || s.tools !== undefined || s.maxRisk !== undefined)
-      .map((s) => ({ match: s.name, trust: s.trust, tools: s.tools, maxRisk: s.maxRisk })),
-    // Config-listed servers without rules keep today's connect-freely behavior.
-    defaultTrust: "trusted",
+    rules: servers.map((s) => ({
+      match: s.name,
+      trust: s.trust ?? "trusted",
+      tools: s.tools,
+      maxRisk: s.maxRisk,
+      security: s.security,
+      toolSecurity: s.toolSecurity,
+    })),
+    defaultTrust: "untrusted",
     ...opts,
   });
 }

@@ -256,7 +256,7 @@ export class Agent {
     autoPlan: "ask" | "always" | "off";
   };
   /** P2 trust tier: built from config when any server sets trust/tools/maxRisk. */
-  private readonly mcpTrust?: McpTrustPolicy;
+  private readonly mcpTrust: McpTrustPolicy;
   private readonly autoApproveFlag: boolean;
   /** Set per run by the host (CreateRunRequest.approvalMode); confirmations it covers are never asked. */
   approvalMode: ApprovalMode = "ask";
@@ -376,21 +376,17 @@ export class Agent {
       new WorkspaceManager(cfg.workspaceRoot).ensure(),
     );
 
-    // P2 trust tier: entries with trust/tools/maxRisk gates get a policy;
-    // entries without keep the connect-freely behavior (listing = consent).
-    this.mcpTrust = this.mcpServerConfigs.some(
-      (s) => s.trust !== undefined || s.tools !== undefined || s.maxRisk !== undefined,
-    )
-      ? mcpTrustPolicyFromConfig(this.mcpServerConfigs, {
-          // approvals stored in an untrusted workspace are repository
-          // content: ignore them (servers needing approval then ask)
-          approvals: cfg.workspaceTrust?.trusted
-            ? new McpApprovalStore(join(statePaths.dir, "mcp-trust.json"), (write) =>
-                preservingTrust(cfg.workspaceRoot, trustStore, write),
-              )
-            : undefined,
-        })
-      : undefined;
+    // MCP trust is always enforced. Listing a server in configuration is consent (trusted by rule);
+    // any server nobody lists is untrusted and is refused before it is spawned.
+    this.mcpTrust = mcpTrustPolicyFromConfig(this.mcpServerConfigs, {
+      // approvals stored in an untrusted workspace are repository
+      // content: ignore them (servers needing approval then ask)
+      approvals: cfg.workspaceTrust?.trusted
+        ? new McpApprovalStore(join(statePaths.dir, "mcp-trust.json"), (write) =>
+            preservingTrust(cfg.workspaceRoot, trustStore, write),
+          )
+        : undefined,
+    });
 
     this.memory = new MemoryStore(statePaths.memoryDb);
     this.planCheckpoint = new CheckpointStore(statePaths.checkpoint);

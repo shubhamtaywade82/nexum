@@ -1,6 +1,5 @@
 import { Registry } from "../tools/registry.js";
 import { Tool } from "../tools/tool.js";
-import { connectMcpServer } from "../mcp/client.js";
 import { connectMcpServerTools, type McpServerToolsOptions } from "../mcp/adapter/mcp-server-tools.js";
 import type { McpToolAdapter } from "../mcp/adapter/mcp-tool-adapter.js";
 import type { LocalWorker } from "../models/local-worker.js";
@@ -180,13 +179,10 @@ export class AgentToolManager {
   /** Options for MCP registration with trust gating (P2 trust tier).
    * Without opts the connect-freely legacy path is used unchanged. */
   async registerMcpServer(command: string, args: string[] = [], opts: McpRegistrationOptions = {}): Promise<Tool[]> {
-    if (!opts.trust && !opts.security && !opts.elicitation && !opts.env) {
-      // Legacy path — no policy, no overrides, and no protocol callbacks; behavior identical to before.
-      const tools = await connectMcpServer(command, args);
-      for (const tool of tools) this.registerTool(tool, "MCP");
-      return tools;
+    // Fail closed: a server connects only under an explicit trust policy, refused before anything is spawned.
+    if (!opts.trust) {
+      throw new Error(`[mcp-trust] refusing to connect "${command}": no MCP trust policy was provided`);
     }
-
     const { tools } = await connectMcpServerTools(command, args, opts);
     return this.registerMcpTools(tools).registered;
   }

@@ -21,17 +21,20 @@ import { executionPolicyFor } from "../../src/domains/trading/execution/executor
 import { defaultStrategyRegistry } from "../../src/runtime/agent/agent-runtime.js";
 
 describe("MCP adapter contract (items 19, 20)", () => {
-  it("discovered tools carry full security metadata inferred from annotations (item 20)", () => {
+  it("server annotations never drive authorization; only local classification does (item 20)", () => {
     const readOnly = mcpSecurityMetadata({
       name: "search_docs",
       description: "search",
       inputSchema: {},
       annotations: { readOnlyHint: true, idempotentHint: true },
     });
-    expect(readOnly.risk).toBe("low");
+    // A server claiming read-only + idempotent gets no benefit of the doubt.
+    expect(readOnly.risk).toBe("high");
+    expect(readOnly.policy.confirmation).toBe("required");
+    expect(readOnly.sideEffects.externalMutation).toBe(true);
     expect(readOnly.sideEffects.network).toBe(true);
     expect(readOnly.sideEffects.filesystem).toBe(false);
-    expect(readOnly.execution.idempotent).toBe(true);
+    expect(readOnly.execution.idempotent).toBe(false);
 
     const destructive = mcpSecurityMetadata({
       name: "delete_record",
@@ -43,12 +46,18 @@ describe("MCP adapter contract (items 19, 20)", () => {
     expect(destructive.policy.confirmation).toBe("required");
 
     const unknown = mcpSecurityMetadata({ name: "mystery", description: "", inputSchema: {} });
-    expect(unknown.risk).toBe("medium"); // conservative default
-    expect(unknown.sideEffects.externalMutation).toBe(true);
-    expect(unknown.execution.timeoutMs).toBe(60_000);
-    expect(unknown.network?.required).toBe(true);
-  });
+    expect(unknown.risk).toBe("high"); // strictest default
+    expect(unknown.policy.confirmation).toBe("required");
 
+    // Only the local configuration may classify a tool as read-only.
+    const classified = mcpSecurityMetadata(
+      { name: "search_docs", description: "search", inputSchema: {}, annotations: { readOnlyHint: true } },
+      { risk: "read", confirmation: "never", externalMutation: false, idempotent: true },
+    );
+    expect(classified.risk).toBe("read");
+    expect(classified.policy.confirmation).toBe("never");
+    expect(classified.execution.idempotent).toBe(true);
+  });
   it("server-level overrides tighten (never loosen) per-tool metadata (item 20)", () => {
     const meta = mcpSecurityMetadata(
       { name: "tool", description: "", inputSchema: {} },

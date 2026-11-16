@@ -41,6 +41,7 @@ export async function connectMcpServerTools(
   });
 
   let security: McpSecurityOverride = { ...opts.security };
+  let toolSecurity: Record<string, McpSecurityOverride> = {};
   if (opts.trust) {
     const fingerprint = mcpServerFingerprint(connection.descriptor);
     const decision = await opts.trust.decideServer(serverName, fingerprint);
@@ -49,12 +50,17 @@ export async function connectMcpServerTools(
       throw new Error(`[mcp-trust] ${decision.reason}`);
     }
     security = { ...security, ...decision.rule?.security };
+    toolSecurity = decision.rule?.toolSecurity ?? {};
   }
 
   const tools: McpToolAdapter[] = [];
   for (const discovered of connection.tools) {
-    // Effective risk first (inference + overrides) so the ceiling sees what the gateway will enforce.
-    const metadata = mcpSecurityMetadata(discovered, security);
+    // Local classification only: the server's annotations never reach authorization. Effective risk
+    // (server-wide override, then the per-tool override) is what the ceiling and the gateway enforce.
+    const override: McpSecurityOverride = Object.hasOwn(toolSecurity, discovered.name)
+      ? { ...security, ...toolSecurity[discovered.name] }
+      : security;
+    const metadata = mcpSecurityMetadata(discovered, override);
     if (opts.trust && !opts.trust.decideTool(serverName, discovered.name, metadata.risk).allowed) continue;
     tools.push(
       new McpToolAdapter(
@@ -70,7 +76,7 @@ export async function connectMcpServerTools(
           inputSchema: discovered.inputSchema,
           annotations: discovered.annotations,
         },
-        security,
+        override,
       ),
     );
   }

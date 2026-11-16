@@ -49,17 +49,13 @@ beforeEach(() => {
 });
 
 describe("AgentToolManager.registerMcpServer — trust gating", () => {
-  it("no opts → legacy path registers every discovered tool", async () => {
-    const conn = fakeConnection([discovered("alpha"), discovered("beta")]);
-    mockConnect.mockResolvedValueOnce(conn);
-
+  it("no trust policy → refused before the server is spawned", async () => {
+    mockConnect.mockClear();
     const mgr = new AgentToolManager();
-    const tools = await mgr.registerMcpServer("npx", ["srv"]);
 
-    expect(tools.map((t) => t.name)).toEqual(["alpha", "beta"]);
-    expect(conn.close).not.toHaveBeenCalled();
+    await expect(mgr.registerMcpServer("npx", ["srv"])).rejects.toThrow(/\[mcp-trust\]/);
+    expect(mockConnect).not.toHaveBeenCalled();
   });
-
   it("trust:untrusted → refuses, closes the connection, registers nothing", async () => {
     const conn = fakeConnection([discovered("alpha")]);
     mockConnect.mockResolvedValueOnce(conn);
@@ -99,24 +95,30 @@ describe("AgentToolManager.registerMcpServer — trust gating", () => {
     }
   });
 
-  it("deny patterns and risk ceilings filter the registered set", async () => {
+  it("deny patterns and local risk classifications filter the registered set", async () => {
     const conn = fakeConnection([
-      discovered("query_rows", { readOnlyHint: true }), // → low risk
-      discovered("drop_table"), // → medium (unknown default)
-      discovered("nuke_all", { destructiveHint: true }), // → high
+      discovered("query_rows", { readOnlyHint: true }), // the server says read-only: not trusted
+      discovered("drop_table"), // denied by pattern
+      discovered("nuke_all", { destructiveHint: true }), // unclassified → high > medium ceiling
     ]);
     mockConnect.mockResolvedValueOnce(conn);
 
     const mgr = new AgentToolManager();
     const policy = new McpTrustPolicy({
-      rules: [{ match: "db", tools: { deny: ["drop_*"] }, maxRisk: "medium" }],
+      rules: [
+        {
+          match: "db",
+          tools: { deny: ["drop_*"] },
+          maxRisk: "medium",
+          // Only the local configuration may classify query_rows as read.
+          toolSecurity: { query_rows: { risk: "read", confirmation: "never", externalMutation: false } },
+        },
+      ],
     });
 
     const tools = await mgr.registerMcpServer("npx", ["srv"], { serverName: "db", trust: policy });
-    // drop_table: denied by pattern; nuke_all: risk high > medium ceiling
     expect(tools.map((t) => t.name)).toEqual(["query_rows"]);
   });
-
   it("security overrides reach the adapters", async () => {
     const conn = fakeConnection([discovered("create_issue")]);
     mockConnect.mockResolvedValueOnce(conn);
@@ -124,6 +126,7 @@ describe("AgentToolManager.registerMcpServer — trust gating", () => {
     const mgr = new AgentToolManager();
     const tools = await mgr.registerMcpServer("npx", ["srv"], {
       serverName: "github",
+      trust: new McpTrustPolicy({}),
       security: { risk: "critical", confirmation: "required" },
     });
 
@@ -133,7 +136,6 @@ describe("AgentToolManager.registerMcpServer — trust gating", () => {
     expect(adapter.security.risk).toBe("critical");
     expect(adapter.security.policy.confirmation).toBe("required");
   });
-
   it("rule security merges with caller overrides (rule wins per-field)", async () => {
     const conn = fakeConnection([discovered("create_issue")]);
     mockConnect.mockResolvedValueOnce(conn);

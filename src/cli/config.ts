@@ -10,6 +10,7 @@ import {
   workspaceStateDir,
 } from "../platform/paths.js";
 import type { McpServerTrustConfig, McpToolRule } from "../mcp/trust.js";
+import type { McpSecurityOverride } from "../mcp/adapter/security-metadata.js";
 
 export interface LanguageOverride {
   enabled?: boolean;
@@ -143,6 +144,10 @@ export interface McpCliServerConfig {
   trust?: McpServerTrustConfig["trust"];
   tools?: McpToolRule;
   maxRisk?: McpServerTrustConfig["maxRisk"];
+  /** Local classification for every tool of this server. A server's own annotations are never trusted. */
+  security?: McpSecurityOverride;
+  /** Local classification per tool name, e.g. { "query_rows": { "risk": "read", "confirmation": "never" } }. */
+  toolSecurity?: Record<string, McpSecurityOverride>;
   /** Extra environment for the server process; `credential:NAME` values resolve via CredentialService. */
   env?: Record<string, string>;
 }
