@@ -31,6 +31,12 @@ export interface CliConfig {
   host?: string;
   apiKey?: string;
   timeoutMs?: number;
+  /** Run-level spend ceiling in USD the dispatcher enforces: cloud calls whose
+   * worst-case cost cannot fit in the remaining budget are refused BEFORE they
+   * bill (admission), and every returned call's estimated cost counts against
+   * it. NEXUM_MAX_COST_USD / maxCostUsd in .nexum/config.json. Unset = no
+   * spend ceiling (tokens and call counts still apply). */
+  maxCostUsd?: number;
   systemPrompt?: string;
   shellImage?: string;
   shellTimeoutSec?: number;
@@ -189,6 +195,8 @@ interface ConfigFile {
    * billing) — this only computes a cost estimate if you supply your own
    * real rate. Omit to leave cost tracking off (the honest default). */
   pricing?: { inputPerMillion: number; outputPerMillion: number };
+  /** Run-level spend ceiling (USD) — see CliConfig.maxCostUsd. */
+  maxCostUsd?: number;
   mcpServers?: McpCliServerConfig[];
   enableDecision?: boolean;
   /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
@@ -488,6 +496,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
       ? { inputPerMillion, outputPerMillion }
       : undefined;
 
+  // Run-level spend ceiling (USD): env NEXUM_MAX_COST_USD wins, then the config
+  // file. Positive finite number only — anything else means "no ceiling".
+  const maxCostRaw = Number(readEnv("NEXUM_MAX_COST_USD") || String(file.maxCostUsd ?? ""));
+  const maxCostUsd = Number.isFinite(maxCostRaw) && maxCostRaw > 0 ? maxCostRaw : undefined;
+
   const tier: CliConfig["tier"] = (readEnv("TIER") || file.tier) === "cloud" ? "cloud" : "local";
 
   // Quick model: env var wins, then config file. When absent, localWorker and
@@ -548,6 +561,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     autoApprove: readEnvFlag("AUTO_APPROVE", file.autoApprove ?? false),
     autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
+    maxCostUsd,
     mcpServers: file.mcpServers,
     // Decision Plane (System One): on by default in the local tier; auto-disabled
     // in a cloud tier (System One is local-only — the gateway itself enforces this

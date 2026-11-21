@@ -28,6 +28,7 @@ import { OllamaSystemOneClient } from "../../models/decision/ollama-system-one-c
 import { DefaultModelGateway } from "../../models/gateway/model-gateway.js";
 import { InferenceDispatcher, type ChatPort } from "../../models/gateway/inference-dispatcher.js";
 import { routeWithFallbackOn } from "../../models/gateway/route-fallback.js";
+import { ModelUsageLedger } from "../../models/observability/usage-ledger.js";
 import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
 
 export type StatusEmitter = (message: string) => void;
@@ -48,6 +49,8 @@ export interface ModelStackOptions {
   decisionGateway?: DecisionGateway;
   /** Budget every model call is recorded against, through the dispatcher and the gateway. */
   budget?: BudgetTracker;
+  /** Per-call usage ledger; defaults to a process-wide JSONL-persisted ledger. Pass { persist: false } to keep it in memory. */
+  ledger?: ModelUsageLedger;
 }
 
 /**
@@ -95,6 +98,8 @@ export class ModelStack {
   readonly dispatcher: InferenceDispatcher;
   /** Capability routing and explicit-model calls, recording through the same dispatcher. */
   readonly gateway: DefaultModelGateway;
+  /** Per-call usage ledger: every dispatched call lands here, including failures. */
+  readonly usageLedger: ModelUsageLedger;
 
   readonly heuristicRouter: HeuristicRouter | undefined;
   readonly localWorker: LocalWorker | undefined;
@@ -209,6 +214,7 @@ export class ModelStack {
       },
       budget: opts.budget,
       registry: this.modelProfiles,
+      ledger: (this.usageLedger = opts.ledger ?? new ModelUsageLedger()),
     });
     this.gateway = new DefaultModelGateway({
       router: this.router,
