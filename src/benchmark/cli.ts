@@ -12,6 +12,7 @@ import { BUILTIN_CASES } from "./cases.js";
 import { buildAgenticCases } from "./cases-agentic.js";
 import { buildHarnessCases } from "./cases-harness.js";
 import { buildExecutionCases } from "./cases-execution.js";
+import { buildGoldenCodingCases } from "./cases-golden-coding.js";
 import { BenchmarkCase } from "./types.js";
 import { scoreByModel, scoreByCategory } from "./score.js";
 import { formatReport, formatCategoryReport } from "./report.js";
@@ -91,9 +92,16 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
   // agentic cases' error-recovery case, which needs a fresh call-count
   // closure per target (see buildAgenticCases/runBenchmark's factory note).
   const executionCases = await buildExecutionCases();
+  const goldenCodingCases = await buildGoldenCodingCases();
   const categoryFilter = values.category;
   const buildCases = (): BenchmarkCase[] => {
-    const all = [...BUILTIN_CASES, ...buildAgenticCases(), ...buildHarnessCases(), ...executionCases];
+    const all = [
+      ...BUILTIN_CASES,
+      ...buildAgenticCases(),
+      ...buildHarnessCases(),
+      ...executionCases,
+      ...goldenCodingCases,
+    ];
     return categoryFilter ? all.filter((c) => c.category === categoryFilter) : all;
   };
 
@@ -102,13 +110,14 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
   // any other model the router still picks is reported in the result's modelsUsed.
   const agentDriver =
     driverName === "agent"
-      ? createAgentDriver(
-          ({ workspaceRoot, target, events }) =>
-            new Agent({
-              config: { ...cfg, workspaceRoot, model: target.model, tier: target.tier, quickModel: target.model },
-              events,
-            }),
-        )
+      ? createAgentDriver(({ workspaceRoot, target, events }) => {
+          const agent = new Agent({
+            config: { ...cfg, workspaceRoot, model: target.model, tier: target.tier, quickModel: target.model },
+            events,
+          });
+          agent.approvalMode = "auto-edit";
+          return agent;
+        })
       : undefined;
 
   const caseCount = buildCases().filter((c) => !agentDriver || c.kind === "agentic").length;

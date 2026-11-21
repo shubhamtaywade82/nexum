@@ -8,7 +8,8 @@ export type BenchmarkCategory =
   | "agentic-looping"
   | "error-recovery"
   | "escalation"
-  | "execution";
+  | "execution"
+  | "golden-coding";
 
 interface BenchmarkCaseBase {
   id: string;
