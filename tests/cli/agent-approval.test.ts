@@ -111,6 +111,17 @@ describe("Agent approval gate", () => {
     expect(await fileExists(target)).toBe(true);
   });
 
+  it("autoApprove runs a plan step's verify command under unattended ceilings instead of refusing it", async () => {
+    (globalThis as any).fetch = mockChatFetch([{ content: "done" }]);
+    const agent = new Agent({
+      config: { workspaceRoot: tempDir, tier: "local", model: "m", autoApprove: true },
+    });
+
+    const result = await agent.runVerificationCommand("true");
+
+    expect(result.output ?? "").not.toMatch(/no budget ceilings/);
+  });
+
   it("requests approval before delete_file and actually deletes once approved", async () => {
     const target = join(tempDir, "doomed.txt");
     await writeFile(target, "bye");

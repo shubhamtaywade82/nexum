@@ -1,4 +1,7 @@
 import { CliConfig, loadConfig, type McpCliServerConfig } from "./config.js";
+import { BudgetTracker } from "../runtime/budget/budget-tracker.js";
+import { budgetContextOf } from "../core/tools/invocation-context.js";
+import { applyUnattendedCeilings } from "../core/policy/unattended-policy.js";
 import { WorkspaceManager } from "../platform/workspace.js";
 import { BRAND } from "../platform/brand.js";
 import { collectCapabilities, type FeatureStatus } from "./capabilities.js";
@@ -1453,7 +1456,12 @@ export class Agent {
    */
   async runVerificationCommand(command: string): Promise<{ exitCode: number; output?: string }> {
     this.emit("onStatus", `verifying: ${command}`);
-    const ctx = { agentId: "devagent", unattended: this.autoApproveFlag, signal: this.execution.signal };
+    // An unattended call must carry run ceilings or the policy refuses it, and a verify command runs
+    // outside any kernel run, so it gets the same ceilings a fresh unattended run would.
+    const budget = this.autoApproveFlag
+      ? budgetContextOf(new BudgetTracker({ budget: applyUnattendedCeilings(undefined) }))
+      : undefined;
+    const ctx = { agentId: "devagent", unattended: this.autoApproveFlag, signal: this.execution.signal, budget };
     let result = await this.tools.gateway.invoke("run_shell", { command }, ctx);
     if (!result.ok && result.error?.code === "ConfirmationRequired") {
       const spec = describeConfirmation("run_shell", { command }, result.error.message);
