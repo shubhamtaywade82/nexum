@@ -4,7 +4,6 @@ import { BudgetManager } from "../../src/runtime/budget/budget-manager.js";
 import { BudgetTracker } from "../../src/runtime/budget/budget-tracker.js";
 import { ModelUsageLedger } from "../../src/models/observability/usage-ledger.js";
 import { MonthlySpendGuard } from "../../src/models/observability/monthly-spend-guard.js";
-import { loadPriceTable } from "../../src/models/profiles/cloud-price-catalog.js";
 import { Provider, type ChatResponse } from "../../src/models/adapters/provider.js";
 
 /** A Provider double that records whether chat() was actually entered. */

@@ -125,10 +125,9 @@ export async function runCloudCheck(opts: CloudCheckOptions = {}): Promise<Cloud
   }
 
   // 3. model listing ────────────────────────────────────────────────────────
-  let modelCount = 0;
   try {
     const listed = (await cloud.availableModels()) as { data?: Array<{ id?: string }> };
-    modelCount = listed.data?.length ?? 0;
+    const modelCount = listed.data?.length ?? 0;
     if (modelCount === 0) {
       lines.push("models: endpoint answered but listed 0 models");
       ok = false;
