@@ -14,6 +14,7 @@ import { GitWorktreeMutationExecutor } from "../../src/evolution/mutation/mutati
 import {
   NEXUM_FAST_PROFILE,
   NEXUM_FULL_PROFILE,
+  NEXUM_SDLC_PROFILE,
   NEXUM_SMOKE_PROFILE,
   verificationProfileByName,
 } from "../../src/evolution/mutation/verification-profile.js";
@@ -202,19 +203,21 @@ describe("evolution CLI production wiring (v2.3.1)", () => {
   });
 
   describe("verificationProfileByName", () => {
-    it("resolves the three tiers; absent name defaults to fast", () => {
+    it("resolves the four tiers; absent name defaults to fast", () => {
       expect(verificationProfileByName()).toBe(NEXUM_FAST_PROFILE);
       expect(verificationProfileByName("smoke")).toBe(NEXUM_SMOKE_PROFILE);
       expect(verificationProfileByName("fast")).toBe(NEXUM_FAST_PROFILE);
       expect(verificationProfileByName("full")).toBe(NEXUM_FULL_PROFILE);
+      expect(verificationProfileByName("sdlc")).toBe(NEXUM_SDLC_PROFILE);
     });
 
-    it("orders the gates: full ⊇ fast ⊇ smoke", () => {
+    it("orders the gates: sdlc ⊇ full ⊇ fast ⊇ smoke", () => {
       expect(NEXUM_FAST_PROFILE.commands.length).toBeGreaterThan(NEXUM_SMOKE_PROFILE.commands.length);
       expect(NEXUM_FULL_PROFILE.commands.slice(0, NEXUM_FAST_PROFILE.commands.length)).toEqual(
         NEXUM_FAST_PROFILE.commands,
       );
       expect(NEXUM_FULL_PROFILE.commands.at(-1)).toEqual(["npm", "test"]);
+      expect(NEXUM_SDLC_PROFILE.commands.length).toBeGreaterThanOrEqual(NEXUM_FULL_PROFILE.commands.length);
     });
 
     it("throws loudly on unknown profile names so typos cannot weaken the gate", () => {

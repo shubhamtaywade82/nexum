@@ -25,6 +25,7 @@ export {
   type PlannerHistoryEntry,
   type PlannerChatClient,
 } from "./planner.js";
+export { validatePlanDag, sanitizePlanDag, type DagValidationResult } from "./dag-validator.js";
 
 // Scheduler + TaskGraph (review items 2, 34)
 export { Scheduler } from "../core/tasks/scheduler.js";

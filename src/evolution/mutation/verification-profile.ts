@@ -25,9 +25,11 @@
  *           opened for a candidate that passes the CI-equivalent gate.
  */
 
+import { resolveKitCliPath } from "../../tools/sdlc-tools.js";
+
 export interface EvolutionVerificationProfile {
   /** Profile name accepted by `nexum evolve --mutate --verify-profile <name>`. */
-  name: "smoke" | "fast" | "full";
+  name: "smoke" | "fast" | "full" | "sdlc";
   /** Human-readable summary of what the gate chain proves. */
   description: string;
   /**
@@ -62,10 +64,24 @@ export const NEXUM_FULL_PROFILE: EvolutionVerificationProfile = {
   commands: [...NEXUM_FAST_PROFILE.commands, ["npm", "test"]],
 };
 
+const resolvedKitCli = resolveKitCliPath();
+
+/** SDLC-level gate: fast checks, full test suite, and SDLC toolchain health check. */
+export const NEXUM_SDLC_PROFILE: EvolutionVerificationProfile = {
+  name: "sdlc",
+  description: "fast gates + npm test + agentic-sdlc-kit verification",
+  commands: [
+    ...NEXUM_FAST_PROFILE.commands,
+    ["npm", "test"],
+    ...(resolvedKitCli ? [[process.execPath, resolvedKitCli, "doctor"]] : []),
+  ],
+};
+
 const PROFILES: Record<EvolutionVerificationProfile["name"], EvolutionVerificationProfile> = {
   smoke: NEXUM_SMOKE_PROFILE,
   fast: NEXUM_FAST_PROFILE,
   full: NEXUM_FULL_PROFILE,
+  sdlc: NEXUM_SDLC_PROFILE,
 };
 
 /**
@@ -77,7 +93,7 @@ export function verificationProfileByName(name?: string): EvolutionVerificationP
   if (!name || name === "fast") return NEXUM_FAST_PROFILE;
   const profile = PROFILES[name as EvolutionVerificationProfile["name"]];
   if (!profile) {
-    throw new Error(`Unknown verification profile "${name}" (expected "smoke", "fast", or "full").`);
+    throw new Error(`Unknown verification profile "${name}" (expected "smoke", "fast", "full", or "sdlc").`);
   }
   return profile;
 }
