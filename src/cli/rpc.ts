@@ -178,5 +178,10 @@ export async function main(argv: string[] = process.argv.slice(3)): Promise<void
     }
   }
 
+  // stdout carries the JSON-RPC stream; a stray console.log from any tool or plugin would corrupt it.
+  const toStderr = (...args: unknown[]) => console.error(...args);
+  console.log = toStderr;
+  console.info = toStderr;
+  console.debug = toStderr;
   await startRpcServer(opts);
 }

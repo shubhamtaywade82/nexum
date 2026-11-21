@@ -197,4 +197,5 @@ if (command === "chat") {
   process.exit(0);
 }
 
-await import("../dist/ui/index.js");
+// rpc and serve keep running on their own handlers; only other commands reach the interactive UI.
+if (command !== "rpc" && command !== "serve") await import("../dist/ui/index.js");
