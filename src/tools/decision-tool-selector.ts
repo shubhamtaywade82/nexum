@@ -155,6 +155,13 @@ export interface DecisionToolSelectorOptions {
   decisionPolicy?: DecisionPolicy;
   /** Maximum tools surfaced to the agent. Default 8. */
   maxActiveTools?: number;
+  /**
+   * The caller guarantees the tool environment is closed (every registered
+   * tool is deliberate — e.g. the benchmark's per-case tool replacement).
+   * With <=3 tools the pool itself is the selection, passed through unscored;
+   * default false keeps domain-based selection.
+   */
+  closedEnvironment?: boolean;
   /** Minimum heuristic score (per domain) above which the heuristic wins
    *  outright and System One is not consulted. Default 1. */
   heuristicThreshold?: number;
@@ -272,6 +279,7 @@ export class DecisionToolSelector {
   private readonly decisionPolicy: DecisionPolicy;
   private readonly maxActiveTools: number;
   private readonly heuristicThreshold: number;
+  private readonly closedEnvironment: boolean;
 
   constructor(opts: DecisionToolSelectorOptions) {
     this.decisionGateway = opts.decisionGateway;
@@ -279,10 +287,19 @@ export class DecisionToolSelector {
     this.decisionPolicy = opts.decisionPolicy ?? defaultDecisionPolicy;
     this.maxActiveTools = opts.maxActiveTools ?? DEFAULT_MAX_ACTIVE_TOOLS;
     this.heuristicThreshold = opts.heuristicThreshold ?? 1;
+    this.closedEnvironment = opts.closedEnvironment ?? false;
   }
 
   async selectTools(prompt: string, history: ChatMessage[], availableTools: Tool[]): Promise<Tool[]> {
     if (availableTools.length === 0) return [];
+
+    // Opt-in passthrough for a small closed tool environment (the agent-driven
+    // benchmark replaces every tool with the case's own 1-3 scripted tools):
+    // none of those tools map to a domain, so both stages below would return
+    // [] and the model would never see the case's tools. Off by default.
+    if (this.closedEnvironment && availableTools.length <= 3) {
+      return availableTools.slice(0, this.maxActiveTools);
+    }
 
     // Stage 1: deterministic domain heuristic. If any domain scores above
     // the threshold, the heuristic wins outright and System One is never

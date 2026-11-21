@@ -37,6 +37,18 @@ export interface CliConfig {
    * it. NEXUM_MAX_COST_USD / maxCostUsd in .nexum/config.json. Unset = no
    * spend ceiling (tokens and call counts still apply). */
   maxCostUsd?: number;
+  /** Cross-session monthly cloud-spend budget (USD) enforced by MonthlySpendGuard:
+   * once the ledger shows spend >= monthlyBudgetUsd - reserveUsd this month, new
+   * automated cloud calls are refused at admission. NEXUM_MONTHLY_BUDGET_USD /
+   * monthlyBudgetUsd in .nexum/config.json. Default 48; unset disables nothing
+   * (the guard uses the default) — set reserveUsd: 0 to disable the reserve. */
+  monthlyBudgetUsd?: number;
+  /** Credit held back from automated spend within the monthly budget (USD) —
+   * manual/emergency headroom. NEXUM_RESERVE_USD / reserveUsd. Default 12. */
+  reserveUsd?: number;
+  /** Max in-flight cloud-tier model calls for the whole process (the dispatcher's
+   * per-tier gate). NEXUM_CLOUD_CONCURRENCY / cloudConcurrency. Default 3. */
+  cloudConcurrency?: number;
   systemPrompt?: string;
   shellImage?: string;
   shellTimeoutSec?: number;
@@ -197,6 +209,10 @@ interface ConfigFile {
   pricing?: { inputPerMillion: number; outputPerMillion: number };
   /** Run-level spend ceiling (USD) — see CliConfig.maxCostUsd. */
   maxCostUsd?: number;
+  /** Cross-session monthly budget / reserve / cloud concurrency — see CliConfig. */
+  monthlyBudgetUsd?: number;
+  reserveUsd?: number;
+  cloudConcurrency?: number;
   mcpServers?: McpCliServerConfig[];
   enableDecision?: boolean;
   /** Plugin/settings profile the agent host mounts (built-in: nexum-cli, nexum-server, nexum-crypto-bot; or a user profile id). */
@@ -218,6 +234,24 @@ const LEGACY_GLOBAL_CONFIG_DIR = legacyGlobalStateDir();
 /** Remove `//` and `/* *`/ comments, leaving string literals (URLs, prompts)
  * untouched. Only ever applied after a strict JSON.parse has already failed,
  * so a valid config is never handed to it. */
+/** Positive finite number from env-or-file value; anything else = undefined. */
+function finitePositive(raw: string | number | undefined): number | undefined {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Non-negative finite number (0 allowed — it is a valid "disable" for reserves); else undefined. */
+function finiteNonNegative(raw: string | number | undefined): number | undefined {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/** Integer >= 1 from env-or-file value; anything else = undefined (default applies). */
+function intAtLeastOne(raw: string | number | undefined): number | undefined {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : undefined;
+}
+
 function stripJsonComments(raw: string): string {
   let out = "";
   let inString = false;
@@ -562,6 +596,13 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     autoPlan: parseAutoPlan(readEnv("AUTO_PLAN") ?? file.autoPlan, readEnv("PLAN_HINT")),
     pricing,
     maxCostUsd,
+    // Monthly guardrails: positive finite values only; env wins over the file.
+    // readEnv already prefixes NEXUM_, so the keys below are bare. Defaults are
+    // applied downstream (MonthlySpendGuard: 48 / 12) so an unset value still
+    // guards; reserveUsd: 0 can disable the reserve explicitly.
+    monthlyBudgetUsd: finitePositive(readEnv("MONTHLY_BUDGET_USD") ?? file.monthlyBudgetUsd),
+    reserveUsd: finiteNonNegative(readEnv("RESERVE_USD") ?? file.reserveUsd),
+    cloudConcurrency: intAtLeastOne(readEnv("CLOUD_CONCURRENCY") ?? file.cloudConcurrency),
     mcpServers: file.mcpServers,
     // Decision Plane (System One): on by default in the local tier; auto-disabled
     // in a cloud tier (System One is local-only — the gateway itself enforces this

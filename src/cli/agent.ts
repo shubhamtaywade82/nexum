@@ -263,6 +263,10 @@ export class Agent {
   readonly intentResolver = new IntentResolver();
   /** Session token budget from NEXUM_TOKEN_BUDGET (0 = unlimited), enforced per run by the kernel BudgetTracker. */
   readonly tokenBudget = budgetFromEnv();
+  /** Run-level USD ceiling from cfg.maxCostUsd (NEXUM_MAX_COST_USD / config), 0 = none.
+   * Wired into every kernel run's budget below so the dispatcher's pre-call
+   * admission can refuse a cloud call that would cross it. */
+  private readonly costCeilingUsd: number;
   /**
    * Programmatic hooks (prompt submit, pre/post tool use) for embedders and
    * in-process plugins (provided to the plugin host as HOOK_ENGINE). A
@@ -294,6 +298,9 @@ export class Agent {
     };
     this.workspaceRoot = cfg.workspaceRoot;
     this.mcpServerConfigs = cfg.mcpServers ?? [];
+    // 0 = no USD ceiling configured; a positive value caps every run's spend
+    // (token ceiling composes independently — both are enforced per run).
+    this.costCeilingUsd = cfg.maxCostUsd ?? 0;
     this.capabilityConfig = {
       sandbox: cfg.sandbox !== false,
       image: cfg.shellImage ?? BRAND.sandboxImage,
@@ -435,6 +442,11 @@ export class Agent {
     const dynamicSelector = new DynamicToolSelector({
       mode: cfg.toolSelectionMode,
       maxActiveTools: cfg.maxActiveTools,
+      // The agent's tool registry is a closed environment by construction
+      // (embedders and the agent-driven benchmark replace every tool with a
+      // deliberate set), so a <=3-tool pool is itself the selection — see
+      // SelectorOptions.closedEnvironment.
+      closedEnvironment: true,
       provider: this.stack.primaryPort("tool-selection"),
       // LLM-mode tool selection is a classification task, not a coding one — route it
       // through the "quick" capability (an always-resident local model, falling back
@@ -460,6 +472,8 @@ export class Agent {
         decisionGateway,
         decisionModel,
         maxActiveTools: cfg.maxActiveTools,
+        // Same closed-environment semantics as the DynamicToolSelector above.
+        closedEnvironment: true,
       });
       this.routingHints = new DecisionRoutingHintResolver({
         heuristicRouter: this.stack.heuristicRouter ?? new HeuristicRouter(),
@@ -1310,9 +1324,18 @@ export class Agent {
       modelGateway: this.modelGateway,
       toolGateway: this.tools.gateway,
       // The remaining session budget caps this run; the kernel stops the run
-      // with budget_exhausted when it is crossed mid-loop.
-      ...(this.tokenBudget.limit > 0
-        ? { budget: { maxTotalTokens: Math.max(1, this.tokenBudget.limit - totalUsed(this.tokenBudget)) } }
+      // with budget_exhausted when it is crossed mid-loop. The USD ceiling
+      // (cfg.maxCostUsd) rides the same budget: the dispatcher's pre-call
+      // admission refuses a cloud call whose worst case would cross it.
+      ...(this.tokenBudget.limit > 0 || this.costCeilingUsd > 0
+        ? {
+            budget: {
+              ...(this.tokenBudget.limit > 0
+                ? { maxTotalTokens: Math.max(1, this.tokenBudget.limit - totalUsed(this.tokenBudget)) }
+                : {}),
+              ...(this.costCeilingUsd > 0 ? { maxCostUsd: this.costCeilingUsd } : {}),
+            },
+          }
         : {}),
     });
 

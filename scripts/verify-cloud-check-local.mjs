@@ -127,6 +127,12 @@ const checks = [
   ["ledger recorded with real counts", /ledger: 1 call — tokens 12 in \/ 2 out/.test(out)],
   ["ledger cost computed", /cost \$0\.00/.test(out)],
   ["budget consumed", /budget: modelCalls=1/.test(out)],
+  [
+    "monthly guard snapshot ok (cross-session ledger read)",
+    /monthly guard: ok — \d+ cloud calls, \$[\d.]+ spent in \d{4}-\d{2} \(block at \$36\.0000; budget \$48\.0000 - reserve \$12\.0000\)/.test(
+      out,
+    ),
+  ],
   ["overall PASS", /cloud-check: PASS/.test(out)],
 ];
 

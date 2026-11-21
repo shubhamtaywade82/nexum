@@ -3,6 +3,7 @@ import { InferenceDispatcher } from "../../src/models/gateway/inference-dispatch
 import { BudgetManager } from "../../src/runtime/budget/budget-manager.js";
 import { BudgetTracker } from "../../src/runtime/budget/budget-tracker.js";
 import { ModelUsageLedger } from "../../src/models/observability/usage-ledger.js";
+import { MonthlySpendGuard } from "../../src/models/observability/monthly-spend-guard.js";
 import { loadPriceTable } from "../../src/models/profiles/cloud-price-catalog.js";
 import { Provider, type ChatResponse } from "../../src/models/adapters/provider.js";
 
@@ -181,5 +182,71 @@ describe("InferenceDispatcher admission + ledger", () => {
       ),
     ).resolves.toBeTruthy();
     expect(provider.chatEntered).toBe(1);
+  });
+});
+
+describe("InferenceDispatcher monthly spend guard", () => {
+  it("refuses a cloud call BEFORE dispatch when month-to-date spend crossed budget - reserve", async () => {
+    const provider = new ProbeProvider("cloud", "gemma4", okResponse);
+    // Ledger already holds $36 this month (48 - 12 default block threshold).
+    const ledger = new ModelUsageLedger({ persist: false });
+    ledger.record({
+      runId: "run_earlier_session",
+      purpose: "chat.primary",
+      lane: "primary",
+      tier: "cloud",
+      model: "gemma4",
+      promptTokens: 1000,
+      completionTokens: 100,
+      tokensUnknown: false,
+      costUsd: 36,
+      costUnknown: false,
+      latencyMs: 100,
+      retryCount: 0,
+      status: "success",
+    });
+    const guard = new MonthlySpendGuard({ ledger });
+    const dispatcher = new InferenceDispatcher({ lanes: { cloud: provider }, spendGuard: guard });
+
+    await expect(
+      dispatcher.dispatch({ lane: "cloud", purpose: "test" }, [{ role: "user", content: "hi" }], {}),
+    ).rejects.toThrow(/refused by monthly spend guard/);
+
+    // THE assertion: the request never reached the provider, even though this
+    // run's own budget has no ceiling at all.
+    expect(provider.chatEntered).toBe(0);
+  });
+
+  it("passes when the month's spend is below the threshold, and local calls are never guarded", async () => {
+    const cloud = new ProbeProvider("cloud", "gemma4", okResponse);
+    const ledger = new ModelUsageLedger({ persist: false });
+    ledger.record({
+      runId: "run_earlier",
+      purpose: "chat.primary",
+      lane: "primary",
+      tier: "cloud",
+      model: "gemma4",
+      promptTokens: 10,
+      completionTokens: 1,
+      tokensUnknown: false,
+      costUsd: 1,
+      costUnknown: false,
+      latencyMs: 5,
+      retryCount: 0,
+      status: "success",
+    });
+    const guard = new MonthlySpendGuard({ ledger });
+    const dispatcher = new InferenceDispatcher({
+      lanes: { cloud, local: new ProbeProvider("local", "qwen", okResponse) },
+      spendGuard: guard,
+    });
+
+    await expect(
+      dispatcher.dispatch({ lane: "cloud", purpose: "test" }, [{ role: "user", content: "hi" }], {}),
+    ).resolves.toBeTruthy();
+    await expect(
+      dispatcher.dispatch({ lane: "local", purpose: "test" }, [{ role: "user", content: "hi" }], {}),
+    ).resolves.toBeTruthy();
+    expect(cloud.chatEntered).toBe(1);
   });
 });

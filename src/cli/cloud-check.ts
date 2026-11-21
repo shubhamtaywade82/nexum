@@ -23,6 +23,7 @@ import { Provider } from "../models/adapters/provider.js";
 import { InferenceDispatcher } from "../models/gateway/inference-dispatcher.js";
 import { BudgetManager } from "../runtime/budget/budget-manager.js";
 import { ModelUsageLedger } from "../models/observability/usage-ledger.js";
+import { MonthlySpendGuard } from "../models/observability/monthly-spend-guard.js";
 import { priceFor } from "../models/profiles/cloud-price-catalog.js";
 
 export interface CloudCheckOptions {
@@ -144,6 +145,24 @@ export async function runCloudCheck(opts: CloudCheckOptions = {}): Promise<Cloud
   }
 
   // 4. metered smoke chat call ──────────────────────────────────────────────
+  // (monthly guardrail snapshot first: if the month is already blocked, the
+  // smoke call would be refused at admission and the reason must be visible)
+  const monthlyGuard = new MonthlySpendGuard({
+    ledger: new ModelUsageLedger(),
+    monthlyBudgetUsd: cfg.monthlyBudgetUsd,
+    reserveUsd: cfg.reserveUsd,
+  });
+  const msnap = monthlyGuard.snapshot();
+  lines.push(
+    `monthly guard: ${msnap.blocked ? "BLOCKED" : "ok"} — ${msnap.calls} cloud calls, ${fmtUsd(msnap.spentUsd)} spent in ${msnap.month} (block at ${fmtUsd(msnap.blockAtUsd)}; budget ${fmtUsd(cfg.monthlyBudgetUsd ?? 48)} - reserve ${fmtUsd(cfg.reserveUsd ?? 12)})`,
+  );
+  if (msnap.blocked) {
+    lines.push(
+      "cloud-check: FAIL (monthly spend guard blocks new cloud calls — raise NEXUM_MONTHLY_BUDGET_USD or lower NEXUM_RESERVE_USD)",
+    );
+    return { ok: false, lines };
+  }
+
   if (!opts.noCall) {
     const model = opts.model ?? cfg.model;
     const priced = priceFor(

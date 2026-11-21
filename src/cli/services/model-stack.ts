@@ -29,6 +29,7 @@ import { DefaultModelGateway } from "../../models/gateway/model-gateway.js";
 import { InferenceDispatcher, type ChatPort } from "../../models/gateway/inference-dispatcher.js";
 import { routeWithFallbackOn } from "../../models/gateway/route-fallback.js";
 import { ModelUsageLedger } from "../../models/observability/usage-ledger.js";
+import { MonthlySpendGuard } from "../../models/observability/monthly-spend-guard.js";
 import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
 
 export type StatusEmitter = (message: string) => void;
@@ -51,6 +52,14 @@ export interface ModelStackOptions {
   budget?: BudgetTracker;
   /** Per-call usage ledger; defaults to a process-wide JSONL-persisted ledger. Pass { persist: false } to keep it in memory. */
   ledger?: ModelUsageLedger;
+  /**
+   * Cross-session monthly spend guard, built from cfg.monthlyBudgetUsd /
+   * cfg.reserveUsd (NEXUM_MONTHLY_BUDGET_USD / NEXUM_RESERVE_USD). When the
+   * month-to-date ledger spend crosses budget - reserve, the dispatcher
+   * refuses new cloud calls at admission. Defaults on (48/12); the guard is
+   * disabled only in tests via an explicit spendGuard: null.
+   */
+  spendGuard?: MonthlySpendGuard | null;
 }
 
 /**
@@ -215,6 +224,15 @@ export class ModelStack {
       budget: opts.budget,
       registry: this.modelProfiles,
       ledger: (this.usageLedger = opts.ledger ?? new ModelUsageLedger()),
+      spendGuard:
+        opts.spendGuard === null
+          ? undefined
+          : (opts.spendGuard ??
+            new MonthlySpendGuard({
+              ledger: this.usageLedger,
+              monthlyBudgetUsd: cfg.monthlyBudgetUsd,
+              reserveUsd: cfg.reserveUsd,
+            })),
     });
     this.gateway = new DefaultModelGateway({
       router: this.router,

@@ -26,6 +26,7 @@ import {
 import type { ModelCapabilityRegistry } from "../profiles/model-capability-registry.js";
 import { budgetUsageOf, readUsage } from "../usage-reading.js";
 import { ModelUsageLedger } from "../observability/usage-ledger.js";
+import { MonthlySpendGuard } from "../observability/monthly-spend-guard.js";
 import { estimateCallCostUsd, loadPriceTable, priceFor, type ModelPrice } from "../profiles/cloud-price-catalog.js";
 
 /** One chat call, as a caller names it: which provider lane, why, and optionally which model to pin. */
@@ -61,15 +62,28 @@ export interface InferenceDispatcherOptions {
    * call returns). Default true — a spend ceiling that only fires after the money is spent is not a ceiling.
    */
   admitWithinBudget?: boolean;
+  /**
+   * Cross-session monthly spend guard (MonthlySpendGuard). When set and the
+   * ledger's month-to-date cloud spend has crossed budget - reserve, every
+   * automated cloud call is refused at admission. Composes with (not replaces)
+   * the per-run budget check above.
+   */
+  spendGuard?: MonthlySpendGuard;
 }
 
 /**
- * One concurrency gate per tier for the whole process. Every dispatcher draws from these, so the cloud cap of 3 holds
+ * One concurrency gate per tier for the whole process. Every dispatcher draws from these, so the cloud cap holds
  * across the CLI, evolution attempts and benchmark targets running in the same process, not per instance.
+ * NEXUM_CLOUD_CONCURRENCY / cloudConcurrency in config resizes the cloud cap at process start (integer >= 1;
+ * default 3). Anything unparseable keeps the default — a garbled env var must not disable the cap.
  */
+function initialCloudConcurrency(): number {
+  const raw = Number(process.env.NEXUM_CLOUD_CONCURRENCY);
+  return Number.isInteger(raw) && raw >= 1 ? raw : 3;
+}
 const PROCESS_GATES = {
   local: new ConcurrencyGate({ maxConcurrent: 8, label: "model:local" }),
-  cloud: new ConcurrencyGate({ maxConcurrent: 3, label: "model:cloud" }),
+  cloud: new ConcurrencyGate({ maxConcurrent: initialCloudConcurrency(), label: "model:cloud" }),
 };
 
 export class InferenceDispatcher {
@@ -81,6 +95,7 @@ export class InferenceDispatcher {
   private readonly ledger?: ModelUsageLedger;
   private readonly prices: Map<string, ModelPrice>;
   private readonly admitWithinBudget: boolean;
+  private readonly spendGuard?: MonthlySpendGuard;
 
   constructor(opts: InferenceDispatcherOptions) {
     this.lanes = opts.lanes;
@@ -89,6 +104,7 @@ export class InferenceDispatcher {
     this.ledger = opts.ledger;
     this.prices = opts.prices ?? loadPriceTable();
     this.admitWithinBudget = opts.admitWithinBudget ?? true;
+    this.spendGuard = opts.spendGuard;
     this.localGate = opts.gates?.local ?? PROCESS_GATES.local;
     this.cloudGate = opts.gates?.cloud ?? PROCESS_GATES.cloud;
   }
@@ -120,6 +136,18 @@ export class InferenceDispatcher {
     // Local calls bill nothing and skip this check.
     if (this.admitWithinBudget && tier === "cloud" && this.budget) {
       assertWithinSpendBudget(this.budget, this.prices, model, messages, opts);
+    }
+    // Monthly guardrail (cloud only): the cross-session spend floor from the
+    // persisted ledger. Independent of the per-run budget — it blocks even
+    // when this run has spent nothing, because this month's earlier sessions
+    // already crossed budget - reserve.
+    if (tier === "cloud" && this.spendGuard) {
+      const snap = this.spendGuard.snapshot();
+      if (snap.blocked) {
+        throw new ProviderError(
+          `cloud call to ${model} refused by monthly spend guard: $${snap.spentUsd.toFixed(2)} spent in ${snap.month} >= $${snap.blockAtUsd.toFixed(2)} block threshold. Raise NEXUM_MONTHLY_BUDGET_USD or lower NEXUM_RESERVE_USD to continue.`,
+        );
+      }
     }
 
     const startedAt = Date.now();

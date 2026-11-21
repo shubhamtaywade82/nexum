@@ -104,6 +104,42 @@ describe("DynamicToolSelector", () => {
 
       expect(selected.map((t) => t.name)).not.toContain("some_tool");
     });
+
+    it("passes a small closed tool environment through even when nothing scores", async () => {
+      // Regression test for the agent-driven benchmark bug: a case replaces
+      // every tool with its own 1-3 scripted tools (lookup_user etc.), whose
+      // names/descriptions score 0 against keyword heuristics — pre-fix the
+      // selector returned [] and the model never saw the case's tools, so
+      // every agentic case failed with "never called <tool>". With
+      // closedEnvironment the pool itself is the selection.
+      const lookup = new MockTool("lookup_user", "Look up an internal user by name", [], []);
+      const balance = new MockTool("get_balance", "Get the account balance for an id", [], []);
+      const selector = new DynamicToolSelector({ mode: "heuristic", closedEnvironment: true });
+      const selected = await selector.selectTools(
+        "What is the account balance for user 'jdoe'?",
+        [],
+        [lookup, balance],
+      );
+
+      expect(selected.map((t) => t.name).sort()).toEqual(["get_balance", "lookup_user"]);
+    });
+
+    it("a closed environment with a single tool passes it through regardless of scoring", async () => {
+      const escalate = new MockTool("escalate_task", "Escalate the current task to a larger model", [], []);
+      const selector = new DynamicToolSelector({ mode: "llm", closedEnvironment: true }); // even without a provider (falls back)
+      const selected = await selector.selectTools("hello", [], [escalate]);
+
+      expect(selected.map((t) => t.name)).toEqual(["escalate_task"]);
+    });
+
+    it("closedEnvironment does NOT passthrough larger pools (score-based selection retained)", async () => {
+      const noisy = new MockTool("zzz_irrelevant", "Totally unrelated thing", [], []);
+      const pool = [fileTool, shellTool, gitTool, noisy];
+      const selector = new DynamicToolSelector({ mode: "heuristic", closedEnvironment: true });
+      const selected = await selector.selectTools("nothing at all matches any tool here", [], pool);
+
+      expect(selected.map((t) => t.name)).toEqual([]);
+    });
   });
 
   describe("LLM Selection", () => {

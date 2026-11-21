@@ -9,6 +9,14 @@ export interface SelectorOptions {
   maxActiveTools?: number;
   provider?: ChatPort;
   /**
+   * The caller guarantees the tool environment is closed (every registered
+   * tool is deliberate — e.g. the benchmark's per-case tool replacement).
+   * With <=3 tools, selection is the pool itself: they are passed through
+   * unscored so a scripted tool whose name matches no keyword heuristic is
+   * still offered to the model. Default false keeps score-based selection.
+   */
+  closedEnvironment?: boolean;
+  /**
    * Optional override for the LLM-mode chat call, used in place of
    * `provider.chat` when given — e.g. route through the capability-routed
    * "quick" tier (a small always-resident model) instead of calling a fixed
@@ -22,16 +30,28 @@ export class DynamicToolSelector {
   private readonly maxActiveTools: number;
   private readonly provider?: ChatPort;
   private readonly chatOverride?: (messages: ChatMessage[]) => Promise<ChatResponse>;
+  private readonly closedEnvironment: boolean;
 
   constructor(opts: SelectorOptions = {}) {
     this.mode = opts.mode ?? "heuristic";
     this.maxActiveTools = opts.maxActiveTools ?? 8;
     this.provider = opts.provider;
     this.chatOverride = opts.chat;
+    this.closedEnvironment = opts.closedEnvironment ?? false;
   }
 
   async selectTools(prompt: string, history: ChatMessage[], availableTools: Tool[]): Promise<Tool[]> {
     if (availableTools.length === 0) return [];
+
+    // Opt-in passthrough for a small closed tool environment (the agent-driven
+    // benchmark replaces every tool with the case's own 1-3 scripted tools):
+    // keyword scoring can score those tools 0 (their names appear in no
+    // real-world prompt) and return [], leaving the model with no tools at
+    // all — the case can then never pass. The pool itself is the selection.
+    // Off by default: normal runs keep score-based selection.
+    if (this.closedEnvironment && availableTools.length <= 3) {
+      return availableTools.slice(0, this.maxActiveTools);
+    }
 
     if (this.mode === "heuristic") {
       return this.heuristicSelect(prompt, history, availableTools);
