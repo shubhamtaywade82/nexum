@@ -97,7 +97,6 @@ function results(successRate: number): TaskExecutionResult[] {
 function passingMatrixCells(
   candidateId = "H1",
   baselineId = "H0",
-  executor = "qwen3-coder",
 ): Parameters<ClosedLoopEngine["runExperiment"]>[0]["matrixCells"] {
   return [
     {
