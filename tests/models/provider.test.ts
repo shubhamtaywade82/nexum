@@ -97,6 +97,28 @@ describe("Provider apiKeys pool (Ollama Cloud only)", () => {
     expect(fakeFetch).toHaveBeenCalledTimes(2);
   });
 
+  it.each([402, 401])("rotates past a key the cloud refuses with %i to a key that can pay", async (status) => {
+    const fakeFetch = jest.fn().mockImplementation(async () => {
+      if (fakeFetch.mock.calls.length === 1) {
+        return new Response(JSON.stringify({ error: "refused" }), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ model: "m", message: { role: "assistant", content: "ok" }, done: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    (globalThis as any).fetch = fakeFetch;
+
+    const provider = new Provider({ tier: "cloud", model: "m", apiKeys: ["key_a", "key_b"], host: "https://x" });
+    const result = await provider.chat([{ role: "user", content: "hi" }]);
+
+    expect(result.message.content).toBe("ok");
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("throws RateLimitError once every key in the pool is rate-limited", async () => {
     const fakeFetch = jest.fn().mockImplementation(() => {
       return new Response(JSON.stringify({ error: "rate limited" }), {

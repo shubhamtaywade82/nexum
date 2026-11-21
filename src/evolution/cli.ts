@@ -401,6 +401,7 @@ async function runCandidateEvaluation(
     tier: cfg.tier,
     model: cfg.model,
     apiKey: cfg.apiKey,
+    apiKeys: cfg.apiKeys,
     host: cfg.tier === "local" ? cfg.host : undefined,
   });
   const component = (values.component as HarnessComponent) || "execution";
@@ -430,6 +431,7 @@ async function runBenchmarkSuites(engine: EvolutionEngine, root: string): Promis
     tier: cfg.tier,
     model: cfg.model,
     apiKey: cfg.apiKey,
+    apiKeys: cfg.apiKeys,
     host: cfg.tier === "local" ? cfg.host : undefined,
   });
   try {

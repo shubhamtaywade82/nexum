@@ -27,6 +27,8 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
     args: argv,
     options: {
       model: { type: "string", short: "m" },
+      // "cloud" or "local": benchmark only that tier's models.
+      tier: { type: "string" },
       category: { type: "string", short: "c" },
       timeout: { type: "string", short: "t" },
       verbose: { type: "boolean", short: "v" },
@@ -58,6 +60,7 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
         tier: "cloud",
         model: cfg.model,
         apiKey: cfg.apiKey,
+        apiKeys: cfg.apiKeys,
         host: cfg.tier === "cloud" ? cfg.host : undefined,
       })
     : undefined;
@@ -66,7 +69,14 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
   const allModels = (await catalog.refresh()).filter((m) => m.capabilities.length > 0 && !isEmbeddingModel(m.name));
 
   const modelFilter = values.model?.toLowerCase();
-  const models = modelFilter ? allModels.filter((m) => m.name.toLowerCase().includes(modelFilter)) : allModels;
+  const tierFilter = values.tier;
+  if (tierFilter !== undefined && tierFilter !== "cloud" && tierFilter !== "local") {
+    console.error(`Unknown --tier "${tierFilter}" (expected "cloud" or "local").`);
+    return 2;
+  }
+  const models = allModels.filter(
+    (m) => (!modelFilter || m.name.toLowerCase().includes(modelFilter)) && (!tierFilter || m.tier === tierFilter),
+  );
 
   if (allModels.length === 0) {
     console.error("No models discovered (local Ollama unreachable and no cloud API key configured).");

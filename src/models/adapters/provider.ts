@@ -224,12 +224,15 @@ export function defaultHostForTier(tier: Tier): string {
  * Endpoint failover codes for cloud clients. The SDK's default list also fails over on `timeout`,
  * `network_error`, `server_error` and `bad_gateway`. Each of those can follow a request the cloud already
  * ran, and re-sending it on the next key bills it again. These codes come back only when the request was
- * refused before it ran: rate-limited, queue full, key rejected, or unsupported at pre-flight.
+ * refused before it ran: rate-limited, queue full, key rejected, out of credits, or unsupported at pre-flight.
  */
 export const CLOUD_PRE_EXECUTION_FAILOVER_CODES: readonly string[] = [
   "rate_limited",
   "overloaded",
   "auth_error",
+  // A pool mixes free and paid accounts; one key out of credits must not block the keys that can pay.
+  "payment_required",
+  "quota_exceeded",
   "unsupported_capability",
 ];
 
