@@ -706,21 +706,22 @@ export class Provider {
     // The SDK's usage()/balance() pin their HttpClient to
     // OLLAMA_CLOUD_BASE_URL ("https://ollama.com") regardless of the client's
     // baseUrl — the endpoints are documented "cloud-only, targets
-    // ollama.com". A non-default configured host (OLLAMA_CLOUD_HOST for
-    // development/testing) must still reach those endpoints, so rewrite the
-    // URL through a wrapped fetch instead of the baseUrl the SDK ignores.
-    const host = this.host;
+    // ollama.com". So the account client always targets the cloud base; only
+    // an explicit cloud-host override (OLLAMA_CLOUD_HOST, for
+    // development/testing against a private endpoint) rewrites requests to
+    // that endpoint, through a wrapped fetch because the SDK ignores baseUrl.
     const base = DEFAULT_CLOUD_HOST;
-    const needsRewrite = host.replace(/\/$/, "") !== base;
+    const override = defaultHostForTier("cloud");
+    const needsRewrite = override.replace(/\/$/, "") !== base;
     const fetchRewriter: typeof globalThis.fetch | undefined = needsRewrite
       ? (input, init) => {
           const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-          const rewritten = target.replace(base, host.replace(/\/$/, ""));
+          const rewritten = target.replace(base, override.replace(/\/$/, ""));
           return globalThis.fetch.call(globalThis, rewritten, init);
         }
       : undefined;
     return new OllamaClient({
-      baseUrl: host,
+      baseUrl: base,
       apiKey,
       timeoutMs: this.timeoutMs || 30_000,
       retries: 1,

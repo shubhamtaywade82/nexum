@@ -23,6 +23,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { globalStateDir } from "../../platform/paths.js";
 
 export type UsageStatus = "success" | "error" | "unknown_outcome";
 
@@ -100,7 +101,7 @@ export class ModelUsageLedger {
   private writeBroken = false;
 
   constructor(opts: UsageLedgerOptions = {}) {
-    this.dir = opts.dir ?? join(homedir(), ".nexum", "usage");
+    this.dir = opts.dir ?? join(globalStateDir(homedir()), "usage");
     this.persist = opts.persist ?? true;
     this.now = opts.now ?? (() => new Date());
     if (this.persist) {

@@ -1238,7 +1238,10 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   };
 
   const runCycle = async (): Promise<EvolutionCycleResult> => {
-    const budgetController = new EvolutionBudgetController(undefined, join(root, ".nexum", "evolution-budget.json"));
+    const budgetController = new EvolutionBudgetController(
+      undefined,
+      join(workspaceStateDir(root), "evolution-budget.json"),
+    );
     budgetController.assertCanStartCycle();
 
     const allEpisodes = loadAllEpisodes(root);

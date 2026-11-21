@@ -17,6 +17,8 @@ const SRC = resolve(ROOT, "src");
 const PROVIDER_IMPORTERS: Record<string, string> = {
   "src/cli/services/model-stack.ts": "CLI composition root: constructs the providers and their lanes",
   "src/cli/doctor.ts": "diagnostics: probes model listings, sends no chat",
+  "src/cli/cloud-check.ts":
+    "diagnostics: probes account endpoints and model listings; its metered smoke chat leaves through the dispatcher",
   "src/benchmark/cli.ts": "benchmark composition root: constructs the providers and their lanes",
   "src/evolution/cli.ts": "evolution composition root: constructs the providers",
   "src/evolution/benchmarks.ts": "wraps the given provider in a single-lane dispatcher before use",
