@@ -1,9 +1,8 @@
 /**
  * Workspace trust — whether settings a repository ships may configure Nexum.
  *
- * A workspace carries files Nexum treats as configuration: `.nexum/config.json`
- * (and legacy `.devagent/config.json`), the MCP approval and publisher trust
- * stores next to it, the `.env` files Nexum loads into its own process, and
+ * A workspace carries files Nexum treats as configuration: `.nexum/config.json`,
+ * the MCP approval and publisher trust stores next to it, the `.env` files Nexum loads into its own process, and
  * the skills under `.nexum/skills/` (every file, since a skill is instructions
  * the model follows). Anyone who can commit to the repository can author them,
  * so a freshly cloned repo could otherwise turn the sandbox off, register MCP
@@ -38,7 +37,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { globalStateDir, legacyWorkspaceStateDir, workspaceStateDir } from "../platform/paths.js";
+import { globalStateDir, workspaceStateDir } from "../platform/paths.js";
 import { envIs } from "../platform/environment.js";
 
 /**
@@ -180,7 +179,7 @@ export const SKILL_TREE_ENTRY_LIMIT = 2_000;
 const SKILL_TREE_DEPTH_LIMIT = 8;
 
 /**
- * Every entry under the workspace's skill directories (canonical and legacy).
+ * Every entry under the workspace's skill directory.
  * `complete` is false when a bound was hit or a directory exists but cannot be
  * read: the tree then cannot be fully covered by a trust decision.
  */
@@ -216,7 +215,6 @@ export function workspaceSkillTree(root: string): { files: string[]; complete: b
     }
   };
   walk(join(workspaceStateDir(root), "skills"), 0);
-  walk(join(legacyWorkspaceStateDir(root), "skills"), 0);
   return { files, complete };
 }
 
@@ -224,7 +222,6 @@ export function workspaceSkillTree(root: string): { files: string[]; complete: b
 export function trustBearingFiles(root: string, cwd: string = process.cwd()): string[] {
   const files = [
     join(workspaceStateDir(root), "config.json"),
-    join(legacyWorkspaceStateDir(root), "config.json"),
     join(workspaceStateDir(root), "mcp-trust.json"),
     join(workspaceStateDir(root), "publisher-trust.json"),
     join(root, ".env"),
@@ -379,7 +376,7 @@ export function withholdUserOnlyKeys<T extends object>(config: T): { kept: Parti
 // ── Review text (prompt and `nexum trust`) ──────────────────────────────────
 
 const DANGEROUS_ENV =
-  /^(PATH|NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_.*|GIT_.*|NEXUM_.*|DEVAGENT_.*|OLLAMA_.*|HOME|SHELL)$/;
+  /^(PATH|NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_.*|GIT_.*|NEXUM_.*|OLLAMA_.*|HOME|SHELL)$/;
 
 function readJsonAny(path: string): unknown {
   try {

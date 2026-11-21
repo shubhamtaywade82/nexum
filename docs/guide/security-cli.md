@@ -86,7 +86,7 @@ nexum credentials get SECRET --keychain      # add the OS keychain to the chain
 nexum credentials get api/key#token --vault https://vault:8200   # + Vault KV v2
 ```
 
-The base chain is env (`NEXUM_*`/`DEVAGENT_*`) + file (`.nexum/credentials.json`). `--keychain` extends it with the OS keychain (macOS Keychain / Secret Service), `--vault` with HashiCorp Vault KV v2 (token from `VAULT_TOKEN`). Keychain and vault entries are not enumerable — `list` shows only env/file names, `get` resolves from all providers in the chain. Provider details live in the [credentials guide](/guide/credentials).
+The base chain is env (`NEXUM_*`) + file (`.nexum/credentials.json`). `--keychain` extends it with the OS keychain (macOS Keychain / Secret Service), `--vault` with HashiCorp Vault KV v2 (token from `VAULT_TOKEN`). Keychain and vault entries are not enumerable — `list` shows only env/file names, `get` resolves from all providers in the chain. Provider details live in the [credentials guide](/guide/credentials).
 
 ## nexum capabilities
 

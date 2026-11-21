@@ -71,7 +71,7 @@ export async function startTui(opts?: { config?: Partial<CliConfig> }): Promise<
   let runState = { isStreaming: false, isThinking: false, lastToolName: "", lastToolArgs: {} as Record<string, any> };
 
   // Model accessibility cache: true = free/accessible, false = requires subscription
-  // Lives under .nexum (migrated from legacy .devagent by the WorkspaceManager).
+  // Lives under .nexum (created by the WorkspaceManager).
   const modelCachePath = path.join(workspaceStateDir(cfg.workspaceRoot), "models.json");
   const modelAccess = new Map<string, boolean>();
 

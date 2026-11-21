@@ -43,7 +43,7 @@ export function activityStripTokens(
 }
 
 /** Only computed when the user has configured a real rate (config.pricing /
- * DEVAGENT_PRICE_*_PER_M) — Ollama has no published per-token price, so
+ * NEXUM_PRICE_INPUT_PER_M / NEXUM_PRICE_OUTPUT_PER_M) — Ollama has no published per-token price, so
  * there is no default rate to compute this from. Returns null (not 0) when
  * there's nothing to bill, so callers never show a fabricated "$0.000". */
 function computeCost(state: RuntimeState): number | null {

@@ -191,7 +191,7 @@ describe("SkillSynthesizer", () => {
     const demoted = synth.prune([{ skillId: "learned-build", useCount: 6, successCount: 1, lastUsedAt: Date.now() }]);
 
     expect(demoted).toEqual(["learned-build"]);
-    expect(existsSync(join(dir, ".devagent", "skills", "learned-build"))).toBe(false);
+    expect(existsSync(join(dir, ".nexum", "skills", "learned-build"))).toBe(false);
     expect(store.all()[0].promotedSkillId).toBeNull();
   });
 });

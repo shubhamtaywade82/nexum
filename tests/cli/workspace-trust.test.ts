@@ -55,7 +55,7 @@ beforeEach(() => {
   store = WorkspaceTrustStore.at(storeFile);
   process.env = { ...savedEnv };
   delete process.env.NEXUM_WORKSPACE;
-  delete process.env.DEVAGENT_WORKSPACE;
+  delete process.env.NEXUM_WORKSPACE;
   process.env.NEXUM_TEST_NO_GLOBAL = "true";
   for (const k of ["NEXUM_SANDBOX", "NEXUM_TIER", "NEXUM_AUTO_APPROVE", "NEXUM_DOCKER_TOOL", "TRUST_TEST_MARKER"]) {
     delete process.env[k];
@@ -141,11 +141,10 @@ describe("loadConfig gates workspace settings on trust", () => {
     expect(workspaceTrustState(root, WorkspaceTrustStore.at(storeFile)).status).toBe("untrusted");
   });
 
-  it("covers the legacy config, MCP approvals and publisher keys too", () => {
+  it("covers the MCP approvals and publisher keys too", () => {
     writeConfig({ model: "m" });
     trustWorkspace(root, store);
     for (const [dir, file] of [
-      [".devagent", "config.json"],
       [".nexum", "mcp-trust.json"],
       [".nexum", "publisher-trust.json"],
     ]) {

@@ -2,7 +2,6 @@ src/
 tests/
 node_modules/
 .github/
-.devagent/
 .nexum/
 docker/
 docs/

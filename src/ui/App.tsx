@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, usePaste, useStdout } from "@nemesis-oss/termina-core";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { historyFile as flatHistoryFile, legacyHistoryFile, workspaceStateDir } from "../platform/paths.js";
+import { historyFile as flatHistoryFile, workspaceStateDir } from "../platform/paths.js";
 import { EventBus } from "../runtime/events/bus.js";
 import { Store } from "../runtime/store.js";
 import { RuntimeState, VIEW_ORDER, ViewId } from "../runtime/types.js";
@@ -273,18 +273,7 @@ export function App({
   const [history] = useState(() => {
     const root = workspaceRoot ?? process.cwd();
     const historyFile = join(workspaceStateDir(root), "history.json");
-    // Also load legacy flat file for backwards compat (pre-rename DevAgent)
-    const legacyPath = legacyHistoryFile(root);
-    let initialHistory: string[] = [];
-    try {
-      if (existsSync(legacyPath)) {
-        const content = readFileSync(legacyPath, "utf-8");
-        initialHistory = content.split("\n").filter(Boolean);
-      }
-    } catch {
-      // ignore
-    }
-    const mgr = new HistoryManager(initialHistory, 200, historyFile);
+    const mgr = new HistoryManager([], 200, historyFile);
     mgr.load();
     return mgr;
   });
@@ -442,8 +431,6 @@ export function App({
       history.add(trimmed);
       try {
         const root = workspaceRoot ?? process.cwd();
-        // New writes go to the canonical `.nexum_history`; the legacy
-        // `.devagent_history` is only ever read (docs/REBRANDING.md §2).
         const historyPath = flatHistoryFile(root);
         writeFileSync(historyPath, history.all().join("\n"), "utf-8");
       } catch {

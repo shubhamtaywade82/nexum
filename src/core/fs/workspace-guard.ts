@@ -252,7 +252,7 @@ export class WorkspaceGuard {
       };
     }
 
-    // Nexum's own state (.nexum/, legacy .devagent/): config, plugin installs,
+    // Nexum's own state (.nexum/): config, plugin installs,
     // publisher trust store, MCP approvals. An agent that could write there
     // could turn its own sandbox off or trust its own plugins.
     if (mutating && (isStateDir(relFinal) || isStateDir(relNominal))) {
@@ -377,11 +377,11 @@ function isGitInternal(relPath: string): boolean {
   return relPath === ".git" || relPath.startsWith(`.git${sep}`);
 }
 
-/** Workspace state directories Nexum reads configuration and trust from. */
-export const STATE_DIRS: readonly string[] = [BRAND.configDir, BRAND.legacyConfigDir];
+/** Workspace state directory Nexum reads configuration and trust from. */
+export const STATE_DIR: string = BRAND.configDir;
 
 function isStateDir(relPath: string): boolean {
-  return STATE_DIRS.some((d) => relPath === d || relPath.startsWith(`${d}${sep}`));
+  return relPath === STATE_DIR || relPath.startsWith(`${STATE_DIR}${sep}`);
 }
 
 /** Sensitive as a file, or as a directory (so `secrets` / `.ssh` themselves are covered). */

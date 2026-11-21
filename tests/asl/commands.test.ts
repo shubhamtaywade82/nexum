@@ -8,13 +8,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("ASL Commands", () => {
   const tempWorkspace = path.join(__dirname, "../fixtures/asl-workspace-temp");
-  const devagentDir = path.join(tempWorkspace, ".devagent");
+  const nexumDir = path.join(tempWorkspace, ".nexum");
 
   let logSpy: jest.SpyInstance;
   let errorSpy: jest.SpyInstance;
 
   beforeEach(() => {
-    fs.mkdirSync(devagentDir, { recursive: true });
+    fs.mkdirSync(nexumDir, { recursive: true });
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -25,18 +25,18 @@ describe("ASL Commands", () => {
     errorSpy.mockRestore();
   });
 
-  it("should return false when no state directory (.nexum or legacy .devagent) exists", async () => {
+  it("should return false when no .nexum state directory exists", async () => {
     const nonExistentPath = path.join(__dirname, "non-existent-folder");
     const ok = await validateAsl(nonExistentPath);
     expect(ok).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("no .nexum (or legacy .devagent) directory exists"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("no .nexum directory exists"));
   });
 
   it("should validate a valid ASL setup correctly", async () => {
     // 1. Setup workspace spec
-    fs.mkdirSync(path.join(devagentDir, "workspace"), { recursive: true });
+    fs.mkdirSync(path.join(nexumDir, "workspace"), { recursive: true });
     fs.writeFileSync(
-      path.join(devagentDir, "workspace/workspace.md"),
+      path.join(nexumDir, "workspace/workspace.md"),
       `---
 language: typescript
 frameworks:
@@ -48,9 +48,9 @@ frameworks:
     );
 
     // 2. Setup task specs
-    fs.mkdirSync(path.join(devagentDir, "tasks"), { recursive: true });
+    fs.mkdirSync(path.join(nexumDir, "tasks"), { recursive: true });
     fs.writeFileSync(
-      path.join(devagentDir, "tasks/TASK-001.md"),
+      path.join(nexumDir, "tasks/TASK-001.md"),
       `---
 id: task.001
 title: Setup project
@@ -63,7 +63,7 @@ goal: initial scaffold
     );
 
     fs.writeFileSync(
-      path.join(devagentDir, "tasks/TASK-002.md"),
+      path.join(nexumDir, "tasks/TASK-002.md"),
       `---
 id: task.002
 title: Implement feature
@@ -83,9 +83,9 @@ depends_on:
   });
 
   it("should detect unknown dependencies", async () => {
-    fs.mkdirSync(path.join(devagentDir, "tasks"), { recursive: true });
+    fs.mkdirSync(path.join(nexumDir, "tasks"), { recursive: true });
     fs.writeFileSync(
-      path.join(devagentDir, "tasks/TASK-001.md"),
+      path.join(nexumDir, "tasks/TASK-001.md"),
       `---
 id: task.001
 title: Setup project
@@ -105,9 +105,9 @@ depends_on:
   });
 
   it("should detect dependency cycles", async () => {
-    fs.mkdirSync(path.join(devagentDir, "tasks"), { recursive: true });
+    fs.mkdirSync(path.join(nexumDir, "tasks"), { recursive: true });
     fs.writeFileSync(
-      path.join(devagentDir, "tasks/TASK-001.md"),
+      path.join(nexumDir, "tasks/TASK-001.md"),
       `---
 id: task.001
 title: Setup project
@@ -121,7 +121,7 @@ depends_on:
       "utf8",
     );
     fs.writeFileSync(
-      path.join(devagentDir, "tasks/TASK-002.md"),
+      path.join(nexumDir, "tasks/TASK-002.md"),
       `---
 id: task.002
 title: Implement feature
@@ -141,9 +141,9 @@ depends_on:
   });
 
   it("should print a DAG graph of task execution correctly", async () => {
-    fs.mkdirSync(path.join(devagentDir, "tasks"), { recursive: true });
+    fs.mkdirSync(path.join(nexumDir, "tasks"), { recursive: true });
     fs.writeFileSync(
-      path.join(devagentDir, "tasks/TASK-001.md"),
+      path.join(nexumDir, "tasks/TASK-001.md"),
       `---
 id: task.001
 title: Setup project
@@ -155,7 +155,7 @@ goal: initial scaffold
       "utf8",
     );
     fs.writeFileSync(
-      path.join(devagentDir, "tasks/TASK-002.md"),
+      path.join(nexumDir, "tasks/TASK-002.md"),
       `---
 id: task.002
 title: Implement feature

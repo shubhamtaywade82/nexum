@@ -19,8 +19,8 @@ EvaluationDataset
 import { defineDataset } from "@nemesis-oss/nexum";
 
 const dataset = defineDataset({
-  id: "devagent:core-flows",
-  name: "Core DevAgent flows",
+  id: "nexum:core-flows",
+  name: "Core agent flows",
   scenarios: [
     {
       id: "read-package-name",

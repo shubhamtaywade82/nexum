@@ -1,7 +1,6 @@
 node_modules
 dist
 coverage
-.devagent
 tests/fixtures
 *.snap
 # Drizzle Kit auto-generates these migration meta files in its own JSON layout;

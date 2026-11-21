@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { discoverSkills, loadSkillContent, loadSkillMeta } from "../../src/skills/loader.js";
 
 function writeSkill(root: string, id: string, frontmatter: string, body = "# Body\n\ncontent"): string {
-  const dir = join(root, ".devagent", "skills", id);
+  const dir = join(root, ".nexum", "skills", id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "SKILL.md"), `---\n${frontmatter}\n---\n\n${body}`);
   return dir;
@@ -15,8 +15,8 @@ describe("loadSkillMeta / discoverSkills", () => {
   let homeDir: string;
 
   beforeEach(() => {
-    workspaceRoot = mkdtempSync(join(tmpdir(), "devagent-ws-"));
-    homeDir = mkdtempSync(join(tmpdir(), "devagent-home-"));
+    workspaceRoot = mkdtempSync(join(tmpdir(), "nexum-ws-"));
+    homeDir = mkdtempSync(join(tmpdir(), "nexum-home-"));
   });
 
   afterEach(() => {
@@ -48,7 +48,7 @@ describe("loadSkillMeta / discoverSkills", () => {
   });
 
   it("returns null for a missing SKILL.md", () => {
-    const dir = join(workspaceRoot, ".devagent", "skills", "ghost");
+    const dir = join(workspaceRoot, ".nexum", "skills", "ghost");
     mkdirSync(dir, { recursive: true });
     expect(loadSkillMeta(dir, "workspace")).toBeNull();
   });
@@ -67,7 +67,7 @@ describe("loadSkillMeta / discoverSkills", () => {
   });
 
   it("skips a directory with no SKILL.md rather than throwing", () => {
-    mkdirSync(join(workspaceRoot, ".devagent", "skills", "empty-dir"), { recursive: true });
+    mkdirSync(join(workspaceRoot, ".nexum", "skills", "empty-dir"), { recursive: true });
     writeSkill(workspaceRoot, "valid", "name: Valid");
     expect(() => discoverSkills({ workspaceRoot, homeDir, workspaceTrusted: true })).not.toThrow();
     expect(discoverSkills({ workspaceRoot, homeDir, workspaceTrusted: true }).map((s) => s.id)).toEqual(["valid"]);
@@ -101,7 +101,7 @@ describe("loadSkillContent", () => {
   let workspaceRoot: string;
 
   beforeEach(() => {
-    workspaceRoot = mkdtempSync(join(tmpdir(), "devagent-ws-"));
+    workspaceRoot = mkdtempSync(join(tmpdir(), "nexum-ws-"));
   });
 
   afterEach(() => {
@@ -134,42 +134,6 @@ describe("loadSkillContent", () => {
 
       const found = discoverSkills({ workspaceRoot: ws, homeDir: home, workspaceTrusted: true });
       expect(found.map((s) => s.id)).toContain("nexum-skill");
-    } finally {
-      rmSync(ws, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("still discovers legacy .devagent/skills as a deprecated fallback", () => {
-    const ws = mkdtempSync(join(tmpdir(), "nexum-skills-ws-"));
-    const home = mkdtempSync(join(tmpdir(), "nexum-skills-home-"));
-    try {
-      const dir = join(ws, ".devagent", "skills", "legacy-skill");
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "SKILL.md"), "---\nname: Legacy Skill\ndescription: legacy location\n---\nbody");
-
-      const found = discoverSkills({ workspaceRoot: ws, homeDir: home, workspaceTrusted: true });
-      expect(found.map((s) => s.id)).toContain("legacy-skill");
-    } finally {
-      rmSync(ws, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("canonical .nexum/skills wins over a same-id legacy .devagent/skills copy", () => {
-    const ws = mkdtempSync(join(tmpdir(), "nexum-skills-ws-"));
-    const home = mkdtempSync(join(tmpdir(), "nexum-skills-home-"));
-    try {
-      for (const [dirName, skillName] of [
-        [".devagent", "Legacy Version"],
-        [".nexum", "Canonical Version"],
-      ] as const) {
-        const dir = join(ws, dirName, "skills", "dupe");
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(join(dir, "SKILL.md"), `---\nname: ${skillName}\ndescription: d\n---\nbody`);
-      }
-      const found = discoverSkills({ workspaceRoot: ws, homeDir: home, workspaceTrusted: true });
-      expect(found.find((s) => s.id === "dupe")?.name).toBe("Canonical Version");
     } finally {
       rmSync(ws, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });

@@ -8,10 +8,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("AslSemanticPlugin", () => {
   const tempWorkspace = path.join(__dirname, "../fixtures/asl-semantic-temp");
-  const devagentTasksDir = path.join(tempWorkspace, ".devagent/tasks");
+  const nexumTasksDir = path.join(tempWorkspace, ".nexum/tasks");
 
   beforeEach(() => {
-    fs.mkdirSync(devagentTasksDir, { recursive: true });
+    fs.mkdirSync(nexumTasksDir, { recursive: true });
   });
 
   afterEach(() => {
@@ -21,7 +21,7 @@ describe("AslSemanticPlugin", () => {
   it("should discover and query target entities in ASL tasks", async () => {
     // 1. Create a task with a target entity
     fs.writeFileSync(
-      path.join(devagentTasksDir, "TASK-001.md"),
+      path.join(nexumTasksDir, "TASK-001.md"),
       `---
 id: task.auth
 title: Implement authentication

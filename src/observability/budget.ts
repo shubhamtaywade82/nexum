@@ -9,10 +9,8 @@ export function createTokenBudget(limit = 0): TokenBudget {
 }
 
 export function budgetFromEnv(env: NodeJS.ProcessEnv = process.env): TokenBudget {
-  // NEXUM_TOKEN_BUDGET is canonical; DEVAGENT_TOKEN_BUDGET (and the older
-  // CLOUD_TOKEN_BUDGET) remain deprecated fallbacks — see docs/REBRANDING.md §3.
   // Inline (not platform readEnv) because this helper takes an injected env.
-  const raw = env.NEXUM_TOKEN_BUDGET ?? env.DEVAGENT_TOKEN_BUDGET ?? env.CLOUD_TOKEN_BUDGET ?? "0";
+  const raw = env.NEXUM_TOKEN_BUDGET ?? "0";
   const limit = Number(raw);
   return createTokenBudget(Number.isFinite(limit) && limit > 0 ? limit : 0);
 }

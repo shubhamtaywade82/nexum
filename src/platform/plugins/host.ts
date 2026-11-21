@@ -28,7 +28,7 @@
  * Error handling: a failed setup/start transitions the plugin to "error"
  * but does NOT abort the host. Dependent plugins will still be attempted
  * (their `lookup()` calls will simply return undefined). This matches the
- * "best-effort, collect-and-continue" semantics of WorkspaceManager.migrate().
+ * "best-effort, collect-and-continue" semantics of the plugin lifecycle.
  */
 
 import { PluginRegistry, validateManifest } from "./registry.js";

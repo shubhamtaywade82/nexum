@@ -444,7 +444,7 @@ describe("App shell", () => {
   // handle that prevents Jest from exiting. Re-enable once the test renderer
   // supports bracketed-paste simulation on its mock stdin.
   it.skip("collapses a real bracketed paste that uses \\r (not \\n) as its line separator", async () => {
-    // Exact byte sequence captured via DEVAGENT_DEBUG_STDIN from a real
+    // Exact byte sequence captured via NEXUM_DEBUG_STDIN from a real
     // terminal session: bracketed-paste markers are present and correct,
     // but the terminal encodes pasted line breaks as bare \r. Bracketed
     // paste binds to the real process.stdin (not the test renderer's

@@ -2,13 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, basename, isAbsolute, relative, resolve } from "node:path";
 import { envIs, readEnv, readEnvFlag } from "../platform/environment.js";
 import { THEME_ORDER, ThemeName } from "../runtime/types.js";
-import {
-  findWorkspaceRoot,
-  globalStateDir,
-  legacyGlobalStateDir,
-  legacyWorkspaceStateDir,
-  workspaceStateDir,
-} from "../platform/paths.js";
+import { findWorkspaceRoot, globalStateDir, workspaceStateDir } from "../platform/paths.js";
 import type { McpServerTrustConfig, McpToolRule } from "../mcp/trust.js";
 import type { McpSecurityOverride } from "../mcp/adapter/security-metadata.js";
 
@@ -228,8 +222,6 @@ Use the provided tools to edit code, inspect files, and run commands from the wo
 If a command or test fails, inspect the error diagnostics and fix the exact cause rather than performing broad unneeded refactors.`;
 
 const GLOBAL_CONFIG_DIR = globalStateDir();
-// Legacy DevAgent-era global state — read as a deprecated fallback, never written.
-const LEGACY_GLOBAL_CONFIG_DIR = legacyGlobalStateDir();
 
 /** Remove `//` and `/* *`/ comments, leaving string literals (URLs, prompts)
  * untouched. Only ever applied after a strict JSON.parse has already failed,
@@ -303,24 +295,15 @@ function readConfigFile(p: string): ConfigFile {
 
 function loadGlobalConfig(): ConfigFile {
   if (envIs("TEST_NO_GLOBAL", "true")) return {};
-  // Legacy ~/.devagent/config.json still applies (deprecated); the canonical
-  // ~/.nexum/config.json wins key-by-key on top of it.
-  const legacy = readConfigFile(join(LEGACY_GLOBAL_CONFIG_DIR, "config.json"));
-  const current = readConfigFile(join(GLOBAL_CONFIG_DIR, "config.json"));
-  return { ...legacy, ...current };
+  return readConfigFile(join(GLOBAL_CONFIG_DIR, "config.json"));
 }
 
 // Workspace-root discovery lives in platform/paths.ts: walk up from cwd to
-// the nearest `.git`, with `.nexum` (and legacy `.devagent`) as fallback
-// markers for non-git workspaces — a real repo needs no prior session to be
+// the nearest `.git`, with `.nexum` as fallback marker for non-git workspaces — a real repo needs no prior session to be
 // "found", so the first run in a new project never falls back to cwd and
 // starts a disconnected history/config.
 function loadWorkspaceConfig(root: string): ConfigFile {
-  // Legacy .devagent/config.json is read as a deprecated fallback; the
-  // canonical .nexum/config.json wins key-by-key on top of it.
-  const legacy = readConfigFile(join(legacyWorkspaceStateDir(root), "config.json"));
-  const current = readConfigFile(join(workspaceStateDir(root), "config.json"));
-  return { ...legacy, ...current };
+  return readConfigFile(join(workspaceStateDir(root), "config.json"));
 }
 
 export function saveWorkspaceConfig(
@@ -362,7 +345,7 @@ export function saveGlobalConfig(partial: Partial<ConfigFile>): void {
 }
 
 function loadAgentsFile(root: string): string {
-  for (const name of ["AGENTS.md", "NEXUM.md", "DEVAGENT.md"]) {
+  for (const name of ["AGENTS.md", "NEXUM.md"]) {
     const p = join(root, name);
     if (!existsSync(p)) continue;
     try {
@@ -400,16 +383,9 @@ function loadEnvFiles(workspaceRoot: string, workspaceTrusted: boolean): string[
   const candidateFiles = cwdEnv && cwdEnv !== workspaceEnv ? [cwdEnv, workspaceEnv] : [workspaceEnv];
   const skipped = workspaceTrusted ? [] : candidateFiles.filter((f) => existsSync(f));
   if (envIs("TEST_NO_GLOBAL", "true")) return skipped;
-  // Canonical ~/.nexum/.env; legacy ~/.devagent/.env still loads (deprecated)
-  // when the canonical file does not exist.
   const globalEnv = join(GLOBAL_CONFIG_DIR, ".env");
   if (existsSync(globalEnv)) {
     dotenvConfig({ path: globalEnv, override: false, quiet: true } as any);
-  } else {
-    const legacyGlobalEnv = join(LEGACY_GLOBAL_CONFIG_DIR, ".env");
-    if (existsSync(legacyGlobalEnv)) {
-      dotenvConfig({ path: legacyGlobalEnv, override: false, quiet: true } as any);
-    }
   }
   if (!workspaceTrusted) return skipped;
   if (cwdEnv && existsSync(cwdEnv)) {
@@ -439,11 +415,11 @@ export interface LoadConfigOptions {
   workspaceRoot?: string;
 }
 
-/** "ask" | "always" | "off"; the older NEXUM_PLAN_HINT=0 still means "off". Unknown values use the always-plan default. */
-export function parseAutoPlan(value: string | undefined, legacyHint?: string): "ask" | "always" | "off" {
+/** "ask" | "always" | "off"; NEXUM_PLAN_HINT=0 means "off". Unknown values use the always-plan default. */
+export function parseAutoPlan(value: string | undefined, planHint?: string): "ask" | "always" | "off" {
   const v = value?.trim().toLowerCase();
   if (v === "ask" || v === "always" || v === "off") return v;
-  if (legacyHint === "0") return "off";
+  if (planHint === "0") return "off";
   return "always";
 }
 
@@ -459,8 +435,6 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
   const { kept: trustedFile, withheld: userOnlyWithheld } = withholdUserOnlyKeys(rawWorkspaceFile);
   const workspaceFile: ConfigFile = trust.trusted ? trustedFile : safe;
   // Workspace config overrides global, env vars override both.
-  // Product env vars resolve NEXUM_* first, then deprecated DEVAGENT_*
-  // (see platform/environment.ts — legacy reads warn on stderr).
   const file = { ...globalFile, ...workspaceFile };
 
   const rawTimeout = readEnv("TIMEOUT_MS") || String(file.timeoutMs ?? "");

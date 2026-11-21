@@ -18,7 +18,7 @@ export class AslSemanticPlugin implements SemanticPlugin {
   }
 
   detect(): boolean {
-    // Canonical .nexum state dir, or legacy .devagent (deprecated fallback).
+    // The workspace .nexum state dir.
     return aslStateDir(this.workspaceRoot) != null;
   }
 

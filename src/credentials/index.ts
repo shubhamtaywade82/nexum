@@ -15,7 +15,7 @@
  *   scope(tags)       → CredentialScope     (filter visible credentials)
  *
  * Provider adapters:
- *   EnvCredentialProvider      ← process.env / NEXUM_* / DEVAGENT_*
+ *   EnvCredentialProvider      ← process.env / NEXUM_*
  *   FileCredentialProvider     ← .nexum/credentials.json (gitignored)
  *   KeychainCredentialProvider ← OS keychain (macOS security / Linux secret-tool)
  *   VaultCredentialProvider    ← remote secret managers behind the VaultClient
@@ -296,16 +296,14 @@ export class EnvCredentialProvider implements CredentialProvider {
     if (process.env[name]) return process.env[name];
     // NEXUM_ prefix.
     if (process.env[`NEXUM_${name}`]) return process.env[`NEXUM_${name}`]!;
-    // DEVAGENT_ legacy prefix.
-    if (process.env[`DEVAGENT_${name}`]) return process.env[`DEVAGENT_${name}`]!;
     return undefined;
   }
 
   list(): string[] {
     const names: string[] = [];
     for (const key of Object.keys(process.env)) {
-      if (key.startsWith("NEXUM_") || key.startsWith("DEVAGENT_")) {
-        names.push(key.replace(/^(NEXUM|DEVAGENT)_/, ""));
+      if (key.startsWith("NEXUM_")) {
+        names.push(key.replace(/^NEXUM_/, ""));
       } else if (key.includes("API_KEY") || key.includes("SECRET") || key.includes("TOKEN")) {
         names.push(key);
       }

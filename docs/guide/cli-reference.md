@@ -36,7 +36,6 @@ See [CI Healer guide](/guide/ci-healer), [design](/ci-healer/DESIGN), and [backl
 | Command                        | What it does                                                                                            |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------- |
 | `nexum doctor`                 | System, workspace, and model diagnostics. See [Configuration](/guide/configuration).                    |
-| `nexum migrate`                | Migrate legacy `.devagent` state to `.nexum`.                                                           |
 | `nexum trust [status\|revoke]` | Review and trust this workspace's settings and `.env`. See [Trust & Security CLI](/guide/security-cli). |
 | `nexum asl [validate\|graph]`  | Architecture definition commands. `validate` checks the definition. `graph` renders it.                 |
 

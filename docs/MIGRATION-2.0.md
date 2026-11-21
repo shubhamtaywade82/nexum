@@ -14,10 +14,6 @@
 - **Alpha adopters** — anyone who pinned `@nemesis-oss/nexum@2.0.0-alpha.4`
   (or `.5`/`beta.1`/`rc.1`) during the preview window. The breaking
   changes you need to act on are in §3.
-- **DevAgent-era users** — there were none. `@nemesis-oss/devagent-ts` and
-  its predecessor names were never published to npm (verified at the
-  registry); the rename carries no migration burden. The `DEVAGENT_*` env
-  vars still work with a deprecation warning; see §5.
 
 ## 2. Installing 2.0.0
 
@@ -185,25 +181,10 @@ host.registerThirdParty(myPlugin);
 - `ProcessSubagentProvider` — spawns real subprocesses via `nexum rpc`.
   Functional but its lifecycle semantics may shift.
 
-## 5. DevAgent-era environment variables
+## 5. Workspace and environment names
 
-The `DEVAGENT_*` env vars are kept as deprecated aliases for the
-`NEXUM_*` canonical names, with a one-line stderr warning the first time
-each is read. They will be removed at 3.0 (per REBRANDING.md §7).
-
-| Deprecated (`DEVAGENT_*`) | Canonical (`NEXUM_*`)  | Removed at |
-| ------------------------- | ---------------------- | ---------- |
-| `DEVAGENT_WORKSPACE`      | `NEXUM_WORKSPACE`      | 3.0        |
-| `DEVAGENT_AUTO_APPROVE`   | `NEXUM_AUTO_APPROVE`   | 3.0        |
-| `DEVAGENT_TIER`           | `NEXUM_TIER`           | 3.0        |
-| `DEVAGENT_MODEL`          | `NEXUM_MODEL`          | 3.0        |
-| `DEVAGENT_VERIFIER`       | `NEXUM_VERIFIER`       | 3.0        |
-| `DEVAGENT_HEURISTIC_GATE` | `NEXUM_HEURISTIC_GATE` | 3.0        |
-
-The `.devagent/` directory is auto-migrated to `.nexum/` by
-`nexum migrate`. The `devagent-sandbox:latest` Docker image tag is still
-recognized as a fallback in `src/platform/brand.ts`. Run `nexum migrate`
-once after upgrading; it is idempotent.
+Nexum reads only `NEXUM_*` environment variables and `.nexum/` state. There
+are no legacy-name fallbacks, so nothing needs migrating before 2.0.0.
 
 ## 6. Configuration changes
 
@@ -296,7 +277,7 @@ account for the fence.
 Per STABILITY.md §"Versioning":
 
 - **Major** (2.x → 3.x): breaking changes to Tier-1 Stable exports.
-  Also when deprecated `DEVAGENT_*` env aliases are removed.
+  Also when a documented `NEXUM_*` variable or `.nexum/` file name changes.
 - **Minor** (2.0 → 2.1): new features; Tier-2 Experimental exports may
   break.
 - **Patch** (2.0.0 → 2.0.1): bug fixes only; no API changes.

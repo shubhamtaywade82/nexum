@@ -659,7 +659,7 @@ const CREDENTIALS_USAGE = `Usage:
   nexum credentials list [--json] [--keychain] [--vault <address>]
   nexum credentials get <name> [--keychain] [--vault <address>]
 
-Providers: env (NEXUM_*/DEVAGENT_* variables) + file (.nexum/credentials.json) are always
+Providers: env (NEXUM_* variables) + file (.nexum/credentials.json) are always
 in the chain. --keychain adds the OS keychain; --vault <addr> adds HashiCorp Vault KV v2
 (token read from VAULT_TOKEN). Values are always printed redacted.`;
 
@@ -727,9 +727,7 @@ async function runCredentialsCommand(argv: string[], ctx: Ctx): Promise<number> 
     }
     ctx.out("=== Nexum Credentials (redacted) ===");
     if (rows.length === 0) {
-      ctx.out(
-        "no enumerable credentials found (env provider lists NEXUM_*/DEVAGENT_* names; keychain/vault are not enumerable)",
-      );
+      ctx.out("no enumerable credentials found (env provider lists NEXUM_* names; keychain/vault are not enumerable)");
       return EXIT_OK;
     }
     for (const line of renderTable(

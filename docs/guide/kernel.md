@@ -252,7 +252,7 @@ the kernel adds supervision underneath it, not shortcuts around it.
 Remaining lever (in order of leverage):
 
 1. Split packages once the seams have settled (`@nemesis-oss/nexum-core`,
-   `-models`, `-tools`, `-mcp`, `-devagent`).
+   `-models`, `-tools`, `-mcp`, `-agent`).
 
 ### Control Plane promotion (done)
 

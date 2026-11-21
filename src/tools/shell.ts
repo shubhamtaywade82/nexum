@@ -13,7 +13,7 @@ import { BRAND } from "../platform/brand.js";
 import type { ToolCallContext } from "../core/tools/tool-contract.js";
 import { ShellExecutionAccountant } from "./shell-accounting.js";
 import { hostEnv } from "./command-runner.js";
-import { STATE_DIRS } from "../core/fs/workspace-guard.js";
+import { STATE_DIR } from "../core/fs/workspace-guard.js";
 
 export interface ShellToolOptions {
   workspaceRoot: string;
@@ -452,7 +452,7 @@ export class ShellTool extends Tool {
    *   2. the write scope — read-write
    *   3. .git/hooks and .git/config — read-only (a planted hook or
    *      core.fsmonitor would otherwise run on the HOST at the next git call);
-   *      .nexum/ and .devagent/ — read-only (config and trust stores)
+   *      .nexum/ — read-only (config and trust stores)
    *   4. every sensitive file (masked with an empty file) and directory (masked
    *      with an empty tmpfs), so `cat .env` in the sandbox reads nothing
    */
@@ -479,18 +479,14 @@ export class ShellTool extends Tool {
     // Nexum's state (config, plugin installs, trust stores) is read-only too.
     // .nexum is created first when missing: otherwise the container could
     // create it and plant a config the next Nexum run on the host would load.
-    const primaryState = join(root, STATE_DIRS[0]);
-    if (!existsSync(primaryState) && !isSymlink(primaryState)) mkdirSync(primaryState, { recursive: true });
+    const statePath = join(root, STATE_DIR);
+    if (!existsSync(statePath) && !isSymlink(statePath)) mkdirSync(statePath, { recursive: true });
     let stateReal: string | undefined;
-    for (const name of STATE_DIRS) {
-      const statePath = join(root, name);
-      if (!existsSync(statePath)) continue;
-      // a symlinked state dir is protected where it really lives (if the container can reach it)
-      const real = realOrResolved(statePath);
-      if (isWithin(root, real) && real !== root && lstatSync(real).isDirectory()) {
-        args.push(...bind(real, toContainer(real), true));
-        stateReal ??= real;
-      }
+    // a symlinked state dir is protected where it really lives (if the container can reach it)
+    const real = existsSync(statePath) ? realOrResolved(statePath) : undefined;
+    if (real && isWithin(root, real) && real !== root && lstatSync(real).isDirectory()) {
+      args.push(...bind(real, toContainer(real), true));
+      stateReal = real;
     }
     const emptyFile = maskFile(stateReal);
 

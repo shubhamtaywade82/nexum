@@ -80,7 +80,7 @@ describe("SemanticIndex persistence", () => {
   it("loads from cache when manifest is unchanged, rebuilds when stale", async () => {
     const dir = await mkdtemp(join(tmpdir(), "rsi-cache-"));
     await cp(FIXTURE, dir, { recursive: true });
-    const cachePath = join(dir, ".devagent-rails.db");
+    const cachePath = join(dir, ".nexum-rails.db");
 
     const first = SemanticIndex.create(dir, { cachePath });
     await first.build();
@@ -110,7 +110,7 @@ describe("SemanticIndex persistence", () => {
   it("supports incremental update after a cache-warm start", async () => {
     const dir = await mkdtemp(join(tmpdir(), "rsi-cache-upd-"));
     await cp(FIXTURE, dir, { recursive: true });
-    const cachePath = join(dir, ".devagent-rails.db");
+    const cachePath = join(dir, ".nexum-rails.db");
 
     const first = SemanticIndex.create(dir, { cachePath });
     await first.build();

@@ -5,7 +5,7 @@ Nexum's `CredentialService` resolves credentials through a chain of providers, s
 ```
 get("GITHUB_TOKEN")
       ↓ provider chain, first hit wins
-[1] env        process.env / NEXUM_* / DEVAGENT_*
+[1] env        process.env / NEXUM_*
 [2] file       .nexum/credentials.json (gitignored, mode 0600)
 [3] keychain   macOS Keychain (security) · Linux Secret Service (secret-tool)
 [4] vault      remote secret managers behind the VaultClient port
@@ -17,7 +17,7 @@ cached CredentialRecord (value + provider + resolvedAt)
 
 | Provider                     | Source                     | Notes                                                                                                                                                                                                                            |
 | ---------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EnvCredentialProvider`      | `process.env`              | Always first in the chain. Resolves `NAME`, `NEXUM_NAME`, then `DEVAGENT_NAME`                                                                                                                                                   |
+| `EnvCredentialProvider`      | `process.env`              | Always first in the chain. Resolves `NAME`, then `NEXUM_NAME`                                                                                                                                                                    |
 | `FileCredentialProvider`     | `<state>/credentials.json` | Atomic writes with `0600`; `write()` / `remove()` for management                                                                                                                                                                 |
 | `KeychainCredentialProvider` | OS keychain                | macOS `security find-generic-password`, Linux `secret-tool lookup`. No native modules — plain CLI tools behind an injectable executor. Missing binary/item/backend resolves `undefined` (the chain moves on); `set()` for writes |
 | `VaultCredentialProvider`    | Remote secret manager      | Any backend behind the `VaultClient` port; TTL cache (default 5 min), path prefixing, `name#field` mapping                                                                                                                       |

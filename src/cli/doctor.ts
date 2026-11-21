@@ -1,9 +1,9 @@
+import { existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { LspManager } from "../lsp/manager.js";
 import type { LspServerState } from "../lsp/protocol.js";
-import { activeLegacyEnvVariables } from "../platform/environment.js";
 import { WorkspaceManager } from "../platform/workspace.js";
 import { BRAND } from "../platform/brand.js";
 import { discoverWorkspace } from "../domains/rails/index.js";
@@ -140,15 +140,7 @@ export async function runDoctor(): Promise<DoctorReport> {
   await checkQuickModel(lines, config);
 
   const ws = new WorkspaceManager(config.workspaceRoot);
-  const detection = ws.detect();
-  lines.push(`workspaceState: ${ws.dir}${detection.hasCurrent ? "" : " (uninitialized)"}`);
-  if (detection.hasLegacy) {
-    lines.push(`legacyState: ${ws.legacyDir} present (run \`nexum migrate\`)`);
-  }
-  const legacyEnv = activeLegacyEnvVariables();
-  if (legacyEnv.length > 0) {
-    lines.push(`legacyEnv: ${legacyEnv.length} deprecated DEVAGENT_* variable(s)`);
-  }
+  lines.push(`workspaceState: ${ws.dir}${existsSync(ws.dir) ? "" : " (uninitialized)"}`);
 
   checkDocker(lines, config.shellImage ?? BRAND.sandboxImage);
   checkGitHub(lines);

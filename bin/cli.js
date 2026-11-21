@@ -17,7 +17,7 @@ if (nodeMajor < 22) {
 // NEXUM_AUTO_APPROVE, same as the env var). Stripped from argv before command
 // parsing so it can appear anywhere, e.g. `nexum --yolo "task"` or `nexum fix --yolo "issue"`.
 // Note: this only bypasses the confirmation prompt — policy denial rules
-// (force push, secrets, .nexum/.devagent mutation, etc.) still apply; see
+// (force push, secrets, .nexum mutation, etc.) still apply; see
 // AGENTS.md §7.18 "first decision wins".
 {
   const args = process.argv.slice(2);
@@ -68,7 +68,6 @@ Usage:
                                 Heal failing GitHub Actions runs (see src/domains/ci-healer)
   nexum doctor                  Run system, workspace, and model diagnostics
   nexum cloud-check             Verify Ollama Cloud connectivity, metering and budget guard
-  nexum migrate                 Migrate legacy .devagent state to .nexum
   nexum trust [status|revoke]   Review and trust this workspace's settings and .env
   nexum asl [validate|graph]    Architecture definition commands
   nexum eval <dataset.json>     Score real agent runs against an evaluation dataset
@@ -108,7 +107,6 @@ if (command === "trust") {
     "credentials",
     "capabilities",
     "rpc",
-    "migrate",
     "asl",
     "ci-healer",
     "cloud-check",
@@ -199,9 +197,4 @@ if (command === "chat") {
   process.exit(0);
 }
 
-if (command === "migrate") {
-  const { main } = await import("../dist/cli/migrate.js");
-  await main(process.argv.slice(3));
-} else {
-  await import("../dist/ui/index.js");
-}
+await import("../dist/ui/index.js");

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { SkillsRegistry } from "../../src/skills/registry.js";
 
 function writeSkill(root: string, id: string, frontmatter: string, body = "Body text"): void {
-  const dir = join(root, ".devagent", "skills", id);
+  const dir = join(root, ".nexum", "skills", id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "SKILL.md"), `---\n${frontmatter}\n---\n\n${body}`);
 }
@@ -14,8 +14,8 @@ describe("SkillsRegistry", () => {
   let homeDir: string;
 
   beforeEach(() => {
-    workspaceRoot = mkdtempSync(join(tmpdir(), "devagent-ws-"));
-    homeDir = mkdtempSync(join(tmpdir(), "devagent-home-"));
+    workspaceRoot = mkdtempSync(join(tmpdir(), "nexum-ws-"));
+    homeDir = mkdtempSync(join(tmpdir(), "nexum-home-"));
     writeSkill(workspaceRoot, "rails-api", "name: Rails API\ndescription: REST APIs\ntags: [rails, api]", "Rails body");
     writeSkill(workspaceRoot, "docker", "name: Docker\ndescription: containers\ntags: [docker]", "Docker body");
   });

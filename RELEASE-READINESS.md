@@ -70,10 +70,9 @@ Changes:
 - `README.md`: remove the alias lines in the CLI section and the "remain as
   aliases … for one major version" promise in the migration section.
 - `CHANGELOG.md`: document the alias removal.
-- Keep (per the existing contract, until 3.0): `DEVAGENT_*` env fallbacks with
-  deprecation warnings, `.devagent/` → `.nexum/` migration, `nexum migrate`,
-  all `src/platform/` compat code, `devagent-sandbox:latest` fallback in
-  `src/platform/brand.ts`, and historical documents per REBRANDING.md §9.
+- Removed in the pre-stable cleanup (see CHANGELOG Unreleased): `DEVAGENT_*`
+  env fallbacks, `.devagent/` → `.nexum/` migration, `nexum migrate`, the
+  `devagent-sandbox:latest` fallback, and the related platform code.
 - Do NOT rename: `src/agents/devagent/` and the `DevAgent` SDK export — a
   product-agent name, not CLI surface (REBRANDING.md §6 scope discipline).
 
@@ -267,8 +266,6 @@ npm publish --access public --tag next --provenance
 - Splitting into multiple npm packages (deferred until demand exists).
 - Website/docs portal polish (VitePress docs already build; portal work is
   Phase 2+).
-- `DEVAGENT_*` env compatibility beyond the 3.0 boundary already promised in
-  REBRANDING.md §1.
 
 ## 7. Document history
 

@@ -16,7 +16,7 @@ function buildPrompt(episode: Episode): string {
     .join("\n");
 
   return [
-    "You review one completed dev-agent task and extract durable lessons for future tasks in THIS repository.",
+    "You review one completed coding-agent task and extract durable lessons for future tasks in THIS repository.",
     "",
     `GOAL: ${episode.goal}`,
     `OUTCOME: ${grade?.verdict ?? "unknown"} (score ${grade?.score.toFixed(2) ?? "?"}, terminal ${episode.terminal})`,

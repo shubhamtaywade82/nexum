@@ -190,7 +190,7 @@ describe("Agent memory summarization trigger", () => {
 });
 
 function writeSkill(workspaceRoot: string, id: string, frontmatter: string, body: string): void {
-  const dir = join(workspaceRoot, ".devagent", "skills", id);
+  const dir = join(workspaceRoot, ".nexum", "skills", id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "SKILL.md"), `---\n${frontmatter}\n---\n\n${body}`);
 }
@@ -207,7 +207,7 @@ function firstRequestMessages(): Array<{ role: string; content: string }> {
 }
 
 describe("Agent skills activation", () => {
-  // Isolate from the real ~/.devagent/skills global dir, which may contain
+  // Isolate from the real ~/.nexum/skills global dir, which may contain
   // unrelated real skills on a developer machine and would otherwise leak
   // into resolution alongside the fixture skill below.
   let skillsHomeDir: string;

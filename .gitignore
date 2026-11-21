@@ -7,8 +7,6 @@ dist/
 .nexum/*
 !.nexum/skills/
 # legacy DevAgent state (migrated to .nexum, never tracked)
-.devagent/
-.devagent_history
 __pycache__
 .omc
 coverage/

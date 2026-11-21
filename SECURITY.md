@@ -59,7 +59,7 @@ packs by `registerBaseTools`. Per operation it enforces:
    possible secret (fail closed).
 5. **Git internals** — file tools never write under `.git/` (a planted
    hook or `core.fsmonitor` would run on the host at the next git command).
-   **Nexum state** — nor under `.nexum/` or `.devagent/` (config, plugin
+   **Nexum state** — nor under `.nexum/` (config, plugin
    installs, publisher trust store, MCP approvals): an agent that could
    write there could switch its own sandbox off or trust its own plugins.
    Reading is allowed; `credentials.json` and `*.pem` there are secrets
@@ -88,7 +88,7 @@ Default (`sandbox: true`). Each call runs `docker run` with:
   read-write when one is set;
 - `.git/hooks` and `.git/config` mounted read-only;
 - `.nexum/` (created first if missing, so the container cannot create it)
-  and `.devagent/` mounted read-only — where they really live, if symlinked;
+  mounted read-only — where it really lives, if symlinked;
 - every secret file masked with an empty read-only file
   (`.nexum/sandbox-empty`, a workspace path Docker Desktop can always
   share; `/dev/null` only if no state directory is usable) and every secret
@@ -223,9 +223,8 @@ with the default `worker` transport isolates memory only.
 
 ## 8. Workspace trust
 
-A repository can ship files that configure Nexum itself: `.nexum/config.json`
-(and legacy `.devagent/config.json`), `.nexum/mcp-trust.json`,
-`.nexum/publisher-trust.json`, and the workspace/cwd `.env`, which Nexum
+A repository can ship files that configure Nexum itself: `.nexum/config.json`,
+`.nexum/mcp-trust.json`, `.nexum/publisher-trust.json`, and the workspace/cwd `.env`, which Nexum
 loads into its own process — where `PATH` or `NODE_OPTIONS` would decide
 what the next `git`, `gh`, `docker` or Node child actually runs. None of it
 applies until you trust that exact content (`src/cli/workspace-trust.ts`):

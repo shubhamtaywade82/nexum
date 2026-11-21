@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("detectProjectInfo", () => {
   it("detects TypeScript + React + Jest from package.json", () => {
-    const dir = mkdtempSync(join(tmpdir(), "devagent-project-info-"));
+    const dir = mkdtempSync(join(tmpdir(), "nexum-project-info-"));
     try {
       writeFileSync(join(dir, "tsconfig.json"), "{}");
       writeFileSync(
@@ -27,7 +27,7 @@ describe("detectProjectInfo", () => {
   });
 
   it("returns an empty object when neither package.json nor Gemfile exist", () => {
-    const dir = mkdtempSync(join(tmpdir(), "devagent-project-info-empty-"));
+    const dir = mkdtempSync(join(tmpdir(), "nexum-project-info-empty-"));
     try {
       expect(detectProjectInfo(dir)).toEqual({});
     } finally {

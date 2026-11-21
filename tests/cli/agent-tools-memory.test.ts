@@ -6,20 +6,16 @@ import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentToolManager } from "../../src/cli/agent-tools.js";
-import { resetDeprecationWarnings, suppressDeprecationWarnings } from "../../src/platform/environment.js";
 
 describe("AgentToolManager intelligence wiring", () => {
   let dir: string;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nexum-memtools-"));
-    suppressDeprecationWarnings(true);
-    resetDeprecationWarnings();
     delete process.env.NEXUM_SEMANTIC_MEMORY;
   });
 
   afterEach(() => {
-    suppressDeprecationWarnings(false);
     rmSync(dir, { recursive: true, force: true });
   });
 

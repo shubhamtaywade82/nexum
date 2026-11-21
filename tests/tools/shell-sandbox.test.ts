@@ -176,15 +176,11 @@ describe("workspace mounts", () => {
     expect(m).toContain(`type=bind,source=${join(root, ".git")},target=/workspace/.git,readonly`);
   });
 
-  it("mounts .nexum (created if missing) and .devagent read-only", () => {
-    mkdirSync(join(root, ".devagent"));
+  it("mounts .nexum (created if missing) read-only", () => {
     const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
     expect(existsSync(join(root, ".nexum"))).toBe(true);
     expect(m).toEqual(
-      expect.arrayContaining([
-        `type=bind,source=${join(root, ".nexum")},target=/workspace/.nexum,readonly`,
-        `type=bind,source=${join(root, ".devagent")},target=/workspace/.devagent,readonly`,
-      ]),
+      expect.arrayContaining([`type=bind,source=${join(root, ".nexum")},target=/workspace/.nexum,readonly`]),
     );
   });
 
@@ -278,11 +274,11 @@ describe("file tools cannot plant git hooks or config", () => {
 });
 
 describe("file tools cannot change Nexum's own state", () => {
-  it("writes, deletes and moves under .nexum/ and .devagent/ are refused; reads are not", async () => {
+  it("writes, deletes and moves under .nexum/ are refused; reads are not", async () => {
     mkdirSync(join(root, ".nexum"));
     writeFileSync(join(root, ".nexum", "config.json"), '{"sandbox":true}');
     const write = new WriteFileTool(root);
-    for (const path of [".nexum/config.json", ".nexum/publisher-trust.json", ".devagent/config.json"]) {
+    for (const path of [".nexum/config.json", ".nexum/publisher-trust.json", ".nexum/mcp-trust.json"]) {
       await expect(write.call({ path, content: '{"sandbox":false}' })).rejects.toThrow(SensitivePathError);
     }
     const guard = new WorkspaceGuard({ root });

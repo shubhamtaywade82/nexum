@@ -38,12 +38,6 @@ describe("EnvCredentialProvider", () => {
     delete process.env.NEXUM_MY_KEY;
   });
 
-  it("resolves DEVAGENT_-prefixed vars (legacy)", () => {
-    process.env.DEVAGENT_OLD_KEY = "legacy-value";
-    expect(provider.resolve("OLD_KEY")).toBe("legacy-value");
-    delete process.env.DEVAGENT_OLD_KEY;
-  });
-
   it("returns undefined for unknown credentials", () => {
     expect(provider.resolve("NONEXISTENT_KEY_12345")).toBeUndefined();
   });

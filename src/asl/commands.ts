@@ -11,18 +11,12 @@ import {
   validateReviewContract,
 } from "./parser.js";
 import { AslTaskSpec } from "./types.js";
-import { legacyWorkspaceStateDir, workspaceStateDir } from "../platform/paths.js";
+import { workspaceStateDir } from "../platform/paths.js";
 
-/**
- * First existing ASL state directory: canonical .nexum, falling back to
- * legacy .devagent (deprecated) — see docs/REBRANDING.md §4.
- */
+/** The workspace `.nexum` state directory, or null when it does not exist. */
 export function aslStateDir(workspaceRoot: string): string | null {
-  const canonical = workspaceStateDir(workspaceRoot);
-  if (fs.existsSync(canonical)) return canonical;
-  const legacy = legacyWorkspaceStateDir(workspaceRoot);
-  if (fs.existsSync(legacy)) return legacy;
-  return null;
+  const dir = workspaceStateDir(workspaceRoot);
+  return fs.existsSync(dir) ? dir : null;
 }
 
 export function getAslFiles(dir: string): string[] {
@@ -45,7 +39,7 @@ export function getAslFiles(dir: string): string[] {
 export async function validateAsl(workspaceRoot: string): Promise<boolean> {
   const stateDir = aslStateDir(workspaceRoot);
   if (!stateDir) {
-    console.error(`Error: no .nexum (or legacy .devagent) directory exists at ${workspaceRoot}`);
+    console.error(`Error: no .nexum directory exists at ${workspaceRoot}`);
     return false;
   }
 
@@ -131,7 +125,7 @@ export async function generateAslGraph(workspaceRoot: string): Promise<void> {
   }
 
   if (tasks.length === 0) {
-    console.log("No valid tasks found under .nexum/tasks/ (or legacy .devagent/tasks/)");
+    console.log("No valid tasks found under .nexum/tasks/");
     return;
   }
 

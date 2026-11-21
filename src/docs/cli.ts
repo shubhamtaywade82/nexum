@@ -15,8 +15,7 @@ async function main() {
   }
 
   const cfg = loadConfig();
-  // Resolve .nexum (migrating a legacy .devagent workspace if present) —
-  // the store path is owned by the WorkspaceManager.
+  // Resolve .nexum — the store path is owned by the WorkspaceManager.
   const statePaths = new WorkspaceManager(cfg.workspaceRoot).ensure();
   const store = new DocsStore(statePaths.docsDb);
 

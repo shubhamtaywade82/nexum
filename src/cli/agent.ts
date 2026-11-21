@@ -372,16 +372,10 @@ export class Agent {
     this.lspManager = this.intelligence.lspManager;
     this.railsIndex = this.intelligence.railsIndex;
 
-    // Workspace state (memory/checkpoint/sessions/docs) lives under .nexum —
-    // resolved (and migrated from legacy .devagent when present) by the
-    // WorkspaceManager, the single owner of that decision (docs/REBRANDING.md §4).
-    // (the one-time .devagent → .nexum migration copies config.json: keep a
-    // trusted workspace trusted across it, never trust an untrusted one)
-    // One trust store for every decision this agent makes about the workspace (the global one unless injected).
+    // Workspace state (memory/checkpoint/sessions/docs) lives under .nexum,
+    // created by the WorkspaceManager, the single owner of that decision.
     const trustStore = opts.trustStore ?? WorkspaceTrustStore.global();
-    const statePaths = preservingTrust(cfg.workspaceRoot, trustStore, () =>
-      new WorkspaceManager(cfg.workspaceRoot).ensure(),
-    );
+    const statePaths = new WorkspaceManager(cfg.workspaceRoot).ensure();
 
     // MCP trust is always enforced. Listing a server in configuration is consent (trusted by rule);
     // any server nobody lists is untrusted and is refused before it is spawned.

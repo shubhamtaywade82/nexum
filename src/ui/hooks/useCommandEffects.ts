@@ -91,9 +91,7 @@ export function useCommandEffects(
         }
         case "init-workspace": {
           const root = workspaceRoot ?? process.cwd();
-          // Route every state-path decision through the WorkspaceManager:
-          // init creates `.nexum` (never the legacy `.devagent`) and migrates
-          // any legacy workspace as a side effect (docs/REBRANDING.md §4).
+          // Route every state-path decision through the WorkspaceManager.
           const mgr = new WorkspaceManager(root);
           mgr.ensure();
           const paths = mgr.paths();

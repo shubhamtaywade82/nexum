@@ -8,7 +8,7 @@ import { Provider } from "../../src/models/adapters/provider.js";
 describe("generateSummary", () => {
   it("prompts the provider with recent messages and stores the resulting bullet summary", async () => {
     const dir = await mkdtemp(join(tmpdir(), "mem-"));
-    const store = new MemoryStore(join(dir, "devagent.db"));
+    const store = new MemoryStore(join(dir, "nexum.db"));
     store.appendMessage("user", "add a CommandRegistry");
     store.appendMessage("assistant", "done, created CommandRegistry.ts");
 

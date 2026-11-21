@@ -12,11 +12,11 @@ describe("loadConfig apiKeys pool", () => {
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "config-test-"));
-    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
-    process.env.DEVAGENT_TEST_NO_GLOBAL = "true";
+    process.env.NEXUM_WORKSPACE = workspaceRoot;
+    process.env.NEXUM_TEST_NO_GLOBAL = "true";
     delete process.env.OLLAMA_API_KEY;
     delete process.env.OLLAMA_API_KEYS;
-    delete process.env.DEVAGENT_TIER;
+    delete process.env.NEXUM_TIER;
   });
 
   afterEach(() => {
@@ -85,7 +85,6 @@ describe("loadConfig apiKeys pool", () => {
   });
 
   it("loads API keys and config from workspace .env files", () => {
-    delete process.env.DEVAGENT_TEST_NO_GLOBAL;
     delete process.env.NEXUM_TEST_NO_GLOBAL;
     delete process.env.OLLAMA_API_KEY;
     writeFileSync(join(workspaceRoot, ".env"), "OLLAMA_API_KEY=env_workspace_key\nNEXUM_TIER=cloud\n");
@@ -103,7 +102,7 @@ describe("workspace root resolution (git-root, like most editor tooling)", () =>
   const originalCwd = process.cwd();
 
   beforeEach(() => {
-    delete process.env.DEVAGENT_WORKSPACE;
+    delete process.env.NEXUM_WORKSPACE;
   });
 
   afterEach(() => {
@@ -111,7 +110,7 @@ describe("workspace root resolution (git-root, like most editor tooling)", () =>
     process.chdir(originalCwd);
   });
 
-  it("finds the project root via .git even with no .devagent yet (first run in a new project)", async () => {
+  it("finds the project root via .git even with no .nexum yet (first run in a new project)", async () => {
     const projectRoot = await realpath(await mkdtemp(join(tmpdir(), "gitroot-test-")));
     mkdirSync(join(projectRoot, ".git"));
     const nested = join(projectRoot, "src", "deep", "nested");
@@ -121,13 +120,13 @@ describe("workspace root resolution (git-root, like most editor tooling)", () =>
     expect(loadConfig().workspaceRoot).toBe(projectRoot);
   });
 
-  it("finds the project root when launched from a subdirectory with no .devagent yet", async () => {
-    // Regression: a prior session created .devagent at the git root; a new
-    // session launched from a different, still-.devagent-less subdirectory
+  it("finds the project root when launched from a subdirectory with no .nexum yet", async () => {
+    // Regression: a prior session created .nexum at the git root; a new
+    // session launched from a different, still-.nexum-less subdirectory
     // must resolve to the same root, not fork off a fresh one.
     const projectRoot = await realpath(await mkdtemp(join(tmpdir(), "gitroot-test-")));
     mkdirSync(join(projectRoot, ".git"));
-    mkdirSync(join(projectRoot, ".devagent"));
+    mkdirSync(join(projectRoot, ".nexum"));
     const otherSubdir = join(projectRoot, "packages", "other");
     mkdirSync(otherSubdir, { recursive: true });
 
@@ -135,9 +134,9 @@ describe("workspace root resolution (git-root, like most editor tooling)", () =>
     expect(loadConfig().workspaceRoot).toBe(projectRoot);
   });
 
-  it("falls back to nearest .devagent when there is no .git", async () => {
-    const projectRoot = await realpath(await mkdtemp(join(tmpdir(), "devagent-only-test-")));
-    mkdirSync(join(projectRoot, ".devagent"));
+  it("falls back to nearest .nexum when there is no .git", async () => {
+    const projectRoot = await realpath(await mkdtemp(join(tmpdir(), "nexum-only-test-")));
+    mkdirSync(join(projectRoot, ".nexum"));
     const nested = join(projectRoot, "sub");
     mkdirSync(nested);
 
@@ -145,9 +144,9 @@ describe("workspace root resolution (git-root, like most editor tooling)", () =>
     expect(loadConfig().workspaceRoot).toBe(projectRoot);
   });
 
-  it("prefers .git over a farther-out .devagent when both exist at different levels", async () => {
-    const outer = await realpath(await mkdtemp(join(tmpdir(), "outer-devagent-")));
-    mkdirSync(join(outer, ".devagent"));
+  it("prefers .git over a farther-out .nexum when both exist at different levels", async () => {
+    const outer = await realpath(await mkdtemp(join(tmpdir(), "outer-nexum-")));
+    mkdirSync(join(outer, ".nexum"));
     const inner = join(outer, "project");
     mkdirSync(inner);
     mkdirSync(join(inner, ".git"));
@@ -156,12 +155,12 @@ describe("workspace root resolution (git-root, like most editor tooling)", () =>
     expect(loadConfig().workspaceRoot).toBe(inner);
   });
 
-  it("DEVAGENT_WORKSPACE still overrides everything", async () => {
+  it("NEXUM_WORKSPACE still overrides everything", async () => {
     const projectRoot = await realpath(await mkdtemp(join(tmpdir(), "gitroot-test-")));
     mkdirSync(join(projectRoot, ".git"));
     const override = await realpath(await mkdtemp(join(tmpdir(), "override-test-")));
 
-    process.env.DEVAGENT_WORKSPACE = override;
+    process.env.NEXUM_WORKSPACE = override;
     process.chdir(projectRoot);
     expect(loadConfig().workspaceRoot).toBe(override);
   });
@@ -173,13 +172,13 @@ describe("Docker tool defaults", () => {
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "docker-config-test-"));
-    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
-    process.env.DEVAGENT_TEST_NO_GLOBAL = "true";
+    process.env.NEXUM_WORKSPACE = workspaceRoot;
+    process.env.NEXUM_TEST_NO_GLOBAL = "true";
     process.env.NEXUM_TEST_NO_GLOBAL = "true";
     delete process.env.NEXUM_DOCKER_TOOL;
     delete process.env.NEXUM_DOCKER_EGRESS;
-    delete process.env.DEVAGENT_DOCKER_TOOL;
-    delete process.env.DEVAGENT_DOCKER_EGRESS;
+    delete process.env.NEXUM_DOCKER_TOOL;
+    delete process.env.NEXUM_DOCKER_EGRESS;
   });
 
   afterEach(() => {
@@ -229,8 +228,8 @@ describe("enableHeuristicGate flag", () => {
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "config-test-"));
-    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
-    delete process.env.DEVAGENT_HEURISTIC_GATE;
+    process.env.NEXUM_WORKSPACE = workspaceRoot;
+    delete process.env.NEXUM_HEURISTIC_GATE;
   });
 
   afterEach(() => {
@@ -241,8 +240,8 @@ describe("enableHeuristicGate flag", () => {
     expect(loadConfig().enableHeuristicGate).toBe(true);
   });
 
-  it("is false when DEVAGENT_HEURISTIC_GATE=false", () => {
-    process.env.DEVAGENT_HEURISTIC_GATE = "false";
+  it("is false when NEXUM_HEURISTIC_GATE=false", () => {
+    process.env.NEXUM_HEURISTIC_GATE = "false";
     expect(loadConfig().enableHeuristicGate).toBe(false);
   });
 });
@@ -253,9 +252,9 @@ describe("loadConfig host/tier interaction", () => {
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "config-host-"));
-    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
+    process.env.NEXUM_WORKSPACE = workspaceRoot;
     delete process.env.OLLAMA_HOST;
-    delete process.env.DEVAGENT_TIER;
+    delete process.env.NEXUM_TIER;
   });
 
   afterEach(() => {
@@ -274,17 +273,17 @@ describe("loadConfig host/tier interaction", () => {
   // own localhost.
   it("ignores OLLAMA_HOST when the tier is cloud", () => {
     process.env.OLLAMA_HOST = "http://127.0.0.1:9999";
-    process.env.DEVAGENT_TIER = "cloud";
+    process.env.NEXUM_TIER = "cloud";
     const cfg = loadConfig();
     expect(cfg.tier).toBe("cloud");
     expect(cfg.host).toBeUndefined();
   });
 
   it("still honours an explicit host from a trusted workspace config on the cloud tier", () => {
-    mkdirSync(join(workspaceRoot, ".devagent"), { recursive: true });
-    writeFileSync(join(workspaceRoot, ".devagent", "config.json"), JSON.stringify({ host: "https://proxy.example" }));
+    mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
+    writeFileSync(join(workspaceRoot, ".nexum", "config.json"), JSON.stringify({ host: "https://proxy.example" }));
     process.env.OLLAMA_HOST = "http://127.0.0.1:9999";
-    process.env.DEVAGENT_TIER = "cloud";
+    process.env.NEXUM_TIER = "cloud";
     // untrusted, a repository cannot redirect model traffic (prompts, code, bearer token)
     expect(loadConfig().host).toBeUndefined();
     const trustStore = WorkspaceTrustStore.inMemory();
@@ -303,7 +302,7 @@ describe("loadConfig host/tier interaction", () => {
 });
 
 describe("parseAutoPlan", () => {
-  it("accepts the three modes, honours the legacy hint switch, and defaults to always", async () => {
+  it("accepts the three modes, honours the NEXUM_PLAN_HINT switch, and defaults to always", async () => {
     const { parseAutoPlan } = await import("../../src/cli/config.js");
     expect(parseAutoPlan("always")).toBe("always");
     expect(parseAutoPlan(" OFF ")).toBe("off");
@@ -320,12 +319,12 @@ describe("commented config file (config.example.jsonc)", () => {
 
   beforeEach(async () => {
     workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), "config-jsonc-")));
-    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
+    process.env.NEXUM_WORKSPACE = workspaceRoot;
     mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
     // anything the example sets must not be shadowed by the shell's own config
     for (const key of ["MODEL", "TIER", "HOST", "SHELL_TIMEOUT_SEC", "MAX_ACTIVE_TOOLS", "SANDBOX"]) {
       delete process.env[`NEXUM_${key}`];
-      delete process.env[`DEVAGENT_${key}`];
+      delete process.env[`NEXUM_${key}`];
     }
     delete process.env.OLLAMA_HOST;
   });
@@ -383,12 +382,12 @@ describe("enableVerifier default (always active)", () => {
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "config-verifier-"));
-    process.env.DEVAGENT_WORKSPACE = workspaceRoot;
-    process.env.DEVAGENT_TEST_NO_GLOBAL = "true";
+    process.env.NEXUM_WORKSPACE = workspaceRoot;
+    process.env.NEXUM_TEST_NO_GLOBAL = "true";
     delete process.env.NEXUM_QUICK_MODEL;
     delete process.env.NEXUM_VERIFIER;
-    delete process.env.DEVAGENT_QUICK_MODEL;
-    delete process.env.DEVAGENT_VERIFIER;
+    delete process.env.NEXUM_QUICK_MODEL;
+    delete process.env.NEXUM_VERIFIER;
     mkdirSync(join(workspaceRoot, ".nexum"), { recursive: true });
     trustStore = WorkspaceTrustStore.inMemory();
     trustWorkspace(workspaceRoot, trustStore);

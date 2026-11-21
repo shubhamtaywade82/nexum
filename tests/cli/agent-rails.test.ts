@@ -25,7 +25,7 @@ describe("Agent Rails semantic index wiring", () => {
     expect(result).toEqual({ enabled: false, reason: "not a Rails workspace" });
 
     // Disabled index never writes a cache db.
-    expect(existsSync(join(dir, ".devagent", "rails-index.db"))).toBe(false);
+    expect(existsSync(join(dir, ".nexum", "rails-index.db"))).toBe(false);
   });
 
   it("builds the index for a Rails workspace and answers queries", async () => {

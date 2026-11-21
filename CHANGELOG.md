@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- All DevAgent-era compatibility: `DEVAGENT_*` env fallbacks and their deprecation warnings, the `.devagent/` workspace and `~/.devagent/` global state fallbacks, `.devagent_history`, `DEVAGENT.md`, the `devagent-sandbox:latest` image fallback, and the `nexum migrate` command with its migration code. Only `NEXUM_*` variables and `.nexum/` state are read.
+- `WorkspaceManager.detect()`/`migrate()`/`hasMigrationMarker()` and the global-state migration helper; `WorkspaceManager.ensure()` now only creates `.nexum/`.
+- `CLOUD_TOKEN_BUDGET` fallback; `NEXUM_TOKEN_BUDGET` is the only token-budget variable.
+
+### Changed
+
+- Test split: `npm test` runs the non-server suites in parallel, then `npm run test:server` runs `tests/server` and `tests/protocol` serially, so HTTP harness timeouts no longer fail under load.
+
+### Migration note
+
+- Anyone who used a pre-release build with `DEVAGENT_*` variables or a `.devagent/` directory must rename them to `NEXUM_*` and `.nexum/` by hand.
+
 ## 2.0.0 (2026-11-22)
 
 ### Production Stable (`@nemesis-oss/nexum@2.0.0`)

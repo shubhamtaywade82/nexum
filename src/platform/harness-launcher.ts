@@ -41,7 +41,6 @@ const CONTROL_COMMANDS = new Set([
   "evolve",
   "doctor",
   "trust",
-  "migrate",
   "asl",
   "plugins",
   "marketplace",
