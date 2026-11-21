@@ -6,14 +6,14 @@
 
 ## 1. Current state (verified 2026-11-10)
 
-| Fact                                                         | Status                                                                                                                                                     |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@nemesis-oss/nexum` on npm                                  | **Never published** (registry 404) — clean slate                                                                                                           |
-| Repo version                                                 | `2.0.0-alpha.5` on `main`, MIT, developer preview                                                                                                          |
-| `@nemesis-oss/devagent-ts`, `devagent-ts`, `devagent` on npm | **Never published** (all 404) — no predecessor users to migrate                                                                                            |
-| `@x12i/nexum` on npm                                         | Exists, actively maintained (`2.0.1`, 2026-09-19), also at 2.x — brand-confusion risk                                                                      |
-| `nemesis-oss/nexum` on GitHub                                | **Does not exist** (404); repo lives at `shubhamtaywade82/nexum`, but `package.json` metadata already points at the org repo                               |
-| Release pipeline                                             | `release:check` (lint + format + build + test + package:check) and `.github/workflows/release.yml` with provenance; auth via long-lived `NPM_TOKEN` secret |
+| Fact                                                         | Status                                                                                                                                                                                                               |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@nemesis-oss/nexum` on npm                                  | **Never published** (registry 404) — clean slate                                                                                                                                                                     |
+| Repo version                                                 | `2.0.0-alpha.5` on `main`, MIT, developer preview                                                                                                                                                                    |
+| `@nemesis-oss/devagent-ts`, `devagent-ts`, `devagent` on npm | **Never published** (all 404) — no predecessor users to migrate                                                                                                                                                      |
+| `@x12i/nexum` on npm                                         | Exists, actively maintained (`2.0.1`, 2026-09-19), also at 2.x — brand-confusion risk                                                                                                                                |
+| `nemesis-oss/nexum` on GitHub                                | **Does not exist** (404); repo lives at `shubhamtaywade82/nexum`, and `package.json` metadata was repointed there (B3) — will move back on org migration (REBRANDING.md §7)                                          |
+| Release pipeline                                             | `release:check` (lint + format + build + test + package:check) and `.github/workflows/release.yml` with provenance; auth hybrid — `NPM_TOKEN` secret if set, else npm OIDC trusted publishing (target state; see §5) |
 
 Two consequences follow from "never published":
 
@@ -177,13 +177,13 @@ every remaining item is explicitly scoped out with a tracking issue.
 
 ## 3. Release phases
 
-| Phase | Version         | Dist-tag | Theme                | Gates                                                                                                                                          |
-| ----- | --------------- | -------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | `2.0.0-alpha.5` | `next`   | First public release | B1–B4, B6, B7 (alpha positioning)                                                                                                              |
-| 2     | `2.0.0-alpha.5` | `next`   | Early adopters       | Feedback fixes; SDK quickstart + example integrations; OIDC trusted-publisher migration (drop `NPM_TOKEN`); CI OS matrix (Linux/macOS/Windows) |
-| 3     | `2.0.0-beta.1`  | `next`   | Feature complete     | Plugin capability enforcement; keychain Linux round-trip test; security review of the MCP tool prompt-injection surface                        |
-| 4     | `2.0.0-rc.1`    | `next`   | Release candidate    | API freeze; STABILITY.md Tier 1 finalized; B5 brand audit closed                                                                               |
-| 5     | `2.0.0`         | `latest` | Stable               | Stability guarantee live; dist-tag switch to `latest`; migration documentation complete                                                        |
+| Phase | Version         | Dist-tag | Theme                | Gates                                                                                                                                                                                                       |
+| ----- | --------------- | -------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | `2.0.0-alpha.5` | `next`   | First public release | B1–B4, B6, B7 (alpha positioning) — **shipped 2026-11-21**                                                                                                                                                  |
+| 2     | `2.0.0-alpha.6` | `next`   | Early adopters       | Feedback fixes; SDK quickstart + example integrations; npm trusted-publisher mapping configured on npmjs.com (then drop the `NPM_TOKEN` hybrid branch in `release.yml`); CI OS matrix (Linux/macOS/Windows) |
+| 3     | `2.0.0-beta.1`  | `next`   | Feature complete     | Plugin capability enforcement; keychain Linux round-trip test; security review of the MCP tool prompt-injection surface                                                                                     |
+| 4     | `2.0.0-rc.1`    | `next`   | Release candidate    | API freeze; STABILITY.md Tier 1 finalized; B5 brand audit closed                                                                                                                                            |
+| 5     | `2.0.0`         | `latest` | Stable               | Stability guarantee live; dist-tag switch to `latest`; migration documentation complete                                                                                                                     |
 
 Version numbers are proposals — the registry history is empty, so any next
 number is available. No phase is promoted to `latest` before Phase 5.
@@ -250,9 +250,14 @@ npm publish --access public --tag next --provenance
 - **One package.** Do not pre-split into `-core`, `-mcp`, `-evolution`,
   `-plugin-sdk`; premature splitting multiplies dependency and compatibility
   overhead. Revisit only with demonstrated demand.
-- **Auth:** migrate `release.yml` from the long-lived `NPM_TOKEN` secret to
-  npm trusted publishing (OIDC) during Phase 2. Provenance is already wired
-  (`id-token: write` + `--provenance`).
+- **Auth:** `release.yml` uses a hybrid publish step — the `NPM_TOKEN`
+  secret if it is set, otherwise npm OIDC trusted publishing
+  (`id-token: write` + `--provenance`). Target state is OIDC-only: once the
+  trusted-publisher mapping (this repo ↔ `@nemesis-oss/nexum`) is
+  configured on npmjs.com (Settings → Trusted Publishers), delete the
+  `NPM_TOKEN` secret and simplify the step to a plain
+  `npm publish --provenance`. Until one of the two is in place, a tag push
+  fails at the publish step — fail-closed by design.
 - **Ecosystem role:** Nexum consumes the other Nemesis OSS packages (model
   SDKs, exchange SDKs) as infrastructure rather than duplicating their
   functionality.

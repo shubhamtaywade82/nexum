@@ -138,7 +138,13 @@ jobs:
           SKIP_NETWORK_TESTS: true
 
   keychain:
-    name: Linux keychain integration (Node 22.x)
+    # Phase 3 (beta) gate — RELEASE-READINESS.md §3 requires a real Linux
+    # keychain round-trip test. tests/credentials/vault-keychain.test.ts is
+    # fully mocked (injected fakes); this job exercises the real
+    # libsecret / secret-tool path the provider talks to, so integration
+    # drift (API changes, D-Bus issues, gnome-keyring permission problems)
+    # surfaces within a day instead of at release time.
+    name: Linux keychain live round-trip (Node 22.x)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -151,7 +157,9 @@ jobs:
           node-version: 22.x
           cache: "npm"
 
-      - name: Install system dependencies (libsecret & dbus)
+      - name: Install libsecret + D-Bus + gnome-keyring
+        # libsecret-tools provides `secret-tool`; dbus-x11 provides
+        # dbus-run-session; gnome-keyring is the Secret Service implementation.
         run: sudo apt-get update && sudo apt-get install -y libsecret-tools dbus-x11 gnome-keyring
 
       - name: Install npm dependencies
@@ -160,9 +168,13 @@ jobs:
           HUSKY: "0"
 
       - name: Run Linux keychain live round-trip test
+        # dbus-run-session gives the test a private session bus; inside it,
+        # gnome-keyring unlocks the default keyring with an empty password,
+        # which the Secret Service requires before it accepts writes.
         run: >
           dbus-run-session --
-          env NEXUM_KEYCHAIN_LIVE_TESTS=1 NEXUM_TEST_NO_GLOBAL=true
-          node --experimental-vm-modules node_modules/jest/bin/jest.js tests/credentials/keychain-linux-roundtrip.test.ts
+          env NEXUM_KEYCHAIN_LIVE_TESTS=1 NEXUM_TEST_NO_GLOBAL=true SKIP_NETWORK_TESTS=true
+          node --experimental-vm-modules node_modules/jest/bin/jest.js
+          tests/credentials/keychain-linux-roundtrip.test.ts --runInBand
         env:
           CI: true

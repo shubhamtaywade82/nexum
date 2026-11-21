@@ -152,6 +152,21 @@ export {
   type FsOperation,
   type FsVerdict,
 } from "./core/fs/workspace-guard.js";
+// WorkspaceManager is Tier-1 Stable per STABILITY.md — re-exported so the
+// public surface matches the documented contract. (Caught by the B6 tarball
+// audit: the symbol was defined in src/platform/workspace.ts but never
+// re-exported from the package entry, so a clean-room install could not
+// import it despite STABILITY.md promising it as Stable.)
+export { WorkspaceManager } from "./platform/workspace.js";
+// More Tier-1 Stable symbols documented in STABILITY.md but missing from
+// the package surface (caught by the Phase 4 API-freeze audit,
+// docs/API-FREEZE-AUDIT.md). Each is defined and used internally but was
+// never re-exported from the entry barrel.
+export { CancellationScope, CancellationRegistry } from "./core/cancellation/cancellation.js";
+export { GateRegistry } from "./core/concurrency/gate-registry.js";
+export { ConcurrencyGate } from "./core/concurrency/gate.js";
+export { newRunId, newTaskId } from "./core/identity.js";
+export { loadConfig } from "./cli/config.js";
 export {
   agentWorkspaceGuard,
   PathEscapeError,

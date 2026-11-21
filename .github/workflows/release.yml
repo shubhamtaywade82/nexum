@@ -112,6 +112,13 @@ jobs:
 
       - name: Publish to NPM Registry
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+        # Hybrid auth: NPM_TOKEN secret if present, otherwise npm OIDC
+        # trusted publishing (id-token: write + --provenance verifies this
+        # workflow's identity directly with the registry). The OIDC path is
+        # the target state — once the trusted-publisher mapping (this repo ↔
+        # @nemesis-oss/nexum) is configured on npmjs.com and the NPM_TOKEN
+        # secret is deleted, this branch is dead code and can be simplified
+        # to a plain `npm publish --provenance`. See RELEASE-READINESS.md §5.
         run: |
           if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
             echo "Publishing via NPM_TOKEN secret..."
