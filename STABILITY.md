@@ -48,7 +48,7 @@ releases. They are suitable for early adopters and contributors, but
 - `CompactionService` (and `TokenEstimator`, `CompactionPolicy`, `SummaryProvider`)
 - `SessionQueryService`
 - `ContextService` (and built-in context providers)
-- `CredentialService` (env + file providers; keychain + vault are **INCOMPLETE**)
+- `CredentialService` (env + file providers stable; keychain Linux round-trip verified nightly; macOS/Windows keychain and vault are experimental)
 - `AttachmentStore`
 - `WorkflowService`
 - `WebhookService`

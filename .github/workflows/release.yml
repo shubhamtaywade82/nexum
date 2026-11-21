@@ -25,6 +25,32 @@ jobs:
   release:
     name: Publish to NPM & GitHub Release
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ""
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: nexum_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,6 +61,9 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
@@ -64,6 +93,7 @@ jobs:
         env:
           CI: true
           SKIP_NETWORK_TESTS: true
+          TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/nexum_test
 
       - name: Compute dist-tag
         id: dist
@@ -81,9 +111,14 @@ jobs:
 
       - name: Publish to NPM Registry
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
-        run: npm publish --provenance --access public --tag ${{ steps.dist.outputs.tag }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "Publishing via NPM_TOKEN secret..."
+            NODE_AUTH_TOKEN="${{ secrets.NPM_TOKEN }}" npm publish --provenance --access public --tag "${{ steps.dist.outputs.tag }}"
+          else
+            echo "Publishing via npm OIDC trusted publishing (provenance enabled)..."
+            npm publish --provenance --access public --tag "${{ steps.dist.outputs.tag }}"
+          fi
 
       - name: Create GitHub Release
         if: github.ref_type == 'tag'

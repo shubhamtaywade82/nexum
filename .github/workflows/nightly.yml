@@ -136,3 +136,33 @@ jobs:
         env:
           CI: true
           SKIP_NETWORK_TESTS: true
+
+  keychain:
+    name: Linux keychain integration (Node 22.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: "npm"
+
+      - name: Install system dependencies (libsecret & dbus)
+        run: sudo apt-get update && sudo apt-get install -y libsecret-tools dbus-x11 gnome-keyring
+
+      - name: Install npm dependencies
+        run: npm ci --legacy-peer-deps
+        env:
+          HUSKY: "0"
+
+      - name: Run Linux keychain live round-trip test
+        run: >
+          dbus-run-session --
+          env NEXUM_KEYCHAIN_LIVE_TESTS=1 NEXUM_TEST_NO_GLOBAL=true
+          node --experimental-vm-modules node_modules/jest/bin/jest.js tests/credentials/keychain-linux-roundtrip.test.ts
+        env:
+          CI: true
