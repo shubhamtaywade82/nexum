@@ -1090,8 +1090,8 @@ export class Agent {
         });
         let chatOpts = makeChatOpts();
         let chatResponse = capability
-          ? await this.stack.routeWithFallback(capability, this.conversation.getMessages(), chatOpts)
-          : await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
+          ? await this.stack.routeWithFallback(capability, this.conversation.messagesForModel(), chatOpts)
+          : await this.stack.primaryChat(this.conversation.messagesForModel(), chatOpts);
 
         let assistantMessage = chatResponse.message as {
           content?: string;
@@ -1106,7 +1106,7 @@ export class Agent {
           );
           buffered = null;
           chatOpts = makeChatOpts();
-          chatResponse = await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
+          chatResponse = await this.stack.primaryChat(this.conversation.messagesForModel(), chatOpts);
         } else if (
           critiquing &&
           !(assistantMessage.tool_calls ?? []).length &&
@@ -1120,7 +1120,7 @@ export class Agent {
           );
           buffered = null;
           chatOpts = makeChatOpts();
-          chatResponse = await this.stack.primaryChat(this.conversation.getMessages(), chatOpts);
+          chatResponse = await this.stack.primaryChat(this.conversation.messagesForModel(), chatOpts);
         } else if (buffered) {
           for (const delta of buffered) {
             lastAssistantText += delta;
