@@ -20,11 +20,11 @@ export function sdlcPack(workspaceRoot: string): ToolPack {
     "Agentic Software Development Lifecycle (SDLC) inspection, validation, and verification tools.",
     "sdlc",
     [
-      [new SdlcInspectTool(workspaceRoot), { policy: { uiInvocable: true } }],
-      [new SdlcValidateSpecTool(workspaceRoot), { policy: { uiInvocable: true } }],
-      [new SdlcValidatePlanTool(workspaceRoot), { policy: { uiInvocable: true } }],
-      [new SdlcVerifyTool(workspaceRoot), { policy: { uiInvocable: true } }],
-      [new SdlcDoctorTool(), { policy: { uiInvocable: true } }],
+      new SdlcInspectTool(workspaceRoot),
+      new SdlcValidateSpecTool(workspaceRoot),
+      new SdlcValidatePlanTool(workspaceRoot),
+      new SdlcVerifyTool(workspaceRoot),
+      new SdlcDoctorTool(),
     ],
     "SDLC",
   );
