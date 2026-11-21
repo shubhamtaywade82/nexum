@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0-rc.1 (2026-11-22)
+
+### Release Candidate 1 — API Freeze (`@nemesis-oss/nexum@2.0.0-rc.1`)
+
+- **Phase 4 Gates Closed**:
+  - **API Surface Freeze**: Verified all Tier 1 Stable runtime exports in `tests/package-surface.test.ts` (passing 7/7 suites). Status promoted to PASS in `docs/API-FREEZE-AUDIT.md`.
+  - **Tier 1 Stability Finalized**: Promoted `DevAgent` (built-in coding assistant), `WorkspaceGuard` (`PathEscapeError`, `SensitivePathError`), and strategy boundary contracts (`ExecutionRequest`, `ExecutionResult`) to Tier 1 Stable in `STABILITY.md`.
+  - **Brand Audit Closed (B5)**: Formal brand and trademark audit closed in `docs/REBRANDING.md` and `docs/BRAND-AUDIT.md`, confirming "Nexum" as the finalized brand name.
+  - **Workspace Trust & Config Boundary Hardening**: Guarded `.env` resolution in `src/cli/workspace-trust.ts` and `src/cli/config.ts` so `cwd` environment files outside the workspace root are not misattributed to empty or non-parent workspaces.
+- **Verification & Release Readiness**:
+  - 100% green pass on `npm run release:check` across all 385 test suites (3,833 unit and contract tests), ESLint, Prettier, TypeScript compilation, and clean-room package validation.
+
 ## 2.0.0-beta.1 (2026-11-21)
 
 ### Feature Complete (`@nemesis-oss/nexum@2.0.0-beta.1`)

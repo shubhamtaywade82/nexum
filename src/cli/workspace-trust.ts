@@ -37,7 +37,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { globalStateDir, legacyWorkspaceStateDir, workspaceStateDir } from "../platform/paths.js";
 import { envIs } from "../platform/environment.js";
 
@@ -230,10 +230,15 @@ export function trustBearingFiles(root: string, cwd: string = process.cwd()): st
     join(root, ".env"),
     ...workspaceSkillTree(root).files,
   ];
-  // loadConfig also reads <cwd>/.env; cwd sits inside the workspace (the root
-  // is found by walking up from it)
-  const cwdEnv = join(resolve(cwd), ".env");
-  if (!files.includes(cwdEnv)) files.push(cwdEnv);
+  // Only consider cwd .env if cwd is actually inside or matches root workspace
+  const resolvedRoot = resolve(root);
+  const resolvedCwd = resolve(cwd);
+  const rel = relative(resolvedRoot, resolvedCwd);
+  const cwdInside = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  if (cwdInside) {
+    const cwdEnv = join(resolvedCwd, ".env");
+    if (!files.includes(cwdEnv)) files.push(cwdEnv);
+  }
   return files;
 }
 

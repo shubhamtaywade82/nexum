@@ -59,8 +59,11 @@ const TIER_1_RUNTIME_EXPORTS = [
   // Identity primitives
   "newRunId",
   "newTaskId",
-  // Workspace
+  // Workspace & security
   "WorkspaceManager",
+  "WorkspaceGuard",
+  // Built-in agents
+  "DevAgent",
   // CLI config
   "loadConfig",
   // RPC entry
@@ -104,6 +107,8 @@ describe("package surface — Tier 1 Stable exports are importable", () => {
       newRunId: "function",
       newTaskId: "function",
       WorkspaceManager: "function",
+      WorkspaceGuard: "function",
+      DevAgent: "function",
       loadConfig: "function",
       startRpcServer: "function",
     };

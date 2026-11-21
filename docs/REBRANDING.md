@@ -5,21 +5,19 @@ Every code, docs, package, and CLI change in this repository must conform to the
 table below. If a change disagrees with this file, this file wins — update the
 change, not the contract.
 
-> **Provisional name notice:** "Nexum" is a working product name pending final
-> availability/trademark/domain/package audit. The brand is deliberately isolated
-> in `src/platform/brand.ts` (single source of truth) so that swapping the final
-> name later touches one constants file plus this document — not the whole tree.
+> **Final decision: Nexum** (brand audit dated 2026-11-21, see `docs/BRAND-AUDIT.md`).
+> The brand is isolated in `src/platform/brand.ts` (single source of truth).
 
 ## 1. Target state
 
-| Layer | Value |
-|---|---|
-| Organization | Nemesis OSS |
-| Product | **Nexum** |
-| Technical identity | Nexum Agent Runtime / Agent Harness |
-| CLI | `nexum` |
-| npm package | `@nemesis-oss/nexum` |
-| GitHub (target) | `nemesis-oss/nexum` (activated after repo migration, see §8) |
+| Layer              | Value                                                                    |
+| ------------------ | ------------------------------------------------------------------------ |
+| Organization       | Nemesis OSS                                                              |
+| Product            | **Nexum**                                                                |
+| Technical identity | Nexum Agent Runtime / Agent Harness                                      |
+| CLI                | `nexum`                                                                  |
+| npm package        | `@nemesis-oss/nexum`                                                     |
+| GitHub             | `shubhamtaywade82/nexum` (verified active; see `docs/BRAND-AUDIT.md` §5) |
 
 Removed before first publication (decision 2026-11-10):
 
@@ -37,20 +35,20 @@ Retained during the transition (at least one major version):
 
 ## 2. Name mapping
 
-| Old | New |
-|---|---|
-| DevAgent | Nexum |
-| DevAgent TS | Nexum |
-| devagent-ts | nexum |
-| `@nemesis-oss/devagent-ts` | `@nemesis-oss/nexum` |
-| devagent | nexum |
-| DEVAGENT_* | NEXUM_* |
-| `.devagent/` | `.nexum/` |
-| `~/.devagent/` | `~/.nexum/` |
-| `.devagent_history` | `.nexum_history` |
-| DevAgent Runtime | Nexum Agent Runtime |
-| Developer Agent | Coding Agent / Agent Runtime |
-| `devagent-sandbox:latest` | `nexum-sandbox:latest` |
+| Old                         | New                                                 |
+| --------------------------- | --------------------------------------------------- |
+| DevAgent                    | Nexum                                               |
+| DevAgent TS                 | Nexum                                               |
+| devagent-ts                 | nexum                                               |
+| `@nemesis-oss/devagent-ts`  | `@nemesis-oss/nexum`                                |
+| devagent                    | nexum                                               |
+| DEVAGENT_*                  | NEXUM_*                                             |
+| `.devagent/`                | `.nexum/`                                           |
+| `~/.devagent/`              | `~/.nexum/`                                         |
+| `.devagent_history`         | `.nexum_history`                                    |
+| DevAgent Runtime            | Nexum Agent Runtime                                 |
+| Developer Agent             | Coding Agent / Agent Runtime                        |
+| `devagent-sandbox:latest`   | `nexum-sandbox:latest`                              |
 | `DEVAGENT.md` (agents file) | `NEXUM.md` (both read; `AGENTS.md` remains primary) |
 
 ### What is NOT renamed
@@ -78,35 +76,35 @@ Precedence (implemented in `src/platform/environment.ts`):
 NEXUM_<KEY>  >  DEVAGENT_<KEY>  >  config file  >  built-in default
 ```
 
-| Legacy (deprecated) | Canonical |
-|---|---|
-| `DEVAGENT_MODEL` | `NEXUM_MODEL` |
-| `DEVAGENT_TIER` | `NEXUM_TIER` |
-| `DEVAGENT_WORKSPACE` | `NEXUM_WORKSPACE` |
-| `DEVAGENT_TIMEOUT_MS` | `NEXUM_TIMEOUT_MS` |
-| `DEVAGENT_SYSTEM_PROMPT` | `NEXUM_SYSTEM_PROMPT` |
-| `DEVAGENT_SHELL_IMAGE` | `NEXUM_SHELL_IMAGE` |
-| `DEVAGENT_SHELL_TIMEOUT_SEC` | `NEXUM_SHELL_TIMEOUT_SEC` |
+| Legacy (deprecated)            | Canonical                   |
+| ------------------------------ | --------------------------- |
+| `DEVAGENT_MODEL`               | `NEXUM_MODEL`               |
+| `DEVAGENT_TIER`                | `NEXUM_TIER`                |
+| `DEVAGENT_WORKSPACE`           | `NEXUM_WORKSPACE`           |
+| `DEVAGENT_TIMEOUT_MS`          | `NEXUM_TIMEOUT_MS`          |
+| `DEVAGENT_SYSTEM_PROMPT`       | `NEXUM_SYSTEM_PROMPT`       |
+| `DEVAGENT_SHELL_IMAGE`         | `NEXUM_SHELL_IMAGE`         |
+| `DEVAGENT_SHELL_TIMEOUT_SEC`   | `NEXUM_SHELL_TIMEOUT_SEC`   |
 | `DEVAGENT_TOOL_SELECTION_MODE` | `NEXUM_TOOL_SELECTION_MODE` |
-| `DEVAGENT_MAX_ACTIVE_TOOLS` | `NEXUM_MAX_ACTIVE_TOOLS` |
-| `DEVAGENT_QUICK_MODEL` | `NEXUM_QUICK_MODEL` |
-| `DEVAGENT_LOCAL_WORKER` | `NEXUM_LOCAL_WORKER` |
-| `DEVAGENT_VERIFIER` | `NEXUM_VERIFIER` |
-| `DEVAGENT_SELF_CONSISTENCY` | `NEXUM_SELF_CONSISTENCY` |
-| `DEVAGENT_SC_N` | `NEXUM_SC_N` |
-| `DEVAGENT_SC_THRESHOLD` | `NEXUM_SC_THRESHOLD` |
-| `DEVAGENT_AVAIL_TTL_MS` | `NEXUM_AVAIL_TTL_MS` |
-| `DEVAGENT_AVAIL_CHECK` | `NEXUM_AVAIL_CHECK` |
-| `DEVAGENT_HEURISTIC_GATE` | `NEXUM_HEURISTIC_GATE` |
-| `DEVAGENT_AUTO_APPROVE` | `NEXUM_AUTO_APPROVE` |
-| `DEVAGENT_PRICE_INPUT_PER_M` | `NEXUM_PRICE_INPUT_PER_M` |
-| `DEVAGENT_PRICE_OUTPUT_PER_M` | `NEXUM_PRICE_OUTPUT_PER_M` |
-| `DEVAGENT_MAX_LOGS` | `NEXUM_MAX_LOGS` |
-| `DEVAGENT_MAX_CONVERSATION` | `NEXUM_MAX_CONVERSATION` |
-| `DEVAGENT_MAX_TOOL_CALLS` | `NEXUM_MAX_TOOL_CALLS` |
-| `DEVAGENT_MAX_NOTIFICATIONS` | `NEXUM_MAX_NOTIFICATIONS` |
-| `DEVAGENT_DEBUG_STDIN` | `NEXUM_DEBUG_STDIN` |
-| `DEVAGENT_TEST_NO_GLOBAL` | `NEXUM_TEST_NO_GLOBAL` |
+| `DEVAGENT_MAX_ACTIVE_TOOLS`    | `NEXUM_MAX_ACTIVE_TOOLS`    |
+| `DEVAGENT_QUICK_MODEL`         | `NEXUM_QUICK_MODEL`         |
+| `DEVAGENT_LOCAL_WORKER`        | `NEXUM_LOCAL_WORKER`        |
+| `DEVAGENT_VERIFIER`            | `NEXUM_VERIFIER`            |
+| `DEVAGENT_SELF_CONSISTENCY`    | `NEXUM_SELF_CONSISTENCY`    |
+| `DEVAGENT_SC_N`                | `NEXUM_SC_N`                |
+| `DEVAGENT_SC_THRESHOLD`        | `NEXUM_SC_THRESHOLD`        |
+| `DEVAGENT_AVAIL_TTL_MS`        | `NEXUM_AVAIL_TTL_MS`        |
+| `DEVAGENT_AVAIL_CHECK`         | `NEXUM_AVAIL_CHECK`         |
+| `DEVAGENT_HEURISTIC_GATE`      | `NEXUM_HEURISTIC_GATE`      |
+| `DEVAGENT_AUTO_APPROVE`        | `NEXUM_AUTO_APPROVE`        |
+| `DEVAGENT_PRICE_INPUT_PER_M`   | `NEXUM_PRICE_INPUT_PER_M`   |
+| `DEVAGENT_PRICE_OUTPUT_PER_M`  | `NEXUM_PRICE_OUTPUT_PER_M`  |
+| `DEVAGENT_MAX_LOGS`            | `NEXUM_MAX_LOGS`            |
+| `DEVAGENT_MAX_CONVERSATION`    | `NEXUM_MAX_CONVERSATION`    |
+| `DEVAGENT_MAX_TOOL_CALLS`      | `NEXUM_MAX_TOOL_CALLS`      |
+| `DEVAGENT_MAX_NOTIFICATIONS`   | `NEXUM_MAX_NOTIFICATIONS`   |
+| `DEVAGENT_DEBUG_STDIN`         | `NEXUM_DEBUG_STDIN`         |
+| `DEVAGENT_TEST_NO_GLOBAL`      | `NEXUM_TEST_NO_GLOBAL`      |
 
 Provider-level variables (`OLLAMA_HOST`, `OLLAMA_API_KEY`, `OLLAMA_API_KEYS`)
 are **not** product variables and keep their upstream names.
@@ -218,12 +216,12 @@ src/platform/
 
 ## 7. Release sequence
 
-| Release | Package | Contents |
-|---|---|---|
-| A — preparation | skipped | planned as `devagent-ts@1.0.1`; the package was never published to npm, so the step has no target |
-| B — rename | `nexum@2.0.0` | new package, `nexum` CLI, `.nexum/`, `NEXUM_*`, Nexum branding |
-| C — deprecation | skipped | nothing to deprecate: no `devagent-ts` package exists on the registry |
-| D — sunset | skipped | follows from C |
+| Release         | Package       | Contents                                                                                          |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------- |
+| A — preparation | skipped       | planned as `devagent-ts@1.0.1`; the package was never published to npm, so the step has no target |
+| B — rename      | `nexum@2.0.0` | new package, `nexum` CLI, `.nexum/`, `NEXUM_*`, Nexum branding                                    |
+| C — deprecation | skipped       | nothing to deprecate: no `devagent-ts` package exists on the registry                             |
+| D — sunset      | skipped       | follows from C                                                                                    |
 
 GitHub sequence (UI/API operations, not file changes):
 rename branch → merge → release → rename GitHub repository to
@@ -235,23 +233,23 @@ in-repo links pointing at the target activate the moment the rename lands.
 
 Before declaring the rename complete, every row must pass:
 
-| Check | Expected |
-|---|---|
-| `npm install @nemesis-oss/nexum` | installs |
-| `nexum` | runs |
-| local Ollama | works |
-| cloud Ollama + multi-key failover | works |
-| MCP / LSP / browser tools | work |
-| memory, session resume, checkpoint resume | work |
-| docs database | works |
-| Docker sandbox (`nexum-sandbox:latest`) | works |
-| old `.devagent` workspace | migrates automatically + via `nexum migrate` |
-| new `.nexum` workspace | normal startup |
-| old env variables | work, warn deprecation |
-| new env variables | canonical |
-| new env beats legacy env | precedence holds |
-| package exports + TypeScript declarations | intact |
-| npm tarball contents | correct (`files` allowlist) |
+| Check                                     | Expected                                     |
+| ----------------------------------------- | -------------------------------------------- |
+| `npm install @nemesis-oss/nexum`          | installs                                     |
+| `nexum`                                   | runs                                         |
+| local Ollama                              | works                                        |
+| cloud Ollama + multi-key failover         | works                                        |
+| MCP / LSP / browser tools                 | work                                         |
+| memory, session resume, checkpoint resume | work                                         |
+| docs database                             | works                                        |
+| Docker sandbox (`nexum-sandbox:latest`)   | works                                        |
+| old `.devagent` workspace                 | migrates automatically + via `nexum migrate` |
+| new `.nexum` workspace                    | normal startup                               |
+| old env variables                         | work, warn deprecation                       |
+| new env variables                         | canonical                                    |
+| new env beats legacy env                  | precedence holds                             |
+| package exports + TypeScript declarations | intact                                       |
+| npm tarball contents                      | correct (`files` allowlist)                  |
 
 ## 9. Compatibility search list
 

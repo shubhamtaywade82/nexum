@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, basename, isAbsolute, resolve } from "node:path";
+import { join, basename, isAbsolute, relative, resolve } from "node:path";
 import { envIs, readEnv, readEnvFlag } from "../platform/environment.js";
 import { THEME_ORDER, ThemeName } from "../runtime/types.js";
 import {
@@ -391,9 +391,14 @@ import {
  * Returns the workspace files that were skipped.
  */
 function loadEnvFiles(workspaceRoot: string, workspaceTrusted: boolean): string[] {
-  const cwdEnv = join(process.cwd(), ".env");
-  const workspaceEnv = join(workspaceRoot, ".env");
-  const skipped = workspaceTrusted ? [] : [...new Set([cwdEnv, workspaceEnv])].filter((f) => existsSync(f));
+  const resolvedRoot = resolve(workspaceRoot);
+  const resolvedCwd = resolve(process.cwd());
+  const rel = relative(resolvedRoot, resolvedCwd);
+  const cwdInside = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  const cwdEnv = cwdInside ? join(resolvedCwd, ".env") : undefined;
+  const workspaceEnv = join(resolvedRoot, ".env");
+  const candidateFiles = cwdEnv && cwdEnv !== workspaceEnv ? [cwdEnv, workspaceEnv] : [workspaceEnv];
+  const skipped = workspaceTrusted ? [] : candidateFiles.filter((f) => existsSync(f));
   if (envIs("TEST_NO_GLOBAL", "true")) return skipped;
   // Canonical ~/.nexum/.env; legacy ~/.devagent/.env still loads (deprecated)
   // when the canonical file does not exist.
@@ -407,7 +412,7 @@ function loadEnvFiles(workspaceRoot: string, workspaceTrusted: boolean): string[
     }
   }
   if (!workspaceTrusted) return skipped;
-  if (existsSync(cwdEnv)) {
+  if (cwdEnv && existsSync(cwdEnv)) {
     dotenvConfig({ path: cwdEnv, override: true, quiet: true } as any);
   }
   if (existsSync(workspaceEnv) && workspaceEnv !== cwdEnv) {
