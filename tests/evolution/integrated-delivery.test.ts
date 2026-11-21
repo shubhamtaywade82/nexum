@@ -88,6 +88,53 @@ function results(successRate: number): TaskExecutionResult[] {
   }));
 }
 
+/**
+ * Passing fixed-executor matrix (held-out + transfer, candidate beats baseline
+ * on both executors). The engine's default generalization policy is now
+ * "required", so lifecycle tests must supply real evidence to reach
+ * CI_PENDING — exactly as the production path would.
+ */
+function passingMatrixCells(
+  candidateId = "H1",
+  baselineId = "H0",
+  executor = "qwen3-coder",
+): Parameters<ClosedLoopEngine["runExperiment"]>[0]["matrixCells"] {
+  return [
+    {
+      harnessId: baselineId,
+      executorModel: "qwen3-coder",
+      split: "held_out" as const,
+      taskSuccessRate: 0.33,
+      verificationPassRate: 0.33,
+      runs: 5,
+    },
+    {
+      harnessId: candidateId,
+      executorModel: "qwen3-coder",
+      split: "held_out" as const,
+      taskSuccessRate: 0.9,
+      verificationPassRate: 0.9,
+      runs: 5,
+    },
+    {
+      harnessId: baselineId,
+      executorModel: "gemini-2.5",
+      split: "transfer" as const,
+      taskSuccessRate: 0.33,
+      verificationPassRate: 0.33,
+      runs: 5,
+    },
+    {
+      harnessId: candidateId,
+      executorModel: "gemini-2.5",
+      split: "transfer" as const,
+      taskSuccessRate: 0.85,
+      verificationPassRate: 0.85,
+      runs: 5,
+    },
+  ];
+}
+
 interface RecordedCall {
   method: string;
   path: string;
@@ -208,7 +255,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
     );
     return new ClosedLoopEngine({
       registry,
-      executorModels: ["qwen3-coder"],
+      executorModels: ["qwen3-coder", "gemini-2.5"],
       githubDelivery: adapter,
       mutationExecutor: new GitWorktreeMutationExecutor({
         worktreeParentDir: wsRoot,
@@ -244,6 +291,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
       diagnosis: obs.diagnoses[0],
       scope: obs.mutationScope!,
       baselineResults: results(0.4),
+      matrixCells: passingMatrixCells(),
       evaluateCandidate: () => results(0.9),
       github: { mergeOnAccept: true },
     });
@@ -280,6 +328,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
       diagnosis: obs.diagnoses[0],
       scope: obs.mutationScope!,
       baselineResults: results(0.4),
+      matrixCells: passingMatrixCells(),
       evaluateCandidate: () => results(0.9),
       github: { mergeOnAccept: true },
     });
@@ -360,6 +409,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
       diagnosis: obs.diagnoses[0],
       scope: obs.mutationScope!,
       baselineResults: results(0.4),
+      matrixCells: passingMatrixCells(),
       evaluateCandidate: () => results(0.9),
       github: {},
     });
@@ -403,6 +453,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
       diagnosis: obs.diagnoses[0],
       scope: obs.mutationScope!,
       baselineResults: results(0.4),
+      matrixCells: passingMatrixCells(),
       evaluateCandidate: () => results(0.9),
       github: {},
     });
@@ -433,6 +484,7 @@ describe("ClosedLoopEngine integrated GitHub delivery (canonical production path
       diagnosis: obs.diagnoses[0],
       scope: obs.mutationScope!,
       baselineResults: results(0.4),
+      matrixCells: passingMatrixCells(),
       evaluateCandidate: () => results(0.9),
       github: { checksTimeoutMs: 10 },
     });

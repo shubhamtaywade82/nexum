@@ -63,6 +63,50 @@ function results(successRate: number, tokens: number, heldOutSuccess = successRa
   }));
 }
 
+/**
+ * A passing fixed-executor matrix (held-out + transfer cells, candidate beats
+ * baseline on both executors) for lifecycle tests whose subject is CI/review/
+ * rollback flow, not the generalization gate itself. Since the engine default
+ * policy became "required", these tests must supply real evidence to reach
+ * CI_PENDING — exactly as the production path would.
+ */
+function passingMatrixCells(): Parameters<ClosedLoopEngine["runExperiment"]>[0]["matrixCells"] {
+  return [
+    {
+      harnessId: "H0",
+      executorModel: "qwen3-coder",
+      split: "held_out",
+      taskSuccessRate: 0.33,
+      verificationPassRate: 0.33,
+      runs: 5,
+    },
+    {
+      harnessId: "H1",
+      executorModel: "qwen3-coder",
+      split: "held_out",
+      taskSuccessRate: 0.9,
+      verificationPassRate: 0.9,
+      runs: 5,
+    },
+    {
+      harnessId: "H0",
+      executorModel: "gemini-2.5",
+      split: "transfer",
+      taskSuccessRate: 0.33,
+      verificationPassRate: 0.33,
+      runs: 5,
+    },
+    {
+      harnessId: "H1",
+      executorModel: "gemini-2.5",
+      split: "transfer",
+      taskSuccessRate: 0.85,
+      verificationPassRate: 0.85,
+      runs: 5,
+    },
+  ];
+}
+
 describe("ClosedLoopEngine (v2 integration)", () => {
   let tmpDir: string;
   let registry: HarnessRegistry;
@@ -244,6 +288,7 @@ describe("ClosedLoopEngine (v2 integration)", () => {
       scope: observation.mutationScope!,
       candidateResults: results(0.9, 1800, true),
       baselineResults: results(0.4, 2000, false),
+      matrixCells: passingMatrixCells(),
     });
 
     engine.reportCi("exp-002", true, "https://ci/run/9");
@@ -321,6 +366,7 @@ describe("ClosedLoopEngine (v2 integration)", () => {
       scope: observation.mutationScope!,
       candidateResults: results(0.9, 1800, true),
       baselineResults: results(0.4, 2000, false),
+      matrixCells: passingMatrixCells(),
     });
     engine.reportCi("exp-004", true);
     engine.reportReview("exp-004", true, "maintainer");
@@ -570,6 +616,23 @@ describe("ClosedLoopEngine generalization policy", () => {
       matrixCells: withMatrix ? matrix : undefined,
     });
   }
+
+  it("the engine DEFAULT policy is 'required': no fixed-executor evidence → no eligibility", () => {
+    // Constructed WITHOUT an explicit generalizationPolicy, exactly as an
+    // embedder would. Before the production-hardening change the default was
+    // "optional", which let a candidate reach CI_PENDING with zero
+    // fixed-executor evidence.
+    engine = new ClosedLoopEngine({
+      registry,
+      executorModels: ["qwen3-coder", "gemini-2.5"],
+    });
+    const outcome = run(engine, "exp-default", false);
+    expect(outcome.twoStage.decision).toBe("eligible"); // benchmark said yes…
+    expect(outcome.experiment.decision.result).toBe("inconclusive"); // …but the default policy blocked it
+    expect(outcome.delivery).toBeNull();
+    expect(outcome.experiment.lifecycle.state).toBe("REJECTED");
+    expect(outcome.experiment.decision.rationale).toContain("required");
+  });
 
   it("policy 'optional' keeps eligibility without fixed-executor evidence (development mode)", () => {
     engine = new ClosedLoopEngine({

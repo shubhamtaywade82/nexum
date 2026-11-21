@@ -94,10 +94,11 @@ import { ComparisonResult, EvaluationMetrics, HarnessComponent, HarnessDiagnosis
  *
  *   optional                 — held-out/transfer evidence recorded when supplied,
  *                              but its absence never blocks eligibility
- *                              (development mode; the v2.0 default).
+ *                              (development mode; opt-in only).
  *   required                 — a fixed-executor matrix MUST be supplied and the
  *                              generalization gate MUST pass, otherwise the
- *                              candidate is rejected (research mode).
+ *                              candidate is rejected (research mode; the engine
+ *                              default — absence of evidence no longer promotes).
  *   required-for-production  — "required" plus transfer-executor evidence
  *                              MUST be present (production evolution).
  */
@@ -122,7 +123,7 @@ export interface ClosedLoopEngineOptions {
   metricsTracker?: EvolutionMetricsTracker;
   /** Executor models for the fixed-executor protocol (primary first). */
   executorModels?: string[];
-  /** Enforcement level of the generalization gate (default "optional"). */
+  /** Enforcement level of the generalization gate (default "required"). */
   generalizationPolicy?: GeneralizationPolicy;
   /** Self-development actuator: performs the actual harness mutation. */
   mutationExecutor?: HarnessMutationExecutor;
@@ -292,7 +293,10 @@ export class ClosedLoopEngine {
     this.monitor = opts.monitor;
     this.githubDelivery = opts.githubDelivery;
     this.runtimeActivation = opts.runtimeActivation;
-    this.generalizationPolicy = opts.generalizationPolicy ?? "optional";
+    // PRODUCTION_AUDIT follow-up: "optional" let a candidate become eligible
+    // with zero held-out evidence. The engine default is now "required" — the
+    // CLI dev path can still opt back down via --generalization-policy.
+    this.generalizationPolicy = opts.generalizationPolicy ?? "required";
     this.executorModels = opts.executorModels ?? ["primary"];
   }
 

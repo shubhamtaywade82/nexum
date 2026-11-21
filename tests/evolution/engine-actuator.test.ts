@@ -81,6 +81,53 @@ function results(successRate: number, tokens: number): TaskExecutionResult[] {
   }));
 }
 
+/**
+ * Passing fixed-executor matrix (held-out + transfer, candidate beats baseline
+ * on both executors). The engine's default generalization policy is now
+ * "required", so lifecycle tests must supply real evidence to reach
+ * CI_PENDING — exactly as the production path would.
+ */
+function passingMatrixCells(
+  candidateId = "H1",
+  baselineId = "H0",
+  executor = "qwen3-coder",
+): Parameters<ClosedLoopEngine["runExperiment"]>[0]["matrixCells"] {
+  return [
+    {
+      harnessId: baselineId,
+      executorModel: "qwen3-coder",
+      split: "held_out" as const,
+      taskSuccessRate: 0.33,
+      verificationPassRate: 0.33,
+      runs: 5,
+    },
+    {
+      harnessId: candidateId,
+      executorModel: "qwen3-coder",
+      split: "held_out" as const,
+      taskSuccessRate: 0.9,
+      verificationPassRate: 0.9,
+      runs: 5,
+    },
+    {
+      harnessId: baselineId,
+      executorModel: "gemini-2.5",
+      split: "transfer" as const,
+      taskSuccessRate: 0.33,
+      verificationPassRate: 0.33,
+      runs: 5,
+    },
+    {
+      harnessId: candidateId,
+      executorModel: "gemini-2.5",
+      split: "transfer" as const,
+      taskSuccessRate: 0.85,
+      verificationPassRate: 0.85,
+      runs: 5,
+    },
+  ];
+}
+
 describe("ClosedLoopEngine self-development actuator", () => {
   let repoRoot: string;
   let wsRoot: string;
@@ -93,7 +140,7 @@ describe("ClosedLoopEngine self-development actuator", () => {
     registry = new HarnessRegistry(":memory:");
     engine = new ClosedLoopEngine({
       registry,
-      executorModels: ["qwen3-coder"],
+      executorModels: ["qwen3-coder", "gemini-2.5"],
       mutationExecutor: new GitWorktreeMutationExecutor({
         worktreeParentDir: wsRoot,
         verifyCommands: [["node", "--version"]],
@@ -120,6 +167,7 @@ describe("ClosedLoopEngine self-development actuator", () => {
       scope: observation.mutationScope!,
       baselineResults: results(0.4, 2000),
       evaluateCandidate: () => results(0.9, 1600),
+      matrixCells: passingMatrixCells(),
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -137,7 +185,7 @@ describe("ClosedLoopEngine self-development actuator", () => {
     // tools scope, but force an out-of-scope edit path via a custom strategy.
     const engine2 = new ClosedLoopEngine({
       registry,
-      executorModels: ["qwen3-coder"],
+      executorModels: ["qwen3-coder", "gemini-2.5"],
       mutationExecutor: new GitWorktreeMutationExecutor({
         worktreeParentDir: wsRoot,
         verifyCommands: [["node", "--version"]],
