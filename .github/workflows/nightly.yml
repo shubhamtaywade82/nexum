@@ -136,3 +136,53 @@ jobs:
         env:
           CI: true
           SKIP_NETWORK_TESTS: true
+
+  keychain:
+    # Phase 3 (beta) gate — RELEASE-READINESS.md §3 requires a real Linux
+    # keychain round-trip test. tests/credentials/vault-keychain.test.ts is
+    # fully mocked (injected fakes); this job exercises the real
+    # libsecret / secret-tool path the provider talks to, so integration
+    # drift (API changes, D-Bus issues, gnome-keyring permission problems)
+    # surfaces within a day instead of at release time.
+    name: Linux keychain live round-trip (Node 22.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: "npm"
+
+      - name: Install libsecret + D-Bus + gnome-keyring
+        # libsecret-tools provides `secret-tool`; dbus-x11 gives us
+        # dbus-launch for a session bus; gnome-keyring is the Secret Service
+        # implementation. Without an unlocked session keyring the Secret
+        # Service refuses writes, so we unlock it with an empty password.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-tools dbus-x11 gnome-keyring
+
+      - name: Install npm dependencies
+        run: npm ci --legacy-peer-deps
+        env:
+          HUSKY: "0"
+
+      - name: Run keychain round-trip test
+        # Start a D-Bus session bus, start gnome-keyring-daemon with an
+        # empty login keyring (unlocked), export the env the test process
+        # inherits so libsecret can find the bus + the unlocked keyring.
+        run: |
+          set -euo pipefail
+          export $(dbus-launch)
+          eval "$(printf '' | /usr/bin/gnome-keyring-daemon --start --components=secrets)"
+          export NEXUM_KEYCHAIN_LIVE_TESTS=1
+          node --experimental-vm-modules node_modules/jest/bin/jest.js \
+            tests/credentials/keychain-linux-roundtrip.test.ts \
+            --runInBand
+        env:
+          CI: true
+          SKIP_NETWORK_TESTS: true

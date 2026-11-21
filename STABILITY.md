@@ -48,7 +48,7 @@ releases. They are suitable for early adopters and contributors, but
 - `CompactionService` (and `TokenEstimator`, `CompactionPolicy`, `SummaryProvider`)
 - `SessionQueryService`
 - `ContextService` (and built-in context providers)
-- `CredentialService` (env + file providers; keychain + vault are **INCOMPLETE**)
+- `CredentialService` (env + file providers stable; keychain Linux round-trip verified nightly by `tests/credentials/keychain-linux-roundtrip.test.ts` in the `keychain` nightly job; macOS/Windows keychain still experimental; Vault provider functional)
 - `AttachmentStore`
 - `WorkflowService`
 - `WebhookService`
@@ -83,8 +83,17 @@ part of the supported API contract.
 These are explicitly **incomplete** and should not be relied on in
 production. They may be removed or significantly reworked in any release.
 
-- Plugin runtime capability enforcement — not yet implemented
-- `ProcessSubagentProvider` — spawns real subprocesses via `nexum rpc` server (wired via `src/cli/rpc.ts`)
+- Plugin runtime capability enforcement — sandbox boundary enforced
+  (`src/platform/plugins/sandbox.ts` gates `provide` / `lookup` /
+  `declareCapability` against the policy allow-lists + provide cap;
+  `src/platform/plugins/host.ts` ships `registerUntrusted` + fail-closed
+  `start()` for unsandboxed third-party plugins, default
+  `refuseUnsandboxedThirdParty: true`). **Runtime capability-token
+  enforcement inside the sandbox** — the layer that would let a host
+  reject a capability claim _after_ setup based on observed behavior — is
+  still missing.
+- `ProcessSubagentProvider` — spawns real subprocesses via `nexum rpc`
+  server (wired via `src/cli/rpc.ts`)
 
 ## Versioning
 
