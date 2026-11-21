@@ -1,0 +1,14 @@
+schemaVersion: 1
+name: nexum
+stack:
+  - react-typescript
+  - node-typescript
+commands:
+  lint:
+    - ["npx", "eslint", "src", "tests"]
+  typecheck:
+    - ["npx", "tsc", "--noEmit"]
+  test:
+    - ["npm", "test"]
+  build:
+    - ["npm", "run", "build"]

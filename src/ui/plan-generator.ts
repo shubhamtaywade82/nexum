@@ -1,6 +1,7 @@
 import { ChatMessage } from "../models/adapters/provider.js";
 import type { ChatPort } from "../models/gateway/inference-dispatcher.js";
 import { HistoryEntry, PlanStep } from "../orchestration/types.js";
+import { sanitizePlanDag } from "../orchestration/dag-validator.js";
 
 export class PlanGenerationError extends Error {}
 
@@ -36,7 +37,7 @@ function validateSteps(parsed: unknown): PlanStep[] {
   if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new PlanGenerationError("model response was not a non-empty JSON array");
   }
-  return parsed.map((raw: RawStep, i) => {
+  const steps: PlanStep[] = parsed.map((raw: RawStep, i) => {
     if (typeof raw.id !== "string" || typeof raw.description !== "string" || !Array.isArray(raw.dependencies)) {
       throw new PlanGenerationError(`step at index ${i} is missing required fields (id, description, dependencies)`);
     }
@@ -53,6 +54,7 @@ function validateSteps(parsed: unknown): PlanStep[] {
       ...(verify ? { verify } : {}),
     };
   });
+  return sanitizePlanDag(steps);
 }
 
 export async function generatePlan(userRequest: string, provider: ChatPort): Promise<PlanStep[]> {

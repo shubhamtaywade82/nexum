@@ -22,6 +22,7 @@ import {
   projectPack,
   ragPack,
   rubyPack,
+  sdlcPack,
   searchPack,
   shellPack,
 } from "../tools/packs/index.js";
@@ -144,6 +145,7 @@ export class AgentToolManager {
     if (opts.dockerTool) this.registerToolPack(dockerPack(root, { egress: opts.dockerEgress ?? false }));
     this.registerToolPack(databasePack(guard));
     this.registerToolPack(generalPack());
+    this.registerToolPack(sdlcPack(root));
     // Default-on intelligence layer (semantic memory; RAG joins in the same
     // seam): every product agent gets durable semantic memory unless the
     // operator opts out via NEXUM_SEMANTIC_MEMORY=0.

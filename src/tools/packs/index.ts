@@ -46,3 +46,4 @@ export { memoryPack } from "./memory-pack.js";
 export { ragPack } from "./rag-pack.js";
 export { historyPack } from "./history-pack.js";
 export { webPack } from "./web-pack.js";
+export { sdlcPack } from "./sdlc-pack.js";
