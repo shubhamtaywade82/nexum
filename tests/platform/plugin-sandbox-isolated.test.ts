@@ -336,3 +336,64 @@ describe("IsolatedPluginSandbox (Tier 2 — worker isolation)", () => {
     await host.stop();
   });
 });
+
+describe("PluginHost trust-aware registration (PRODUCTION_AUDIT #5)", () => {
+  it("registerThirdParty + start() fails closed when the plugin is not sandboxed", async () => {
+    const host = new DefaultPluginHost();
+    host.registerThirdParty({
+      manifest: { id: "shady", name: "Shady", version: "1.0.0" },
+      setup() {
+        throw new Error("third-party code ran in-process!");
+      },
+    });
+    await expect(host.start()).rejects.toThrow(/refusing to start third-party plugin\(s\) "shady" in-process/);
+    // Nothing ran.
+    expect(host.get("shady")?.state).toBe("registered");
+  });
+
+  it("the refusal can be explicitly overridden by the embedder (accepted risk)", async () => {
+    const host = new DefaultPluginHost({ refuseUnsandboxedThirdParty: false });
+    let ran = false;
+    host.registerThirdParty({
+      manifest: { id: "accepted", name: "Accepted", version: "1.0.0" },
+      setup() {
+        ran = true;
+      },
+    });
+    await host.start();
+    expect(ran).toBe(true);
+    expect(host.get("accepted")?.state).toBe("running");
+    await host.stop();
+  });
+
+  it("first-party register() is unaffected by the default refusal", async () => {
+    const host = new DefaultPluginHost();
+    let ran = false;
+    host.register({
+      manifest: { id: "builtin", name: "Builtin", version: "1.0.0" },
+      setup() {
+        ran = true;
+      },
+    });
+    await host.start();
+    expect(ran).toBe(true);
+    expect(host.get("builtin")?.state).toBe("running");
+    await host.stop();
+  });
+
+  it("registerUntrusted loads a plugin file through the sandbox, marks it sandboxed, and starts it", async () => {
+    const file = writePlugin(
+      "untrusted-ok",
+      `export default {
+        manifest: { id: "untrusted-ok", name: "Untrusted OK", version: "1.0.0" },
+      };`,
+    );
+    const host = new DefaultPluginHost();
+    const id = await host.registerUntrusted(file);
+    expect(id).toBe("untrusted-ok");
+    expect(host.isSandboxed("untrusted-ok")).toBe(true);
+    await host.start();
+    expect(host.get("untrusted-ok")?.state).toBe("running");
+    await host.stop();
+  }, 30_000);
+});

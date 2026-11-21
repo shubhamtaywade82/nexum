@@ -42,7 +42,9 @@ import type {
   PluginId,
   PluginLogger,
   PluginRecord,
+  UntrustedPluginOptions,
 } from "./types.js";
+import { IsolatedPluginSandbox } from "./sandbox.js";
 
 export interface PluginHostOptions {
   /** Workspace root, exposed to plugins via PluginContext. */
@@ -56,6 +58,13 @@ export interface PluginHostOptions {
   failOnCycle?: boolean;
   /** If true, throws when a declared dependency is not registered. */
   failOnMissingDependency?: boolean;
+  /**
+   * PRODUCTION_AUDIT #5: when true, `start()` refuses plugins that were
+   * registered with `untrusted: true` markers (see registerUntrusted) unless
+   * they carry a sandbox handle. Defaults to true — embedders that knowingly
+   * run third-party code in-process must opt out loudly.
+   */
+  refuseUnsandboxedThirdParty?: boolean;
 }
 
 export class DefaultPluginHost implements PluginHost {
@@ -67,6 +76,11 @@ export class DefaultPluginHost implements PluginHost {
   private readonly workspaceRoot?: string;
   private readonly failOnCycle: boolean;
   private readonly failOnMissingDependency: boolean;
+  private readonly refuseUnsandboxedThirdParty: boolean;
+  /** Plugin ids registered through the sandboxed (untrusted) path. */
+  private readonly sandboxedIds = new Set<PluginId>();
+  /** Plugin ids explicitly marked third-party via registerThirdParty(). */
+  private readonly thirdPartyIds = new Set<PluginId>();
   private started = false;
 
   constructor(opts: PluginHostOptions = {}) {
@@ -74,6 +88,7 @@ export class DefaultPluginHost implements PluginHost {
     this.workspaceRoot = opts.workspaceRoot;
     this.failOnCycle = opts.failOnCycle ?? false;
     this.failOnMissingDependency = opts.failOnMissingDependency ?? false;
+    this.refuseUnsandboxedThirdParty = opts.refuseUnsandboxedThirdParty ?? true;
   }
 
   register(plugin: NexumPlugin): this {
@@ -89,6 +104,38 @@ export class DefaultPluginHost implements PluginHost {
   registerAll(plugins: NexumPlugin[]): this {
     for (const p of plugins) this.register(p);
     return this;
+  }
+
+  /**
+   * PRODUCTION_AUDIT #5: mark a `register()`ed plugin as third-party. The
+   * host's `start()` then refuses it unless it carries a sandbox handle
+   * (which only `registerUntrusted()` produces) — or the embedder explicitly
+   * set `refuseUnsandboxedThirdParty: false`, accepting in-process risk.
+   */
+  registerThirdParty(plugin: NexumPlugin): this {
+    this.register(plugin);
+    this.thirdPartyIds.add(plugin.manifest.id);
+    return this;
+  }
+
+  async registerUntrusted(pluginFile: string, opts: UntrustedPluginOptions = {}): Promise<PluginId> {
+    const plugin = await IsolatedPluginSandbox.load(pluginFile, {
+      // Process transport is the whole point of the untrusted path: worker
+      // threads share this process's privileges (memory, fs, env).
+      transport: opts.transport ?? "process",
+      ...(opts.readRoot ? { readRoot: opts.readRoot } : {}),
+      ...(opts.allowNetwork ? { allowNetwork: true } : {}),
+      logger: this.logger,
+    });
+    this.register(plugin);
+    this.thirdPartyIds.add(plugin.manifest.id);
+    this.sandboxedIds.add(plugin.manifest.id);
+    return plugin.manifest.id;
+  }
+
+  /** True iff the plugin runs inside the isolated sandbox. */
+  isSandboxed(id: PluginId): boolean {
+    return this.sandboxedIds.has(id);
   }
 
   has(id: PluginId): boolean {
@@ -135,6 +182,20 @@ export class DefaultPluginHost implements PluginHost {
       return;
     }
     const order = this.resolveOrder();
+
+    // PRODUCTION_AUDIT #5: third-party plugins must be sandboxed before any
+    // of their lifecycle callbacks run in this process. Fail closed.
+    if (this.refuseUnsandboxedThirdParty) {
+      const unsandboxed = order.filter((id) => this.thirdPartyIds.has(id) && !this.sandboxedIds.has(id));
+      if (unsandboxed.length > 0) {
+        throw new Error(
+          `refusing to start third-party plugin(s) ${unsandboxed.map((id) => `"${id}"`).join(", ")} in-process: ` +
+            `register them via registerUntrusted() (isolated sandbox), or construct the host with ` +
+            `refuseUnsandboxedThirdParty: false to explicitly accept the risk.`,
+        );
+      }
+    }
+
     this.logger.info("starting plugin host", { count: order.length });
 
     for (const id of order) {
