@@ -82,8 +82,11 @@ jobs:
       - name: Publish to NPM Registry
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
         run: npm publish --provenance --access public --tag ${{ steps.dist.outputs.tag }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # Trusted publishing via npm OIDC: id-token: write (above) +
+        # --provenance lets npm verify this workflow's identity directly with
+        # the registry. No long-lived NPM_TOKEN secret. The publish-time
+        # trusted-publisher mapping (repo <-> npm package) must be configured
+        # once on npmjs.com — see RELEASE-READINESS.md §5.
 
       - name: Create GitHub Release
         if: github.ref_type == 'tag'
