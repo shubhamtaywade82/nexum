@@ -84,9 +84,25 @@ export class DefaultModelGateway implements ModelGateway {
   }
 
   async route(capability: Capability, messages: ChatMessage[], opts?: ChatOptions): Promise<ChatResponse> {
-    const response = await this.router.route(capability, messages, opts);
-    this.record(response);
-    return response;
+    const runId = (opts as { runId?: string })?.runId ?? this.budget?.runId ?? "run_unassigned";
+    const taskId = (opts as { taskId?: string })?.taskId ?? `route.${capability}`;
+    const startedAt = Date.now();
+    try {
+      const response = await this.router.route(capability, messages, opts);
+      const latencyMs = Date.now() - startedAt;
+      this.record(response, { runId, taskId, latencyMs, status: "success" });
+      return response;
+    } catch (err) {
+      const latencyMs = Date.now() - startedAt;
+      recordModelCall(this.budget, this.registry, undefined, {
+        runId,
+        taskId,
+        latencyMs,
+        status: "failure",
+        error: (err as Error).message,
+      });
+      throw err;
+    }
   }
 
   /**
@@ -110,7 +126,10 @@ export class DefaultModelGateway implements ModelGateway {
   }
 
   /** Router-path calls record here; the dispatcher's explicit-model calls record in the dispatcher. */
-  private record(response: ChatResponse): void {
-    recordModelCall(this.budget, this.registry, response);
+  private record(
+    response: ChatResponse,
+    meta?: { runId?: string; taskId?: string; latencyMs?: number; status?: "success" | "failure" },
+  ): void {
+    recordModelCall(this.budget, this.registry, response, meta);
   }
 }

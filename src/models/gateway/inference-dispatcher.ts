@@ -24,7 +24,13 @@ import {
   type Provider,
 } from "../adapters/provider.js";
 import type { ModelCapabilityRegistry } from "../profiles/model-capability-registry.js";
-import { budgetUsageOf, readUsage } from "../usage-reading.js";
+import {
+  budgetUsageOf,
+  calculateCostUsd,
+  globalModelLedger,
+  readUsage,
+  resolveModelPricing,
+} from "../usage-reading.js";
 
 /** One chat call, as a caller names it: which provider lane, why, and optionally which model to pin. */
 export interface DispatchTarget {
@@ -33,6 +39,21 @@ export interface DispatchTarget {
   purpose: string;
   /** Model to pin for this call. Omitted: the lane provider's configured model. */
   model?: string;
+  runId?: string;
+  taskId?: string;
+  retryCount?: number;
+}
+
+export interface ModelCallMeta {
+  runId?: string;
+  taskId?: string;
+  provider?: string;
+  model?: string;
+  tier?: string;
+  latencyMs?: number;
+  retryCount?: number;
+  status?: "success" | "failure";
+  error?: string;
 }
 
 /** The narrow port callers depend on instead of a Provider: one chat, already accounted. */
@@ -92,11 +113,43 @@ export class InferenceDispatcher {
     const tier = provider.currentTier;
     const gate = tier === "cloud" ? this.cloudGate : this.localGate;
     const callOpts: ChatOptions = target.model !== undefined ? { ...opts, model: target.model } : opts;
-    const response = await gate.run(() => provider.chat(messages, callOpts));
-    response.routedTier = tier;
-    response.routedModel = target.model ?? provider.currentModel;
-    recordModelCall(this.budget, this.registry, response);
-    return response;
+    const model = target.model ?? provider.currentModel;
+    const runId = target.runId ?? (opts as { runId?: string }).runId ?? this.budget?.runId ?? "run_unassigned";
+    const taskId = target.taskId ?? (opts as { taskId?: string }).taskId ?? target.purpose;
+    const retryCount = target.retryCount ?? (opts as { retryCount?: number }).retryCount ?? 0;
+    const startedAt = Date.now();
+
+    try {
+      const response = await gate.run(() => provider.chat(messages, callOpts));
+      const latencyMs = Date.now() - startedAt;
+      response.routedTier = tier;
+      response.routedModel = model;
+      recordModelCall(this.budget, this.registry, response, {
+        runId,
+        taskId,
+        provider: "ollama",
+        model,
+        tier,
+        latencyMs,
+        retryCount,
+        status: "success",
+      });
+      return response;
+    } catch (err) {
+      const latencyMs = Date.now() - startedAt;
+      recordModelCall(this.budget, this.registry, undefined, {
+        runId,
+        taskId,
+        provider: "ollama",
+        model,
+        tier,
+        latencyMs,
+        retryCount,
+        status: "failure",
+        error: (err as Error).message,
+      });
+      throw err;
+    }
   }
 
   port(target: DispatchTarget): ChatPort {
@@ -105,24 +158,73 @@ export class InferenceDispatcher {
 }
 
 /**
- * Records one provider response on a budget. Missing counters are unmetered, never zero: a cost needs both counts
- * from the provider, and an absent count is not a claim that the call was free (see usage-reading.ts).
+ * Records one provider response on a budget and the audit ledger.
  */
 export function recordModelCall(
   budget: BudgetTracker | undefined,
   registry: ModelCapabilityRegistry | undefined,
-  response: ChatResponse,
+  response?: ChatResponse,
+  meta?: ModelCallMeta,
 ): void {
-  if (!budget) return;
+  const runId = meta?.runId ?? budget?.runId ?? "run_unassigned";
+  const taskId = meta?.taskId ?? "task_unassigned";
+  const provider = meta?.provider ?? "ollama";
+  const model = response?.routedModel ?? meta?.model ?? "unknown";
+  const tier = response?.routedTier ?? meta?.tier ?? "cloud";
+  const latencyMs = meta?.latencyMs ?? 0;
+  const retryCount = meta?.retryCount ?? 0;
+  const status = meta?.status ?? (response ? "success" : "failure");
+  const timestamp = new Date().toISOString();
+
+  if (!response) {
+    globalModelLedger.record({
+      runId,
+      taskId,
+      provider,
+      model,
+      inputTokens: "unknown",
+      cachedInputTokens: "unknown",
+      outputTokens: "unknown",
+      estimatedCostUsd: "unknown",
+      latencyMs,
+      retryCount,
+      status: "failure",
+      timestamp,
+      error: meta?.error,
+    });
+    budget?.consumeModelCall({ usageSource: "MISSING" });
+    return;
+  }
+
   const reading = readUsage(response);
-  const cost =
-    reading.source === "PROVIDER" && response.routedModel !== undefined && registry
-      ? registry.estimateCostUsd(response.routedModel, reading.promptTokens ?? 0, reading.completionTokens ?? 0)
+  const pricing = resolveModelPricing(model, tier);
+  const cost = calculateCostUsd(pricing, reading.promptTokens, reading.completionTokens);
+
+  globalModelLedger.record({
+    runId,
+    taskId,
+    provider,
+    model,
+    inputTokens: reading.promptTokens ?? "unknown",
+    cachedInputTokens: reading.cachedPromptTokens ?? "unknown",
+    outputTokens: reading.completionTokens ?? "unknown",
+    estimatedCostUsd: cost,
+    latencyMs,
+    retryCount,
+    status,
+    timestamp,
+  });
+
+  if (!budget) return;
+  const registryCost =
+    reading.source === "PROVIDER" && registry
+      ? registry.estimateCostUsd(model, reading.promptTokens ?? 0, reading.completionTokens ?? 0)
       : undefined;
-  const usage = { ...budgetUsageOf(reading), costUsd: cost };
-  // cloud-aware consumption when the run carries a BudgetManager (review item 14)
+  const effectiveCost = typeof cost === "number" ? cost : registryCost;
+  const usage = { ...budgetUsageOf(reading), costUsd: effectiveCost };
+
   if (budget instanceof BudgetManager) {
-    budget.consumeModelCall({ ...usage, cloud: response.routedTier === "cloud" });
+    budget.consumeModelCall({ ...usage, cloud: tier === "cloud" });
   } else {
     budget.consumeModelCall(usage);
   }

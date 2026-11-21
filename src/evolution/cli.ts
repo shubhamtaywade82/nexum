@@ -33,7 +33,7 @@ import {
 import { ExperimentController } from "./experiments/experiment-controller.js";
 import { ExperimentStore } from "./experiments/experiment-store.js";
 import { TaskExecutionResult } from "./evaluator.js";
-import { EvolutionMetricsTracker } from "./metrics.js";
+import { EvolutionBudgetController, EvolutionMetricsTracker } from "./metrics.js";
 import { AgentMutationStrategy } from "./mutation/agent-mutation.js";
 import { GitWorktreeMutationExecutor, MutationStrategy } from "./mutation/mutation-executor.js";
 import { NexumEngineeringAgentRuntime, chatClientFromProvider } from "./mutation/nexum-agent-runtime.js";
@@ -984,12 +984,18 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   const envParallel = process.env.NEXUM_EVOLUTION_PARALLEL
     ? parseInt(process.env.NEXUM_EVOLUTION_PARALLEL, 10)
     : undefined;
-  const defaultParallel = envParallel ?? (cfg.tier === "cloud" && keyPool.length > 1 ? Math.min(keyPool.length, 5) : 1);
-  const parallel = values.parallel !== undefined ? parseInt(values.parallel as string, 10) : defaultParallel;
-  if (Number.isNaN(parallel) || parallel < 1) {
+  const maxAllowedParallel = EvolutionBudgetController.DEFAULT_CONFIG.maxParallelCandidates;
+  const defaultParallel = envParallel
+    ? Math.min(envParallel, maxAllowedParallel)
+    : cfg.tier === "cloud" && keyPool.length > 1
+      ? Math.min(keyPool.length, maxAllowedParallel)
+      : 1;
+  const requestedParallel = values.parallel !== undefined ? parseInt(values.parallel as string, 10) : defaultParallel;
+  if (Number.isNaN(requestedParallel) || requestedParallel < 1) {
     console.error("--parallel must be a positive integer.");
     return;
   }
+  const parallel = Math.min(requestedParallel, maxAllowedParallel);
   if (parallel > 1 && cfg.tier === "cloud" && keyPool.length < parallel) {
     console.log(
       `[Evolution] --parallel ${parallel} with ${keyPool.length} API key(s): attempts will share keys and may hit rate limits. Add keys via OLLAMA_API_KEYS.`,
@@ -1232,6 +1238,9 @@ async function executeMutationCommand(root: string, values: Record<string, unkno
   };
 
   const runCycle = async (): Promise<EvolutionCycleResult> => {
+    const budgetController = new EvolutionBudgetController(undefined, join(root, ".nexum", "evolution-budget.json"));
+    budgetController.assertCanStartCycle();
+
     const allEpisodes = loadAllEpisodes(root);
     await ingestParentExperience(engine, allEpisodes, repoRoot, parentRef);
     const episodes = allEpisodes.slice(0, limit);

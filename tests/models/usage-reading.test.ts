@@ -1,5 +1,11 @@
 import { describe, it, expect } from "@jest/globals";
-import { budgetUsageOf, readUsage } from "../../src/models/usage-reading.js";
+import {
+  budgetUsageOf,
+  calculateCostUsd,
+  ModelUsageLedger,
+  readUsage,
+  resolveModelPricing,
+} from "../../src/models/usage-reading.js";
 
 describe("readUsage", () => {
   it("is PROVIDER when the provider reports both the prompt and the completion counts", () => {
@@ -54,5 +60,71 @@ describe("budgetUsageOf", () => {
     expect(input.usageSource).toBe("MISSING");
     expect(input.promptTokens).toBeUndefined();
     expect(input.completionTokens).toBeUndefined();
+  });
+});
+
+describe("resolveModelPricing and calculateCostUsd", () => {
+  it("treats local tier as zero cost", () => {
+    const pricing = resolveModelPricing("gemma4:cloud", "local");
+    expect(pricing).toEqual({ input: 0, output: 0 });
+    expect(calculateCostUsd(pricing, 1000, 2000)).toBe(0);
+  });
+
+  it("resolves cloud standard pricing for known models", () => {
+    const pricing = resolveModelPricing("gemma4:cloud", "cloud");
+    expect(pricing).toEqual({ input: 0.14, output: 0.4 });
+    // (1M / 1M * 0.14) + (1M / 1M * 0.40) = 0.54
+    expect(calculateCostUsd(pricing, 1_000_000, 1_000_000)).toBe(0.54);
+  });
+
+  it("marks cost as unknown when counters or pricing are absent", () => {
+    expect(calculateCostUsd(undefined, 100, 200)).toBe("unknown");
+    expect(calculateCostUsd({ input: 0.14, output: 0.4 }, undefined, 200)).toBe("unknown");
+  });
+});
+
+describe("ModelUsageLedger", () => {
+  it("records success and failure calls with exact metadata", () => {
+    const ledger = new ModelUsageLedger();
+    ledger.record({
+      runId: "run_1",
+      taskId: "task_a",
+      provider: "ollama",
+      model: "gemma4:cloud",
+      inputTokens: 1000,
+      cachedInputTokens: 200,
+      outputTokens: 500,
+      estimatedCostUsd: 0.00034,
+      latencyMs: 120,
+      retryCount: 0,
+      status: "success",
+      timestamp: "2026-11-21T00:00:00.000Z",
+    });
+
+    ledger.record({
+      runId: "run_1",
+      taskId: "task_b",
+      provider: "ollama",
+      model: "gemma4:cloud",
+      inputTokens: "unknown",
+      cachedInputTokens: "unknown",
+      outputTokens: "unknown",
+      estimatedCostUsd: "unknown",
+      latencyMs: 50,
+      retryCount: 1,
+      status: "failure",
+      timestamp: "2026-11-21T00:00:01.000Z",
+      error: "Connection timeout",
+    });
+
+    expect(ledger.all()).toHaveLength(2);
+    const agg = ledger.aggregateForRun("run_1");
+    expect(agg.runId).toBe("run_1");
+    expect(agg.totalCostUsd).toBe(0.00034);
+    expect(agg.hasUnknownCosts).toBe(true);
+    expect(agg.totalInputTokens).toBe(1000);
+    expect(agg.totalOutputTokens).toBe(500);
+    expect(agg.totalCalls).toBe(2);
+    expect(agg.failedCalls).toBe(1);
   });
 });

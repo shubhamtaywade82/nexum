@@ -1,5 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import { formatHealthReport, metricsFromExperimentStore } from "../../src/evolution/cli.js";
+import { EvolutionBudgetController } from "../../src/evolution/metrics.js";
 import type { ExperimentStore } from "../../src/evolution/experiments/experiment-store.js";
 import type { ExperimentRecord } from "../../src/evolution/experiments/experiment-schema.js";
 
@@ -68,5 +69,40 @@ describe("metricsFromExperimentStore", () => {
     expect(text).toMatch(/Mean transfer gain:\s+n\/a \(not measured\)/);
     expect(text).toMatch(/Executor sensitivity:\s+n\/a \(not measured\)/);
     expect(text).not.toMatch(/transfer gain:\s+0\.0%/i);
+  });
+});
+
+describe("EvolutionBudgetController", () => {
+  it("enforces conservative operating limits: $48 ceiling, $12 reserve, $5 cycle, max 2 parallel", () => {
+    const controller = new EvolutionBudgetController();
+    const { config, state } = controller.getSnapshot();
+
+    expect(state.currentMonthlySpendUsd).toBe(0);
+    expect(config.monthlyBudgetUsd).toBe(60.0);
+    expect(config.reserveBudgetUsd).toBe(12.0);
+    expect(config.maxMonthlySpendUsd).toBe(48.0);
+    expect(config.maxCycleSpendUsd).toBe(5.0);
+    expect(config.maxParallelCandidates).toBe(2);
+    expect(config.maxRetries).toBe(3);
+
+    // Fresh cycle allows start
+    expect(() => controller.assertCanStartCycle(5.0)).not.toThrow();
+
+    // Spend tracking
+    controller.recordCycleSpend(4.5);
+    expect(controller.getSnapshot().state.currentMonthlySpendUsd).toBe(4.5);
+    expect(controller.getSnapshot().state.cyclesCompleted).toBe(1);
+
+    // Cycle spend check
+    expect(() => controller.checkCycleLimit(4.5)).not.toThrow();
+    expect(() => controller.checkCycleLimit(5.5)).toThrow(/Cycle spend limit exceeded/);
+
+    // Reject cycle when near monthly limit ($48.00 ceiling)
+    controller.recordCycleSpend(40.0); // total 44.50
+    // 44.50 + 5.0 = 49.50 > 48.00
+    expect(() => controller.assertCanStartCycle(5.0)).toThrow(/would exceed spending ceiling/);
+
+    controller.recordCycleSpend(4.0); // total 48.50 >= 48.00
+    expect(() => controller.assertCanStartCycle(1.0)).toThrow(/Automatic spending stop reached/);
   });
 });

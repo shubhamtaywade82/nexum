@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
 /**
  * First-class metrics for the self-development loop.
  *
@@ -163,4 +165,97 @@ function pearson(xs: number[], ys: number[]): number {
   }
   if (dx === 0 || dy === 0) return 0;
   return num / Math.sqrt(dx * dy);
+}
+
+export interface EvolutionBudgetConfig {
+  monthlyBudgetUsd: number;
+  reserveBudgetUsd: number;
+  maxMonthlySpendUsd: number;
+  maxCycleSpendUsd: number;
+  maxParallelCandidates: number;
+  maxRetries: number;
+}
+
+export interface EvolutionBudgetState {
+  month: string;
+  currentMonthlySpendUsd: number;
+  cyclesCompleted: number;
+}
+
+/** Enforces hard inference budget ceilings on evolution runs. */
+export class EvolutionBudgetController {
+  static readonly DEFAULT_CONFIG: EvolutionBudgetConfig = {
+    monthlyBudgetUsd: 60.0,
+    reserveBudgetUsd: 12.0,
+    maxMonthlySpendUsd: 48.0,
+    maxCycleSpendUsd: 5.0,
+    maxParallelCandidates: 2,
+    maxRetries: 3,
+  };
+
+  private readonly config: EvolutionBudgetConfig;
+  private readonly stateFilePath?: string;
+  private state: EvolutionBudgetState;
+
+  constructor(config?: Partial<EvolutionBudgetConfig>, stateFilePath?: string) {
+    this.config = { ...EvolutionBudgetController.DEFAULT_CONFIG, ...config };
+    this.stateFilePath = stateFilePath;
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    this.state = this.load(currentMonth);
+  }
+
+  assertCanStartCycle(estimatedCostUsd = 5.0): void {
+    if (this.state.currentMonthlySpendUsd >= this.config.maxMonthlySpendUsd) {
+      throw new Error(
+        `[EvolutionBudget] Automatic spending stop reached ($${this.config.maxMonthlySpendUsd.toFixed(2)}). ` +
+          `Consumed: $${this.state.currentMonthlySpendUsd.toFixed(2)} of $${this.config.monthlyBudgetUsd.toFixed(2)}. ` +
+          `Remaining $${this.config.reserveBudgetUsd.toFixed(2)} is reserved.`,
+      );
+    }
+    if (this.state.currentMonthlySpendUsd + estimatedCostUsd > this.config.maxMonthlySpendUsd) {
+      throw new Error(
+        `[EvolutionBudget] Cycle estimated cost ($${estimatedCostUsd.toFixed(2)}) would exceed spending ceiling ` +
+          `($${this.config.maxMonthlySpendUsd.toFixed(2)}). Current consumption: $${this.state.currentMonthlySpendUsd.toFixed(2)}.`,
+      );
+    }
+  }
+
+  checkCycleLimit(cycleSpendUsd: number): void {
+    if (cycleSpendUsd > this.config.maxCycleSpendUsd) {
+      throw new Error(
+        `[EvolutionBudget] Cycle spend limit exceeded: $${cycleSpendUsd.toFixed(2)} > $${this.config.maxCycleSpendUsd.toFixed(2)}.`,
+      );
+    }
+  }
+
+  recordCycleSpend(spendUsd: number): void {
+    this.state.currentMonthlySpendUsd = Math.round((this.state.currentMonthlySpendUsd + spendUsd) * 1e6) / 1e6;
+    this.state.cyclesCompleted += 1;
+    this.persist();
+  }
+
+  getSnapshot(): { config: EvolutionBudgetConfig; state: EvolutionBudgetState } {
+    return { config: { ...this.config }, state: { ...this.state } };
+  }
+
+  private load(currentMonth: string): EvolutionBudgetState {
+    if (this.stateFilePath && existsSync(this.stateFilePath)) {
+      try {
+        const raw = JSON.parse(readFileSync(this.stateFilePath, "utf8")) as EvolutionBudgetState;
+        if (raw.month === currentMonth) return raw;
+      } catch {
+        // Fall back to clean month
+      }
+    }
+    return { month: currentMonth, currentMonthlySpendUsd: 0, cyclesCompleted: 0 };
+  }
+
+  private persist(): void {
+    if (!this.stateFilePath) return;
+    try {
+      writeFileSync(this.stateFilePath, JSON.stringify(this.state, null, 2), "utf8");
+    } catch {
+      // Non-fatal if state dir is unwritable
+    }
+  }
 }
