@@ -6,14 +6,14 @@
 
 ## 1. Current state (verified 2026-11-10)
 
-| Fact | Status |
-|---|---|
-| `@nemesis-oss/nexum` on npm | **Never published** (registry 404) — clean slate |
-| Repo version | `2.0.0-alpha.3` on `main`, MIT, developer preview |
-| `@nemesis-oss/devagent-ts`, `devagent-ts`, `devagent` on npm | **Never published** (all 404) — no predecessor users to migrate |
-| `@x12i/nexum` on npm | Exists, actively maintained (`2.0.1`, 2026-09-19), also at 2.x — brand-confusion risk |
-| `nemesis-oss/nexum` on GitHub | **Does not exist** (404); repo lives at `shubhamtaywade82/nexum`, but `package.json` metadata already points at the org repo |
-| Release pipeline | `release:check` (lint + format + build + test + package:check) and `.github/workflows/release.yml` with provenance; auth via long-lived `NPM_TOKEN` secret |
+| Fact                                                         | Status                                                                                                                                                     |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@nemesis-oss/nexum` on npm                                  | **Never published** (registry 404) — clean slate                                                                                                           |
+| Repo version                                                 | `2.0.0-alpha.4` on `main`, MIT, developer preview                                                                                                          |
+| `@nemesis-oss/devagent-ts`, `devagent-ts`, `devagent` on npm | **Never published** (all 404) — no predecessor users to migrate                                                                                            |
+| `@x12i/nexum` on npm                                         | Exists, actively maintained (`2.0.1`, 2026-09-19), also at 2.x — brand-confusion risk                                                                      |
+| `nemesis-oss/nexum` on GitHub                                | **Does not exist** (404); repo lives at `shubhamtaywade82/nexum`, but `package.json` metadata already points at the org repo                               |
+| Release pipeline                                             | `release:check` (lint + format + build + test + package:check) and `.github/workflows/release.yml` with provenance; auth via long-lived `NPM_TOKEN` secret |
 
 Two consequences follow from "never published":
 
@@ -177,13 +177,13 @@ every remaining item is explicitly scoped out with a tracking issue.
 
 ## 3. Release phases
 
-| Phase | Version | Dist-tag | Theme | Gates |
-|---|---|---|---|---|
-| 1 | `2.0.0-alpha.4` | `next` | First public release | B1–B4, B6, B7 (alpha positioning) |
-| 2 | `2.0.0-alpha.5` | `next` | Early adopters | Feedback fixes; SDK quickstart + example integrations; OIDC trusted-publisher migration (drop `NPM_TOKEN`); CI OS matrix (Linux/macOS/Windows) |
-| 3 | `2.0.0-beta.1` | `next` | Feature complete | Plugin capability enforcement; keychain Linux round-trip test; security review of the MCP tool prompt-injection surface |
-| 4 | `2.0.0-rc.1` | `next` | Release candidate | API freeze; STABILITY.md Tier 1 finalized; B5 brand audit closed |
-| 5 | `2.0.0` | `latest` | Stable | Stability guarantee live; dist-tag switch to `latest`; migration documentation complete |
+| Phase | Version         | Dist-tag | Theme                | Gates                                                                                                                                          |
+| ----- | --------------- | -------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | `2.0.0-alpha.4` | `next`   | First public release | B1–B4, B6, B7 (alpha positioning)                                                                                                              |
+| 2     | `2.0.0-alpha.5` | `next`   | Early adopters       | Feedback fixes; SDK quickstart + example integrations; OIDC trusted-publisher migration (drop `NPM_TOKEN`); CI OS matrix (Linux/macOS/Windows) |
+| 3     | `2.0.0-beta.1`  | `next`   | Feature complete     | Plugin capability enforcement; keychain Linux round-trip test; security review of the MCP tool prompt-injection surface                        |
+| 4     | `2.0.0-rc.1`    | `next`   | Release candidate    | API freeze; STABILITY.md Tier 1 finalized; B5 brand audit closed                                                                               |
+| 5     | `2.0.0`         | `latest` | Stable               | Stability guarantee live; dist-tag switch to `latest`; migration documentation complete                                                        |
 
 Version numbers are proposals — the registry history is empty, so any next
 number is available. No phase is promoted to `latest` before Phase 5.
@@ -226,21 +226,21 @@ npm publish --access public --tag next --provenance
 
 ### 4.3 Post-publish verification (every release)
 
-| Check | Expected |
-|---|---|
-| `npm view @nemesis-oss/nexum dist-tags` | Version under `next` (phases 1–4) / `latest` (phase 5) |
-| `npm install -g @nemesis-oss/nexum@next && nexum --version` | Matches published version |
-| `npm view @nemesis-oss/nexum` metadata | `repository`, `homepage`, `bugs` all resolve |
-| Clean project: `npm install @nemesis-oss/nexum@next` + import smoke | All advertised exports load |
-| `nexum doctor` in an empty directory | Initializes `.nexum/`, reports healthy |
-| npm package page | Provenance badge shown, README rendered, no unintended files |
+| Check                                                               | Expected                                                     |
+| ------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `npm view @nemesis-oss/nexum dist-tags`                             | Version under `next` (phases 1–4) / `latest` (phase 5)       |
+| `npm install -g @nemesis-oss/nexum@next && nexum --version`         | Matches published version                                    |
+| `npm view @nemesis-oss/nexum` metadata                              | `repository`, `homepage`, `bugs` all resolve                 |
+| Clean project: `npm install @nemesis-oss/nexum@next` + import smoke | All advertised exports load                                  |
+| `nexum doctor` in an empty directory                                | Initializes `.nexum/`, reports healthy                       |
+| npm package page                                                    | Provenance badge shown, README rendered, no unintended files |
 
 ### 4.4 Bad-publish recovery
 
 - **Wrong dist-tag:** `npm dist-tag add @nemesis-oss/nexum@<version> <tag>` to
   correct, then remove the wrong entry.
 - **Broken release:** unpublish promptly (`npm unpublish
-  @nemesis-oss/nexum@<version>` — most reliable within 72h of publication and
+@nemesis-oss/nexum@<version>` — most reliable within 72h of publication and
   with no dependents), then republish a fix; otherwise
   `npm deprecate @nemesis-oss/nexum@<version> "Use <fix-version>"`.
 - Document any recovery in `CHANGELOG.md`.
@@ -267,6 +267,6 @@ npm publish --access public --tag next --provenance
 
 ## 7. Document history
 
-| Date | Change |
-|---|---|
+| Date       | Change                                                                                                                                    |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-11-10 | Created. Registry/repo facts verified; blockers B1–B7 defined; phase plan alpha.4 → 2.0.0; publish runbook and recovery procedures added. |

@@ -94,10 +94,11 @@ import { ComparisonResult, EvaluationMetrics, HarnessComponent, HarnessDiagnosis
  *
  *   optional                 — held-out/transfer evidence recorded when supplied,
  *                              but its absence never blocks eligibility
- *                              (development mode; the v2.0 default).
+ *                              (development mode; opt-in only).
  *   required                 — a fixed-executor matrix MUST be supplied and the
  *                              generalization gate MUST pass, otherwise the
- *                              candidate is rejected (research mode).
+ *                              candidate is rejected (research mode; the engine
+ *                              default — absence of evidence no longer promotes).
  *   required-for-production  — "required" plus transfer-executor evidence
  *                              MUST be present (production evolution).
  */
@@ -122,7 +123,7 @@ export interface ClosedLoopEngineOptions {
   metricsTracker?: EvolutionMetricsTracker;
   /** Executor models for the fixed-executor protocol (primary first). */
   executorModels?: string[];
-  /** Enforcement level of the generalization gate (default "optional"). */
+  /** Enforcement level of the generalization gate (default "required"). */
   generalizationPolicy?: GeneralizationPolicy;
   /** Self-development actuator: performs the actual harness mutation. */
   mutationExecutor?: HarnessMutationExecutor;
@@ -232,6 +233,36 @@ function transferRates(cells: ExecutorEvaluationCell[] | undefined, harnessId: s
   return rate === null ? {} : { transferScore: rate };
 }
 
+/**
+ * Per-executor transfer evidence for the persisted experiment record
+ * (PRODUCTION_AUDIT #13 follow-up): keyed by transfer executor, each entry
+ * carrying candidate/baseline success rates and the run count behind them.
+ * Empty when no transfer cells ran — absence stays "not measured".
+ */
+function transferCellsByExecutor(
+  cells: ExecutorEvaluationCell[] | undefined,
+  candidateId: string,
+  baselineId: string,
+): Record<string, { candidate: number; baseline: number; runs: number }> {
+  const out: Record<string, { candidate: number; baseline: number; runs: number }> = {};
+  for (const c of cells ?? []) {
+    if (c.split !== "transfer") continue;
+    const entry = (out[c.executorModel] ??= { candidate: NaN, baseline: NaN, runs: 0 });
+    if (c.harnessId === candidateId) {
+      entry.candidate = c.taskSuccessRate;
+      entry.runs = c.runs;
+    } else if (c.harnessId === baselineId) {
+      entry.baseline = c.taskSuccessRate;
+    }
+  }
+  // Drop executors without a matched candidate/baseline pair (partial matrices
+  // must not surface as half-evidence).
+  for (const [model, entry] of Object.entries(out)) {
+    if (!Number.isFinite(entry.candidate) || !Number.isFinite(entry.baseline)) delete out[model];
+  }
+  return out;
+}
+
 function transferGainOf(
   cells: ExecutorEvaluationCell[] | undefined,
   candidateId: string,
@@ -292,7 +323,10 @@ export class ClosedLoopEngine {
     this.monitor = opts.monitor;
     this.githubDelivery = opts.githubDelivery;
     this.runtimeActivation = opts.runtimeActivation;
-    this.generalizationPolicy = opts.generalizationPolicy ?? "optional";
+    // PRODUCTION_AUDIT follow-up: "optional" let a candidate become eligible
+    // with zero held-out evidence. The engine default is now "required" — the
+    // CLI dev path can still opt back down via --generalization-policy.
+    this.generalizationPolicy = opts.generalizationPolicy ?? "required";
     this.executorModels = opts.executorModels ?? ["primary"];
   }
 
@@ -490,6 +524,16 @@ export class ClosedLoopEngine {
         visible: pickRates(candidateMetrics, "visible"),
         held_out: heldOutRates(heldOut),
         transfer: transferRates(input.matrixCells, input.candidateHarnessId),
+        ...(Object.keys(transferCellsByExecutor(input.matrixCells, input.candidateHarnessId, input.parentHarnessId))
+          .length > 0
+          ? {
+              transferByExecutor: transferCellsByExecutor(
+                input.matrixCells,
+                input.candidateHarnessId,
+                input.parentHarnessId,
+              ),
+            }
+          : {}),
       },
       {
         capability: twoStage.stageB?.deltas.capability ?? 0,

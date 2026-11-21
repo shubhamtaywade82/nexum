@@ -24,7 +24,7 @@ This guide covers the four ways to use Nexum, in order of maturity:
 ### Install
 
 ```bash
-npm install -g @nemesis-oss/nexum@2.0.0-alpha.3
+npm install -g @nemesis-oss/nexum@2.0.0-alpha.4
 ```
 
 Verify the install:
@@ -191,7 +191,7 @@ automatically and injects it when relevant.
 | Model not found                        | `ollama pull <model-name>`                            |
 | Slow first response                    | Local model cold-start; subsequent turns are fast     |
 | `nexum rpc` child exits immediately    | Ensure the workspace is valid + `nexum doctor` passes |
-| Need interactive approval prompts     | Set `autoApprove: false` in config (restores prompts) |
+| Need interactive approval prompts      | Set `autoApprove: false` in config (restores prompts) |
 
 ## Next Steps
 

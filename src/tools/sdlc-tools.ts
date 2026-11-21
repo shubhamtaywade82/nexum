@@ -15,6 +15,9 @@ import { Tool, ToolError } from "./tool.js";
 
 /** Resolves the Agentic SDLC Kit CLI entrypoint from environment or standard paths. */
 export function resolveKitCliPath(): string | null {
+  if (process.env.NEXUM_SDLC_KIT_DISABLED === "true" || process.env.NEXUM_SDLC_KIT_PATH === "disabled") {
+    return null;
+  }
   const custom = process.env.AGENTIC_SDLC_KIT_PATH || process.env.NEXUM_SDLC_KIT_PATH;
   if (custom && existsSync(custom)) return custom;
 

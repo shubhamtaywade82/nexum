@@ -127,6 +127,17 @@ export interface PluginHost {
   register(plugin: NexumPlugin): this;
   /** Register many plugins at once (convenience for profile bundles). */
   registerAll(plugins: NexumPlugin[]): this;
+  /**
+   * Register UNTRUSTED plugin code (a plugin file path, not an in-process
+   * object) through the isolated sandbox. PRODUCTION_AUDIT #5: `register()`
+   * runs the given object's lifecycle callbacks in-process — fine for
+   * first-party plugins, not for third-party code. This path loads the file
+   * via IsolatedPluginSandbox with the process transport (`--permission`,
+   * no network by default, reads limited to the plugin's directory) and
+   * registers the resulting proxy, so untrusted code never shares this
+   * process's privileges.
+   */
+  registerUntrusted(pluginFile: string, opts?: UntrustedPluginOptions): Promise<PluginId>;
   /** True iff a plugin with this id is registered. */
   has(id: PluginId): boolean;
   /** Get the manifest + state for a plugin. */
@@ -188,6 +199,20 @@ export interface NexumPlugin {
   setup?(ctx: PluginContext): Promise<void> | void;
   start?(): Promise<void> | void;
   stop?(): Promise<void> | void;
+}
+
+/**
+ * Options for PluginHost.registerUntrusted() — the trust-aware path for
+ * third-party plugin code (PRODUCTION_AUDIT #5). Mirrors the sandbox knobs
+ * that matter at registration time.
+ */
+export interface UntrustedPluginOptions {
+  /** Sandbox transport: "process" (default, OS-level) or "worker" (memory-only). */
+  transport?: "worker" | "process";
+  /** Directory the plugin may read (default: the plugin file's directory). */
+  readRoot?: string;
+  /** Let the sandboxed plugin open network connections (default false). */
+  allowNetwork?: boolean;
 }
 
 /**

@@ -320,7 +320,7 @@ user (root inside the container, all capabilities dropped,
 | `github` tool can still create/comment on/edit issues and PRs and re-run workflows with your token.                                                                                                                                    | Scope the `gh` token (fine-grained, single repo).                                             |
 | Delete/move/mkdir symlink race is narrowed, not closed (Node has no `openat2(RESOLVE_BENEATH)`).                                                                                                                                       | Requires a concurrent writer inside the workspace.                                            |
 | Sandbox masks secrets present when the command starts; the webhook replay cache and hardlink inode cache (10 s) are in memory.                                                                                                         | Restart re-opens the webhook window; a secret created mid-command is visible to that command. |
-| Browser has host network access.                                                                                                                                                                                                       | Do not browse untrusted sites with sensitive local services reachable.                        |
+| Browser network access is constrained by URL policy (scheme + private IP / loopback blocklist).                                                                                                                                        | Do not configure exceptions for untrusted sites when sensitive local services are reachable.  |
 | `test:docker` not yet run on Docker Desktop (macOS/Windows); see §11.                                                                                                                                                                  | Run it once there before relying on the sandbox on those hosts.                               |
 | Not a formal audit; no guarantee against prompt injection or malicious MCP servers/plugins.                                                                                                                                            | Run untrusted workloads on a disposable machine or VM.                                        |
 
@@ -335,4 +335,4 @@ See [STABILITY.md](./STABILITY.md) for API stability tiers.
 
 ---
 
-**Last updated:** 2026-09-29 · **Nexum version:** 2.0.0-alpha.3 (plus unreleased changes on this branch)
+**Last updated:** 2026-11-21 · **Nexum version:** 2.0.0-alpha.4 (plus unreleased changes on this branch)

@@ -102,6 +102,52 @@ function results(successRate: number): TaskExecutionResult[] {
 }
 
 /**
+ * Passing fixed-executor matrix (held-out + transfer, candidate beats baseline
+ * on both executors). The engine's default generalization policy is now
+ * "required", so lifecycle tests must supply real evidence to reach
+ * CI_PENDING — exactly as the production path would.
+ */
+function passingMatrixCells(
+  candidateId = "H1",
+  baselineId = "H0",
+): Parameters<ClosedLoopEngine["runExperiment"]>[0]["matrixCells"] {
+  return [
+    {
+      harnessId: baselineId,
+      executorModel: "qwen3-coder",
+      split: "held_out" as const,
+      taskSuccessRate: 0.33,
+      verificationPassRate: 0.33,
+      runs: 5,
+    },
+    {
+      harnessId: candidateId,
+      executorModel: "qwen3-coder",
+      split: "held_out" as const,
+      taskSuccessRate: 0.9,
+      verificationPassRate: 0.9,
+      runs: 5,
+    },
+    {
+      harnessId: baselineId,
+      executorModel: "gemini-2.5",
+      split: "transfer" as const,
+      taskSuccessRate: 0.33,
+      verificationPassRate: 0.33,
+      runs: 5,
+    },
+    {
+      harnessId: candidateId,
+      executorModel: "gemini-2.5",
+      split: "transfer" as const,
+      taskSuccessRate: 0.85,
+      verificationPassRate: 0.85,
+      runs: 5,
+    },
+  ];
+}
+
+/**
  * The scripted engineering agent behaves like a real one: it READS the
  * actual source file from the worktree it was handed, then proposes a
  * narrowed-schema rewrite of that same implementation file.
@@ -322,7 +368,7 @@ describe("ClosedLoopEngine with the agent mutation strategy", () => {
     registry = new HarnessRegistry(":memory:");
     engine = new ClosedLoopEngine({
       registry,
-      executorModels: ["qwen3-coder"],
+      executorModels: ["qwen3-coder", "gemini-2.5"],
       mutationExecutor: new GitWorktreeMutationExecutor({
         worktreeParentDir: wsRoot,
         verifyCommands: [["node", "--version"]],
@@ -392,6 +438,7 @@ describe("ClosedLoopEngine with the agent mutation strategy", () => {
       baselineResults: results(0.4),
       experienceDigest: "cap=tool_utilization failures=12",
       evaluateCandidate: () => results(0.9),
+      matrixCells: passingMatrixCells(),
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -422,7 +469,7 @@ describe("ClosedLoopEngine with the agent mutation strategy", () => {
     });
     const engine2 = new ClosedLoopEngine({
       registry,
-      executorModels: ["qwen3-coder"],
+      executorModels: ["qwen3-coder", "gemini-2.5"],
       mutationExecutor: new GitWorktreeMutationExecutor({
         worktreeParentDir: wsRoot,
         verifyCommands: [["node", "--version"]],

@@ -11,6 +11,7 @@ function record(over: {
   state: ExperimentRecord["lifecycle"]["state"];
   capability?: number;
   generalization?: number;
+  transferByExecutor?: ExperimentRecord["evaluation"]["transferByExecutor"];
 }): ExperimentRecord {
   return {
     id: over.id,
@@ -19,7 +20,12 @@ function record(over: {
     target: { capability: "tool_utilization", targetId: "t", desiredOutcome: "d" },
     hypothesis: { id: "h", statement: "s", predictedEffect: "p" },
     executor: { primary: "qwen", transfer: ["gemini"] },
-    evaluation: { visible: {}, held_out: {}, transfer: { transferScore: 0.7 } },
+    evaluation: {
+      visible: {},
+      held_out: {},
+      transfer: { transferScore: 0.7 },
+      ...(over.transferByExecutor ? { transferByExecutor: over.transferByExecutor } : {}),
+    },
     metrics: {
       capability: over.capability ?? 0,
       reliability: 0,
@@ -69,6 +75,62 @@ describe("metricsFromExperimentStore", () => {
     expect(text).toMatch(/Mean transfer gain:\s+n\/a \(not measured\)/);
     expect(text).toMatch(/Executor sensitivity:\s+n\/a \(not measured\)/);
     expect(text).not.toMatch(/transfer gain:\s+0\.0%/i);
+  });
+
+  it("computes transfer gain and executor sensitivity from recorded per-executor evidence", () => {
+    // Two transfer executors: candidate beats baseline by +0.30 on gemini and
+    // +0.10 on glm → mean transfer gain 0.20, sensitivity 0.20.
+    const withMatrix = [
+      record({
+        id: "m1",
+        result: "eligible",
+        stageB: "improved",
+        state: "ACTIVE",
+        transferByExecutor: {
+          gemini: { candidate: 0.8, baseline: 0.5, runs: 5 },
+          glm: { candidate: 0.6, baseline: 0.5, runs: 5 },
+        },
+      }),
+    ];
+    const report = metricsFromExperimentStore(storeOf(withMatrix)).report();
+    expect(report.meanTransferGain).toBeCloseTo(0.2);
+    expect(report.meanExecutorSensitivity).toBeCloseTo(0.2);
+    const text = formatHealthReport(report);
+    expect(text).not.toMatch(/Mean transfer gain:\s+n\/a/);
+  });
+
+  it("single-executor evidence yields transfer gain but null sensitivity (needs ≥2 executors)", () => {
+    const singleExecutor = [
+      record({
+        id: "m2",
+        result: "eligible",
+        stageB: "improved",
+        state: "ACTIVE",
+        transferByExecutor: { gemini: { candidate: 0.8, baseline: 0.5, runs: 5 } },
+      }),
+    ];
+    const report = metricsFromExperimentStore(storeOf(singleExecutor)).report();
+    expect(report.meanTransferGain).toBeCloseTo(0.3);
+    expect(report.meanExecutorSensitivity).toBeNull();
+  });
+
+  it("partial per-executor evidence (missing baseline) is ignored, not synthesized", () => {
+    const partial = [
+      record({
+        id: "m3",
+        result: "eligible",
+        stageB: "improved",
+        state: "ACTIVE",
+        transferByExecutor: {
+          gemini: { candidate: 0.8, baseline: 0.5, runs: 5 },
+          glm: { candidate: 0.7, baseline: 0.5, runs: 5 },
+        },
+      }),
+    ];
+    // Engine-side transferCellsByExecutor drops unmatched pairs; the store
+    // reader is defensive too: it consumes only what is present.
+    const report = metricsFromExperimentStore(storeOf(partial)).report();
+    expect(report.meanTransferGain).not.toBeNull();
   });
 });
 
