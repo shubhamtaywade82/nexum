@@ -233,6 +233,36 @@ function transferRates(cells: ExecutorEvaluationCell[] | undefined, harnessId: s
   return rate === null ? {} : { transferScore: rate };
 }
 
+/**
+ * Per-executor transfer evidence for the persisted experiment record
+ * (PRODUCTION_AUDIT #13 follow-up): keyed by transfer executor, each entry
+ * carrying candidate/baseline success rates and the run count behind them.
+ * Empty when no transfer cells ran — absence stays "not measured".
+ */
+function transferCellsByExecutor(
+  cells: ExecutorEvaluationCell[] | undefined,
+  candidateId: string,
+  baselineId: string,
+): Record<string, { candidate: number; baseline: number; runs: number }> {
+  const out: Record<string, { candidate: number; baseline: number; runs: number }> = {};
+  for (const c of cells ?? []) {
+    if (c.split !== "transfer") continue;
+    const entry = (out[c.executorModel] ??= { candidate: NaN, baseline: NaN, runs: 0 });
+    if (c.harnessId === candidateId) {
+      entry.candidate = c.taskSuccessRate;
+      entry.runs = c.runs;
+    } else if (c.harnessId === baselineId) {
+      entry.baseline = c.taskSuccessRate;
+    }
+  }
+  // Drop executors without a matched candidate/baseline pair (partial matrices
+  // must not surface as half-evidence).
+  for (const [model, entry] of Object.entries(out)) {
+    if (!Number.isFinite(entry.candidate) || !Number.isFinite(entry.baseline)) delete out[model];
+  }
+  return out;
+}
+
 function transferGainOf(
   cells: ExecutorEvaluationCell[] | undefined,
   candidateId: string,
@@ -494,6 +524,16 @@ export class ClosedLoopEngine {
         visible: pickRates(candidateMetrics, "visible"),
         held_out: heldOutRates(heldOut),
         transfer: transferRates(input.matrixCells, input.candidateHarnessId),
+        ...(Object.keys(transferCellsByExecutor(input.matrixCells, input.candidateHarnessId, input.parentHarnessId))
+          .length > 0
+          ? {
+              transferByExecutor: transferCellsByExecutor(
+                input.matrixCells,
+                input.candidateHarnessId,
+                input.parentHarnessId,
+              ),
+            }
+          : {}),
       },
       {
         capability: twoStage.stageB?.deltas.capability ?? 0,

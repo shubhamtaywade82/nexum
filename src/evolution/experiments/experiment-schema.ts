@@ -46,6 +46,13 @@ export interface ExperimentEvaluation {
   visible: Record<string, number>;
   held_out: Record<string, number>;
   transfer: Record<string, number>;
+  /**
+   * Fixed-executor transfer evidence (PRODUCTION_AUDIT #13 follow-up): the
+   * per-executor success rates that back `transfer`, keyed by executor model.
+   * Written only when a fixed-executor matrix actually ran, so its absence
+   * still means "not measured" — never synthesized downstream.
+   */
+  transferByExecutor?: Record<string, { candidate: number; baseline: number; runs: number }>;
 }
 
 export interface ExperimentMetrics {

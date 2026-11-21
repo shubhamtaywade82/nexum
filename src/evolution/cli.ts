@@ -463,19 +463,29 @@ export function metricsFromExperimentStore(store: ExperimentStore): EvolutionMet
     const accepted =
       r.lifecycle.state === "ACTIVE" || r.lifecycle.state === "REGRESSED" || r.lifecycle.state === "ROLLBACK";
     const stageBRan = r.decision.stageB !== "not_run";
+    // Fixed-executor transfer evidence, when the experiment actually recorded
+    // a matrix (PRODUCTION_AUDIT #13 follow-up): mean per-executor candidate −
+    // baseline delta, and the spread of those deltas across executors. Absent
+    // evidence stays null — these quantities are never synthesized.
+    const byExecutor = r.evaluation.transferByExecutor ?? {};
+    const transferDeltas = Object.values(byExecutor).map((e) => e.candidate - e.baseline);
+    const transferGain =
+      transferDeltas.length > 0 ? transferDeltas.reduce((a, b) => a + b, 0) / transferDeltas.length : null;
+    const executorSensitivity =
+      transferDeltas.length > 1 ? Math.max(...transferDeltas) - Math.min(...transferDeltas) : null;
     tracker.record({
       versionId: r.candidate.harness,
       parentVersionId: r.parent.harness,
       visibleGain: stageBRan ? r.metrics.capability : null,
       heldOutGain: stageBRan ? r.metrics.generalization : null,
-      transferGain: null,
+      transferGain,
       promoted,
       genuinelyBetterOnHeldOut: "unknown",
       accepted,
       rolledBack: r.lifecycle.state === "ROLLBACK",
       retainedBySuccessor: "unknown",
       executorModels: [r.executor.primary, ...r.executor.transfer],
-      executorSensitivity: null,
+      executorSensitivity,
     });
   }
   return tracker;
