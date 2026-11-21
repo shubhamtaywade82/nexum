@@ -1,7 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BrowserManager, resolveChromiumExecutablePath } from "../../src/browser/manager.js";
+import { BrowserManager, HARDENED_CHROMIUM_ARGS, resolveChromiumExecutablePath } from "../../src/browser/manager.js";
 
 import { chromium } from "playwright";
 
@@ -133,5 +133,37 @@ describe("resolveChromiumExecutablePath", () => {
     const dir = await mkdtemp(join(tmpdir(), "pw-browsers-"));
     process.env.PLAYWRIGHT_BROWSERS_PATH = dir;
     expect(resolveChromiumExecutablePath()).toBeUndefined();
+  });
+});
+
+describe("BrowserManager URL policy (PRODUCTION_AUDIT #10)", () => {
+  it("refuses non-http(s) schemes before any browser launch", async () => {
+    const manager = new BrowserManager();
+    await expect(manager.navigate("file:///etc/passwd")).rejects.toThrow(/blocked URL scheme "file:"/);
+    await expect(manager.navigate("about:blank")).rejects.toThrow(/blocked URL scheme "about:"/);
+    await expect(manager.navigate("not a url")).rejects.toThrow(/invalid URL/);
+    await manager.close();
+  });
+
+  it("refuses literal loopback/private/metadata IPs", async () => {
+    const manager = new BrowserManager();
+    await expect(manager.navigate("http://127.0.0.1/")).rejects.toThrow(/blocked destination 127\.0\.0\.1/);
+    await expect(manager.navigate("http://192.168.1.1/")).rejects.toThrow(/blocked destination/);
+    await expect(manager.navigate("http://169.254.169.254/latest/meta-data/")).rejects.toThrow(
+      /blocked destination 169\.254\.169\.254/,
+    );
+    await expect(manager.navigate("http://[::1]/")).rejects.toThrow(/blocked destination/);
+    await manager.close();
+  });
+
+  it("allowPrivateNetwork opts back in for local testing", async () => {
+    const manager = new BrowserManager({ allowPrivateNetwork: true });
+    await expect(manager.navigate("http://127.0.0.1:1/")).rejects.toThrow(); // no listener → network error, NOT a policy block
+    await manager.close();
+  });
+
+  it("shipped launch args never include --no-sandbox", () => {
+    expect(HARDENED_CHROMIUM_ARGS).not.toContain("--no-sandbox");
+    expect(HARDENED_CHROMIUM_ARGS).toContain("--disable-extensions");
   });
 });
