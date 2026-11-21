@@ -1,6 +1,21 @@
 # Changelog
 
-## 2.0.0-alpha.5 (2026-11-21)
+## 2.0.0-beta.1 (2026-11-21)
+
+### Feature Complete (`@nemesis-oss/nexum@2.0.0-beta.1`)
+
+- **Phase 3 Gates Closed**:
+  - **Plugin Capability Enforcement**: Sandbox process isolation and capability quotas enforced via `DefaultPluginHost` and `IsolatedPluginSandbox`.
+  - **Linux Keychain Integration**: Automated live integration test using `secret-tool` and D-Bus session keyring verified nightly via `.github/workflows/nightly.yml`.
+  - **MCP Prompt-Injection Review & Mitigation**: Completed comprehensive audit (`docs/SECURITY-AUDIT-MCP.md`). Landed nonce-fenced `<tool_result nonce="...">` model boundaries and system prompt clause 8 designating all tool outputs as untrusted data.
+- **Phase 4 API Freeze Groundwork Closed**:
+  - Verified all 40 Tier-1 Stable symbols with contract tests in `tests/package-surface.test.ts`. Freeze audit status promoted to **PASS ✅**.
+  - Re-exported `CorrelationIds` and `EventEnvelope` from the entry barrel.
+  - Resolved `defineToolPack`, `PlanExecuteStrategy`, `GraphStrategy`, and `newTaskId` behavior tests.
+- **Release Pipeline Hardening**:
+  - Wired PostgreSQL and Redis services to `.github/workflows/release.yml`.
+  - Enforced serial `--runInBand` release validation tests with 6GB heap headroom to eliminate parallel DB test collisions.
+  - Full hybrid release authentication supporting Automation Tokens and npm tokenless OIDC provenance.
 
 ### First Public npm Release Candidate (`@nemesis-oss/nexum@2.0.0-alpha.5`)
 

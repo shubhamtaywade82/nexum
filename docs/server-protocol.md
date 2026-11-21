@@ -13,7 +13,7 @@ Basic server identification.
   ```json
   {
     "name": "nexum-server",
-    "version": "2.0.0-alpha.5",
+    "version": "2.0.0-beta.1",
     "protocolVersion": "1.0.0",
     "instanceId": "inst-182390"
   }
