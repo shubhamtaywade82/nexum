@@ -1,6 +1,16 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, unlinkSync } from "node:fs";
-import { join, posix, relative, resolve, sep } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import {
   findSensitivePaths,
@@ -508,6 +518,13 @@ export class ShellTool extends Tool {
           "--mount",
           ["type=tmpfs", mountField("target", target), "tmpfs-size=4096", "tmpfs-mode=0500"].join(","),
         );
+        continue;
+      }
+      const rails = stateReal ? railsCredentialPair(secret.path) : undefined;
+      if (rails) {
+        const placeholder = railsPlaceholderFiles(stateReal!);
+        args.push(...bind(placeholder.key, target, true));
+        args.push(...bind(placeholder.credentials, toContainer(rails), true));
       } else {
         args.push(...bind(emptyFile, target, true));
       }
@@ -534,6 +551,34 @@ function maskFile(stateDir: string | undefined): string {
   } catch {
     return "/dev/null";
   }
+}
+
+// An empty master key makes every Rails command abort ("key must be 16 bytes"), which pushes the agent
+// into deleting credentials or hard-coding secret_key_base. Rails instead gets a throwaway key and an
+// empty credentials file encrypted with it, so the app boots and the real secrets stay unreadable.
+const RAILS_PLACEHOLDER_KEY = "0".repeat(32);
+const RAILS_PLACEHOLDER_CREDENTIALS = "6DAMvnLnD8S9BA==--ro9CtVt7azqNsTrD--6zkodugZr+Hie6YxEl9Umg==";
+
+/** The encrypted credentials file a Rails key unlocks (`config/master.key` → `config/credentials.yml.enc`). */
+function railsCredentialPair(keyPath: string): string | undefined {
+  if (!keyPath.endsWith(".key")) return undefined;
+  const base = keyPath.slice(0, -".key".length);
+  const credentials = base.endsWith(`${sep}master`) ? join(dirname(base), "credentials.yml.enc") : `${base}.yml.enc`;
+  return existsSync(credentials) ? credentials : undefined;
+}
+
+function railsPlaceholderFiles(stateDir: string): { key: string; credentials: string } {
+  const key = join(stateDir, "sandbox-rails.key");
+  const credentials = join(stateDir, "sandbox-rails-credentials.yml.enc");
+  for (const [file, content] of [
+    [key, RAILS_PLACEHOLDER_KEY],
+    [credentials, RAILS_PLACEHOLDER_CREDENTIALS],
+  ] as const) {
+    if (existsSync(file) && readFileSync(file, "utf8") === content) continue;
+    if (existsSync(file)) unlinkSync(file);
+    writeFileSync(file, content, { mode: 0o444 });
+  }
+  return { key, credentials };
 }
 
 function isSymlink(p: string): boolean {

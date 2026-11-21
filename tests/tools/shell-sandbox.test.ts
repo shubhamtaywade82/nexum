@@ -107,6 +107,34 @@ describe("workspace mounts", () => {
     expect(m.join("\n")).not.toContain("node_modules");
   });
 
+  it("masks a Rails master key with a throwaway key and its credentials with a matching empty file", () => {
+    mkdirSync(join(root, "config", "credentials"), { recursive: true });
+    writeFileSync(join(root, "config", "master.key"), "real-key");
+    writeFileSync(join(root, "config", "credentials.yml.enc"), "real-secrets");
+    writeFileSync(join(root, "config", "credentials", "production.key"), "real-prod-key");
+    writeFileSync(join(root, "config", "credentials", "production.yml.enc"), "real-prod-secrets");
+
+    const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
+    const key = join(root, ".nexum", "sandbox-rails.key");
+    const credentials = join(root, ".nexum", "sandbox-rails-credentials.yml.enc");
+    expect(m).toEqual(
+      expect.arrayContaining([
+        `type=bind,source=${key},target=/workspace/config/master.key,readonly`,
+        `type=bind,source=${credentials},target=/workspace/config/credentials.yml.enc,readonly`,
+        `type=bind,source=${key},target=/workspace/config/credentials/production.key,readonly`,
+        `type=bind,source=${credentials},target=/workspace/config/credentials/production.yml.enc,readonly`,
+      ]),
+    );
+    expect(readFileSync(key, "utf8")).toMatch(/^[0-9a-f]{32}$/);
+    expect(readFileSync(credentials, "utf8")).not.toContain("real");
+  });
+
+  it("masks a lone .key file (no Rails credentials beside it) with the empty file", () => {
+    writeFileSync(join(root, "deploy.key"), "k");
+    const m = mounts(dockerArgs(new ShellTool({ workspaceRoot: root })));
+    expect(m).toContain(`type=bind,source=${empty()},target=/workspace/deploy.key,readonly`);
+  });
+
   it("the mask file is empty and re-created if something wrote to it", () => {
     writeFileSync(join(root, ".env"), "API_KEY=x");
     dockerArgs(new ShellTool({ workspaceRoot: root }));

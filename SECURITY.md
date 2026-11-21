@@ -89,7 +89,7 @@ Default (`sandbox: true`). Each call runs `docker run` with:
 - `.git/hooks` and `.git/config` mounted read-only;
 - `.nexum/` (created first if missing, so the container cannot create it)
   mounted read-only — where it really lives, if symlinked;
-- every secret file masked with an empty read-only file
+- every secret file masked with an empty read-only file; a Rails key (`config/master.key`, `config/credentials/*.key`) that has credentials beside it is masked with a throwaway key plus an empty credentials file encrypted with it, so Rails boots without the real secrets
   (`.nexum/sandbox-empty`, a workspace path Docker Desktop can always
   share; `/dev/null` only if no state directory is usable) and every secret
   directory with an empty tmpfs (same list as §2, including hardlink
