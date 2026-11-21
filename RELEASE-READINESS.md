@@ -132,8 +132,8 @@ lands under `next`, not `latest`; README documents the `@next` install.
 
 ### B5 — Brand audit (name is provisional)
 
-REBRANDING.md still carries the "provisional name pending availability /
-trademark / domain / package audit" notice. The unrelated `@x12i/nexum`
+REBRANDING.md now records "Final decision: Nexum" (audit 2026-11-21); only the
+manual USPTO / EUIPO / India IPO trademark searches remain. The unrelated `@x12i/nexum`
 (active, also at 2.x) increases search confusion. The audit does not need to
 block the alpha if the name is consciously accepted, but it **must** block
 `2.0.0` stable.

@@ -154,18 +154,13 @@ git push origin main && git push origin v2.0.0-beta.1
 `docs/BRAND-AUDIT.md` has the evidence. The decision is yours (and
 optionally a trademark attorney's).
 
-**⚠️ New blocker discovered 2026-11-21:** the GitHub name `nemesis-oss`
-is **taken by an unrelated user account** (created 2022, one unrelated
-repo `k-pemrog-platform`). REBRANDING.md §7's plan to migrate the repo to
-a `nemesis-oss` GitHub org cannot proceed under that name. This must be
-resolved together with the name decision:
-
-- The npm scope `@nemesis-oss` is still free — but npm scope and GitHub
-  org would no longer match if you keep the scope and pick a different
-  org name.
-- Decide either: (a) keep `@nemesis-oss` scope + choose a different
-  GitHub org name, (b) rename both scope and org together, or (c) keep
-  everything under `shubhamtaywade82` for 2.0.0 and revisit at 3.0.
+**Resolved 2026-11-22:** the GitHub name `Nemesis-oss` is a **user account
+owned by the maintainer** (created 2022), not an unrelated party. It is a
+User, not an Organization, so it cannot be turned into an org, but the repo
+can be transferred to it (Settings -> Transfer ownership -> `Nemesis-oss`;
+GitHub redirects the old URL). The npm scope `@nemesis-oss` and the GitHub
+account then match. Until the transfer, `package.json` URLs stay on
+`shubhamtaywade82/nexum`. REBRANDING.md §7's "org" wording means this account.
 
 Two paths:
 

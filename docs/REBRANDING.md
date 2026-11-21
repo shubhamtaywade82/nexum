@@ -224,8 +224,8 @@ src/platform/
 | D — sunset      | skipped       | follows from C                                                                                    |
 
 GitHub sequence (UI/API operations, not file changes):
-rename branch → merge → release → rename GitHub repository to
-`nemesis-oss/nexum` → verify old-URL redirects → update remaining links.
+rename branch → merge → release → transfer GitHub repository to the `Nemesis-oss` user account
+(`Nemesis-oss/nexum`) → verify old-URL redirects → update remaining links.
 GitHub automatically redirects the old repository URL after a rename, so
 in-repo links pointing at the target activate the moment the rename lands.
 
