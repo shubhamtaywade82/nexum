@@ -306,7 +306,17 @@ function dispatchLifecycleEvent(bus: EventBus, ev: NexumRunEvent): boolean {
     return true;
   }
   if (ev.type === "model.used") {
-    bus.publish({ type: "model.answered", tier: ev.tier, model: ev.model });
+    // Carry the provider-reported token counts (PRODUCTION_AUDIT #14): the run
+    // event contract has them optional; dropping them here would force the
+    // evaluation observer back onto promptTokens ?? 0, decoupling evaluation
+    // metrics from real usage.
+    bus.publish({
+      type: "model.answered",
+      tier: ev.tier,
+      model: ev.model,
+      ...(ev.promptTokens !== undefined ? { promptTokens: ev.promptTokens } : {}),
+      ...(ev.completionTokens !== undefined ? { completionTokens: ev.completionTokens } : {}),
+    });
     return true;
   }
   if (ev.type === "plan.updated") {
