@@ -1,6 +1,6 @@
 {
   "name": "@nemesis-oss/nexum",
-  "version": "2.0.0-alpha.4",
+  "version": "2.0.0-alpha.5",
   "description": "Nexum — open-source agent runtime and harness for autonomous software engineering: capability-routed local & cloud models, Docker sandbox, LSP code intelligence, and a terminal UI.",
   "keywords": [
     "nexum",
@@ -20,13 +20,13 @@
   ],
   "license": "MIT",
   "author": "Shubham Taywade <shubhamtaywade82@gmail.com>",
-  "homepage": "https://github.com/nemesis-oss/nexum#readme",
+  "homepage": "https://github.com/shubhamtaywade82/nexum#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nemesis-oss/nexum.git"
+    "url": "git+https://github.com/shubhamtaywade82/nexum.git"
   },
   "bugs": {
-    "url": "https://github.com/nemesis-oss/nexum/issues"
+    "url": "https://github.com/shubhamtaywade82/nexum/issues"
   },
   "publishConfig": {
     "access": "public",

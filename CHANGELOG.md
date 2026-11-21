@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## 2.0.0-alpha.5 (2026-11-21)
+
+### First Public npm Release Candidate (`@nemesis-oss/nexum@2.0.0-alpha.5`)
+
+- **Release Blockers Closed**:
+  - **B1 (`autoApprove` default)**: Now defaults to `false`. Confirmation-required tool calls prompt for approval; headless sessions without listeners fail closed. Unattended execution requires explicit opt-in (`NEXUM_AUTO_APPROVE=true` or `--yolo`).
+  - **B2 (CLI bin aliases)**: Removed legacy `devagent` and `devagent-ts` bin aliases; `nexum` is the sole binary published in `package.json`.
+  - **B3 (Repository metadata URLs)**: Corrected `package.json` repository, homepage, and issues URLs to point to the active GitHub repository (`shubhamtaywade82/nexum`).
+  - **B4 (Dist-tag routing)**: Automated `next` tag resolution in `.github/workflows/release.yml` so prereleases do not overwrite `latest`.
+  - **B6 (Tarball & packaging audit)**: Clean-room packaging audit and smoke installation verified in `/tmp/nexum-smoke`.
+  - **B7 (Developer preview positioning)**: Documentation clearly identifies Developer Preview status with explicit stability tiers (see [STABILITY.md](./STABILITY.md)).
+
+### Breaking Changes
+
+- **Evolution Generalization Gate Required**: `ClosedLoopEngine` now defaults to `generalizationPolicy: "required"`. Candidate mutations with zero held-out evidence are rejected rather than promoted.
+- **Fail-Closed Third-Party Plugin Loading**: `DefaultPluginHost.start()` throws if a third-party plugin is registered without process/container sandbox isolation.
+- **Browser SSRF Mitigation**: `BrowserManager` enforces strict scheme policies, blocks private and loopback IP ranges, and blocks DNS-rebinding attacks at network request time.
+- **`@nemesis-oss/nexum/core` Layering**: Core entry point no longer re-exports runtime implementations; import from `@nemesis-oss/nexum/runtime` instead.
+- **`SubagentHandle` State Immutability**: `state` is read-only and governed solely by `SubagentSession`. Call `interrupt()` to stop a child.
 
 ### CLI: one executable
 
