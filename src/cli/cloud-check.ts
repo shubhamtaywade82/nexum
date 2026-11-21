@@ -62,6 +62,10 @@ export async function runCloudCheck(opts: CloudCheckOptions = {}): Promise<Cloud
     apiKey: cfg.apiKey,
     apiKeys: cfg.apiKeys,
     accountLabels: cfg.accountLabels,
+    // An explicit host in config for the cloud tier reaches the provider;
+    // otherwise defaultHostForTier applies (incl. its OLLAMA_CLOUD_HOST
+    // development override).
+    ...(cfg.tier === "cloud" && cfg.host ? { host: cfg.host } : {}),
   });
 
   // 2. account endpoints ───────────────────────────────────────────────────
@@ -72,11 +76,16 @@ export async function runCloudCheck(opts: CloudCheckOptions = {}): Promise<Cloud
         lines.push(`usage[${row.label}]: ERROR — ${row.error}`);
         ok = false;
       } else {
-        const u = row.usage as unknown as { requests?: number; totals?: { requests?: number } } & Record<
-          string,
-          unknown
-        >;
-        lines.push(`usage[${row.label}]: ok (requests: ${String(u.requests ?? u.totals?.requests ?? "n/a")})`);
+        // SDK UsageResponse shape: totals is UsageMetrics (request_count, usage_usd, token counts)
+        const u = row.usage as unknown as {
+          totals?: { request_count?: number; usage_usd?: number; input_tokens?: number; output_tokens?: number };
+        } & Record<string, unknown>;
+        const t = u?.totals;
+        lines.push(
+          `usage[${row.label}]: ok (requests: ${t?.request_count ?? "n/a"}${
+            t?.usage_usd !== undefined ? `, $${t.usage_usd.toFixed(4)}` : ""
+          }${t?.input_tokens !== undefined ? `, ${t.input_tokens} in/${t.output_tokens ?? 0} out tok` : ""})`,
+        );
       }
     }
   } catch (e) {
@@ -90,11 +99,23 @@ export async function runCloudCheck(opts: CloudCheckOptions = {}): Promise<Cloud
         lines.push(`balance[${row.label}]: ERROR — ${row.error}`);
         ok = false;
       } else {
-        const b = row.balance as unknown as Record<string, unknown>;
-        const text = Object.entries(b)
-          .map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : String(v)}`)
-          .join(" ");
-        lines.push(`balance[${row.label}]: ${text || "ok (no fields)"}`);
+        // SDK BalanceResponse: { included: { balance_usd, allowance_usd, period } | legacy %, purchased: { balance_usd } }
+        const b = row.balance as unknown as {
+          included?: { balance_usd?: number; allowance_usd?: number };
+          purchased?: { balance_usd?: number };
+        } & Record<string, unknown>;
+        const inc = b?.included;
+        if (inc?.balance_usd !== undefined) {
+          lines.push(
+            `balance[${row.label}]: included=$${inc.balance_usd.toFixed(4)} of $${(inc.allowance_usd ?? 0).toFixed(4)} allowance, purchased=$${(b?.purchased?.balance_usd ?? 0).toFixed(4)}`,
+          );
+        } else {
+          // legacy session/weekly percentage shape — render generically
+          const text = Object.entries(b ?? {})
+            .map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : JSON.stringify(v).slice(0, 60)}`)
+            .join(" ");
+          lines.push(`balance[${row.label}]: ${text || "ok (no fields)"}`);
+        }
       }
     }
   } catch (e) {
