@@ -1,0 +1,138 @@
+name: Nightly Integration
+
+# PRODUCTION_AUDIT #24: the main CI lane runs with SKIP_NETWORK_TESTS=true on
+# every job, so the real-network suites (Binance WebSocket, real-Chromium
+# browser, Docker sandbox daemon) are only ever compile- or mock-tested in CI.
+# This nightly lane runs them for real on a schedule, plus the packed-artifact
+# smoke, so integration drift is caught within a day instead of at release
+# time. Failures page the same commit status as the main lane.
+on:
+  schedule:
+    # 03:15 UTC — off-peak, after the day's merges have settled.
+    - cron: "15 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-integration
+  cancel-in-progress: false
+
+jobs:
+  network:
+    name: Real-network suites (Node 22.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ""
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: nexum_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: "npm"
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Install npm dependencies
+        run: npm ci --legacy-peer-deps
+        env:
+          HUSKY: "0"
+
+      - name: Install Playwright Chromium
+        # The browser tests launch real Chromium; the main lane skips them
+        # when the binary is absent, so it never notices a broken install.
+        run: npx playwright install --with-deps chromium
+
+      - name: Run real-network test suites
+        # SKIP_NETWORK_TESTS deliberately UNSET → the Binance WebSocket /
+        # paper-trading suites run against the real public endpoints.
+        run: >
+          NEXUM_TEST_NO_GLOBAL=true
+          node --experimental-vm-modules node_modules/jest/bin/jest.js
+          tests/domains/trading tests/tools tests/browser tests/server tests/protocol
+          --runInBand
+        env:
+          CI: true
+          TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/nexum_test
+          NODE_OPTIONS: --max-old-space-size=6144
+
+  docker:
+    name: Docker sandbox integration (Node 22.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: "npm"
+
+      - name: Install npm dependencies
+        run: npm ci --legacy-peer-deps
+        env:
+          HUSKY: "0"
+
+      - name: Build sandbox image
+        run: docker build -t nexum-sandbox:latest docker/nexum-sandbox/
+
+      - name: Run Docker daemon integration tests
+        run: npm run test:docker
+        env:
+          CI: true
+          NODE_OPTIONS: --max-old-space-size=6144
+
+  package-smoke:
+    name: Packed artifact smoke (Node 22.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: "npm"
+
+      - name: Install npm dependencies
+        run: npm ci --legacy-peer-deps
+        env:
+          HUSKY: "0"
+
+      - name: Build and validate packed artifact
+        run: npm run build && npm run package:check
+        env:
+          CI: true
+          SKIP_NETWORK_TESTS: true
