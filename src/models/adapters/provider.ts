@@ -199,12 +199,25 @@ export const DEFAULT_LOCAL_HOST = "http://localhost:11434";
  * value chat() previously hardcoded as `num_ctx` for local requests. */
 export const DEFAULT_CONTEXT_LENGTH = 16_384;
 
+/** Explicit cloud-endpoint override, mirroring OLLAMA_HOST for the local tier.
+ * Only for development/testing against a private endpoint (e.g. a local fake
+ * in scripts/verify-cloud-check-local.mjs); unset/empty means the real cloud. */
+export const CLOUD_HOST_ENV = "OLLAMA_CLOUD_HOST";
+
 /** The endpoint a tier talks to when nothing is explicitly configured.
  * OLLAMA_HOST is a local-Ollama convention, so it must never be picked up as
  * a cloud host — pointing Cloud traffic (with a Bearer token attached) at
- * someone's localhost is both broken and a credential leak. */
+ * someone's localhost is both broken and a credential leak. OLLAMA_CLOUD_HOST
+ * is the explicit, opt-in cloud override: the user typed it deliberately, so
+ * it may point wherever they want, including localhost.
+ */
 export function defaultHostForTier(tier: Tier): string {
-  return tier === "cloud" ? DEFAULT_CLOUD_HOST : (process.env.OLLAMA_HOST ?? DEFAULT_LOCAL_HOST);
+  if (tier === "cloud") {
+    const override = process.env[CLOUD_HOST_ENV];
+    if (override && override.trim().length > 0) return override;
+    return DEFAULT_CLOUD_HOST;
+  }
+  return process.env.OLLAMA_HOST ?? DEFAULT_LOCAL_HOST;
 }
 
 /**
@@ -690,11 +703,28 @@ export class Provider {
   }
 
   private accountClient(apiKey: string): OllamaClient {
+    // The SDK's usage()/balance() pin their HttpClient to
+    // OLLAMA_CLOUD_BASE_URL ("https://ollama.com") regardless of the client's
+    // baseUrl — the endpoints are documented "cloud-only, targets
+    // ollama.com". A non-default configured host (OLLAMA_CLOUD_HOST for
+    // development/testing) must still reach those endpoints, so rewrite the
+    // URL through a wrapped fetch instead of the baseUrl the SDK ignores.
+    const host = this.host;
+    const base = DEFAULT_CLOUD_HOST;
+    const needsRewrite = host.replace(/\/$/, "") !== base;
+    const fetchRewriter: typeof globalThis.fetch | undefined = needsRewrite
+      ? (input, init) => {
+          const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+          const rewritten = target.replace(base, host.replace(/\/$/, ""));
+          return globalThis.fetch.call(globalThis, rewritten, init);
+        }
+      : undefined;
     return new OllamaClient({
-      baseUrl: DEFAULT_CLOUD_HOST,
+      baseUrl: host,
       apiKey,
       timeoutMs: this.timeoutMs || 30_000,
       retries: 1,
+      ...(fetchRewriter ? { fetch: fetchRewriter } : {}),
     });
   }
 

@@ -67,6 +67,7 @@ Usage:
   nexum ci-healer <tick|plan|status> --config <path>
                                 Heal failing GitHub Actions runs (see src/domains/ci-healer)
   nexum doctor                  Run system, workspace, and model diagnostics
+  nexum cloud-check             Verify Ollama Cloud connectivity, metering and budget guard
   nexum migrate                 Migrate legacy .devagent state to .nexum
   nexum trust [status|revoke]   Review and trust this workspace's settings and .env
   nexum asl [validate|graph]    Architecture definition commands
@@ -110,6 +111,7 @@ if (command === "trust") {
     "migrate",
     "asl",
     "ci-healer",
+    "cloud-check",
   ];
   const { ensureWorkspaceTrust } = await import("../dist/cli/trust.js");
   await ensureWorkspaceTrust({ interactive: !nonInteractive.includes(command) });
@@ -121,6 +123,22 @@ if (command === "doctor") {
   const { runDoctor } = await import("../dist/cli/doctor.js");
   const report = await runDoctor();
   console.log("=== Nexum Doctor ===");
+  console.log(report.lines.join("\n"));
+  process.exit(report.ok ? 0 : 1);
+}
+
+if (command === "cloud-check") {
+  const { runCloudCheck } = await import("../dist/cli/cloud-check.js");
+  const args = process.argv.slice(3);
+  const noCall = args.includes("--no-call");
+  const modelIdx = args.indexOf("--model");
+  const costIdx = args.indexOf("--max-cost");
+  const report = await runCloudCheck({
+    noCall,
+    model: modelIdx >= 0 ? args[modelIdx + 1] : undefined,
+    maxCost: costIdx >= 0 ? Number(args[costIdx + 1]) : undefined,
+  });
+  console.log("=== Nexum Cloud Check ===");
   console.log(report.lines.join("\n"));
   process.exit(report.ok ? 0 : 1);
 }
