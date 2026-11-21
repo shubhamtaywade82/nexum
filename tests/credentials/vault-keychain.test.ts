@@ -117,10 +117,25 @@ describe("KeychainCredentialProvider", () => {
     await expect(p.set("k", "v")).rejects.toThrow(/security\(1\) not available/);
   });
 
-  it("unsupported platforms resolve undefined and refuse writes", async () => {
+  it("macOS: deletes via security delete-generic-password", async () => {
+    const exec = fakeExec({ "security delete-generic-password": { code: 0, stdout: "", notFound: false } });
+    const p = new KeychainCredentialProvider({ platform: "darwin", service: "nexum-test", exec });
+    await expect(p.delete("k")).resolves.toBe(true);
+    expect(exec.calls[0]).toEqual(["security", ["delete-generic-password", "-s", "nexum-test", "-a", "k"]]);
+  });
+
+  it("linux: deletes via secret-tool clear", async () => {
+    const exec = fakeExec({ "secret-tool clear": { code: 0, stdout: "", notFound: false } });
+    const p = new KeychainCredentialProvider({ platform: "linux", service: "nexum-test", exec });
+    await expect(p.delete("k")).resolves.toBe(true);
+    expect(exec.calls[0]).toEqual(["secret-tool", ["clear", "service", "nexum-test", "account", "k"]]);
+  });
+
+  it("unsupported platforms resolve undefined and refuse writes or deletes", async () => {
     const p = new KeychainCredentialProvider({ platform: "win32" });
     await expect(p.resolve("x")).resolves.toBeUndefined();
     await expect(p.set("x", "y")).rejects.toThrow(/unsupported/);
+    await expect(p.delete("x")).resolves.toBe(false);
     expect(p.list()).toEqual([]);
   });
 

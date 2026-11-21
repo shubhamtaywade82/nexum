@@ -483,6 +483,19 @@ export class KeychainCredentialProvider implements CredentialProvider {
     return undefined; // win32 / other: unsupported, chain continues
   }
 
+  /** Remove a credential from the OS keychain (best effort). Returns true if removed, false otherwise. */
+  async delete(name: string): Promise<boolean> {
+    if (this.platform === "darwin") {
+      const r = await this.exec("security", ["delete-generic-password", "-s", this.service, "-a", name]);
+      return r.code === 0;
+    }
+    if (this.platform === "linux") {
+      const r = await this.exec("secret-tool", ["clear", "service", this.service, "account", name]);
+      return r.code === 0;
+    }
+    return false;
+  }
+
   list(): string[] {
     return []; // enumeration deliberately unsupported (see class doc)
   }

@@ -17,6 +17,20 @@ well-defended and pinned by tests. The **content half** (what the connected
 world may write into the model's context) had a single systemic gap — finding
 H1 — which was fixed in the working tree on the audit date itself; see §6.
 
+> **Reconciliation note (2026-11-21):** a shorter parallel audit shipped on
+> `main` with the alpha.5 release commits. It rated the missing
+> "tool output is untrusted data" system-prompt instruction **Low**
+> (MCP-01, "recommendation") and passed the gate on the strength of the
+> policy/confirmation layers. This audit rates the same gap **High (H1)**:
+> policy gates only cover confirmation-listed operations, so side effects
+> outside them (git push, issue comment, exfil web_fetch) were exposed to
+> injection. This document is the authoritative version; the H1 fix
+> (nonce-fenced `messagesForModel()` + system-prompt clause 8) landed with
+> this branch and supersedes MCP-01's "recommendation" status. The other
+> findings of the parallel audit (MCP-02 sanitizeText for TUI rendering,
+> MCP-03 elicitation timeouts fail-closed) are recorded here as verified
+> controls, not affected by the H1 fix.
+
 ---
 
 ## 1. Audit scope (files/surfaces examined)

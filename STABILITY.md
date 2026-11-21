@@ -48,7 +48,7 @@ releases. They are suitable for early adopters and contributors, but
 - `CompactionService` (and `TokenEstimator`, `CompactionPolicy`, `SummaryProvider`)
 - `SessionQueryService`
 - `ContextService` (and built-in context providers)
-- `CredentialService` (env + file providers stable; keychain Linux round-trip verified nightly by `tests/credentials/keychain-linux-roundtrip.test.ts` in the `keychain` nightly job; macOS/Windows keychain still experimental; Vault provider functional)
+- `CredentialService` (env + file providers stable; keychain Linux round-trip verified nightly by `tests/credentials/keychain-linux-roundtrip.test.ts` in the `keychain` nightly job — incl. the provider `delete()` method; macOS/Windows keychain still experimental; Vault provider functional with unit coverage)
 - `AttachmentStore`
 - `WorkflowService`
 - `WebhookService`
@@ -153,7 +153,7 @@ announced with a "Breaking change" note and a migration guide.
 
 For production use:
 
-1. Pin the exact version (`"dependencies": { "@nemesis-oss/nexum": "2.0.0-alpha.4" }`).
+1. Pin the exact version (`"dependencies": { "@nemesis-oss/nexum": "2.0.0-alpha.5" }`).
 2. Only import from Tier 1 (Stable).
 3. Subscribe to the changelog for Experimental → Stable promotions.
 4. If you need an Experimental export, file an issue requesting promotion
@@ -161,7 +161,7 @@ For production use:
 
 For early adoption / contribution:
 
-1. Pin to a minor version (`"@nemesis-oss/nexum": "~2.0.0-alpha.4"`).
+1. Pin to a minor version (`"@nemesis-oss/nexum": "~2.0.0-alpha.5"`).
 2. Feel free to import from Tier 2 (Experimental).
 3. Report breakage in issues — we'll either fix or document the migration.
 

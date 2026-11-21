@@ -25,7 +25,7 @@ export default defineConfig({
       { text: "Kernel", link: "/guide/kernel" },
       { text: "Tools", link: "/guide/tools" },
       { text: "Benchmarks", link: "/guide/benchmarks" },
-      { text: "GitHub", link: "https://github.com/nemesis-oss/nexum" },
+      { text: "GitHub", link: "https://github.com/shubhamtaywade82/nexum" },
     ],
     sidebar: [
       {
@@ -104,7 +104,7 @@ export default defineConfig({
       provider: "local",
     },
     socialLinks: [
-      { icon: "github", link: "https://github.com/nemesis-oss/nexum" },
+      { icon: "github", link: "https://github.com/shubhamtaywade82/nexum" },
       { icon: "npm", link: "https://www.npmjs.com/package/@nemesis-oss/nexum" },
     ],
     footer: {
