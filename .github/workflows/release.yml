@@ -94,6 +94,7 @@ jobs:
           CI: true
           SKIP_NETWORK_TESTS: true
           TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/nexum_test
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Compute dist-tag
         id: dist
