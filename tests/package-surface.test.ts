@@ -124,3 +124,73 @@ describe("package surface — Tier 1 Stable exports are importable", () => {
     expect(Object.keys(nexum).length).toBeGreaterThanOrEqual(290);
   });
 });
+
+describe("package surface — Tier 1 contract behavior and type assertions", () => {
+  it("newTaskId produces unique task-prefixed identifiers", () => {
+    const id1 = nexum.newTaskId();
+    const id2 = nexum.newTaskId();
+    expect(id1).toMatch(/^task_[0-9a-f-]+$/);
+    expect(id2).toMatch(/^task_[0-9a-f-]+$/);
+    expect(id1).not.toBe(id2);
+  });
+
+  it("defineToolPack constructs a valid ToolPack and mountToolPack accepts it", () => {
+    const pack = nexum.defineToolPack("surface-test-pack", "Test Pack", "testing", []);
+    expect(pack.id).toBe("surface-test-pack");
+    expect(pack.description).toBe("Test Pack");
+    expect(pack.capability).toBe("testing");
+    expect(pack.entries).toEqual([]);
+
+    const catalog = new nexum.ToolCatalog();
+    const registered = nexum.mountToolPack(pack, catalog);
+    expect(registered).toEqual([]);
+  });
+
+  it("PlanExecuteStrategy and GraphStrategy instantiate with defaults", () => {
+    const planExec = new nexum.PlanExecuteStrategy();
+    expect(planExec.name).toBe("plan_execute");
+
+    const graph = new nexum.GraphStrategy();
+    expect(graph.name).toBe("graph");
+  });
+
+  it("satisfies Tier-1 structural type contracts", () => {
+    const result: nexum.ToolResult = {
+      callId: "tc_1",
+      data: { success: true },
+    };
+    expect(result.callId).toBe("tc_1");
+
+    const invocation: nexum.ToolInvocation = {
+      callId: "tc_1",
+      toolName: "test_tool",
+      arguments: { foo: "bar" },
+    };
+    expect(invocation.toolName).toBe("test_tool");
+
+    const correlation: nexum.CorrelationIds = {
+      traceId: "trace_1",
+      runId: "run_1",
+    };
+    expect(correlation.traceId).toBe("trace_1");
+
+    const pack: nexum.ToolPack = {
+      id: "p1",
+      description: "pack 1",
+      capability: "test",
+      entries: [],
+    };
+    expect(pack.id).toBe("p1");
+
+    const envelope: nexum.EventEnvelope = {
+      id: "evt_1",
+      type: "test_event",
+      timestamp: Date.now(),
+      payload: { ok: true },
+    };
+    expect(envelope.id).toBe("evt_1");
+
+    const descriptor: nexum.AgentDescriptor = nexum.devAgentDescriptor();
+    expect(descriptor.id).toBe("devagent");
+  });
+});

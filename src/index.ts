@@ -165,7 +165,8 @@ export { WorkspaceManager } from "./platform/workspace.js";
 export { CancellationScope, CancellationRegistry } from "./core/cancellation/cancellation.js";
 export { GateRegistry } from "./core/concurrency/gate-registry.js";
 export { ConcurrencyGate } from "./core/concurrency/gate.js";
-export { newRunId, newTaskId } from "./core/identity.js";
+export { newRunId, newTaskId, type CorrelationIds } from "./core/identity.js";
+export { type EventEnvelope } from "./core/events/envelope.js";
 export { loadConfig } from "./cli/config.js";
 export {
   agentWorkspaceGuard,
