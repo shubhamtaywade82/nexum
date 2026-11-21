@@ -142,7 +142,7 @@ announced with a "Breaking change" note and a migration guide.
 
 For production use:
 
-1. Pin the exact version (`"dependencies": { "@nemesis-oss/nexum": "2.0.0-rc.1" }`).
+1. Pin the exact version (`"dependencies": { "@nemesis-oss/nexum": "2.0.0" }`).
 2. Only import from Tier 1 (Stable).
 3. Subscribe to the changelog for Experimental → Stable promotions.
 4. If you need an Experimental export, file an issue requesting promotion
@@ -150,7 +150,7 @@ For production use:
 
 For early adoption / contribution:
 
-1. Pin to a minor version (`"@nemesis-oss/nexum": "~2.0.0-rc.1"`).
+1. Pin to a minor version (`"@nemesis-oss/nexum": "~2.0.0"`).
 2. Feel free to import from Tier 2 (Experimental).
 3. Report breakage in issues — we'll either fix or document the migration.
 

@@ -27,6 +27,8 @@ export default {
   roots: ["<rootDir>/tests"],
   setupFiles: ["<rootDir>/tests/jest.setup.js"],
   testTimeout: 30_000,
+  // Server suites boot real HTTP harnesses; at full core count they starve each other and time out.
+  maxWorkers: "50%",
   // Ink's React reconciler can leave async handles open after tests finish;
   // forceExit ensures the Jest process exits cleanly.
   forceExit: true,

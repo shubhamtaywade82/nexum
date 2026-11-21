@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0 (2026-11-22)
+
+### Production Stable (`@nemesis-oss/nexum@2.0.0`)
+
+- **General Availability (GA)**:
+  - Nexum 2.0.0 is the first production stable release, published under npm `latest` dist-tag.
+  - Full API stability guarantee live for Tier 1 exports under Semantic Versioning (see [STABILITY.md](./STABILITY.md)).
+  - Migration guide finalized for consumers and preview adopters (see [docs/MIGRATION-2.0.md](./docs/MIGRATION-2.0.md)).
+  - All Phase 1–5 release gates closed and verified across clean-room environments, package validation, and 385 automated test suites.
+
 ## 2.0.0-rc.1 (2026-11-22)
 
 ### Release Candidate 1 — API Freeze (`@nemesis-oss/nexum@2.0.0-rc.1`)

@@ -24,7 +24,7 @@ This guide covers the four ways to use Nexum, in order of maturity:
 ### Install
 
 ```bash
-npm install -g @nemesis-oss/nexum@2.0.0-rc.1
+npm install -g @nemesis-oss/nexum
 ```
 
 Verify the install:

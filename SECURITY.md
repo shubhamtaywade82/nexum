@@ -1,7 +1,7 @@
 # Nexum Security & Trust Model
 
-> **Status:** Developer Preview. This document describes what the code on
-> this branch actually enforces. Known gaps are listed in §12 — read
+> **Status:** Production Stable (v2.0.0). This document describes what the code
+> actually enforces. Known gaps are listed in §12 — read
 > them before running Nexum on anything you cannot afford to lose.
 
 Nexum runs an LLM that chooses tool calls. Assume the model can be steered
@@ -335,4 +335,4 @@ See [STABILITY.md](./STABILITY.md) for API stability tiers.
 
 ---
 
-**Last updated:** 2026-11-22 · **Nexum version:** 2.0.0-rc.1 (plus unreleased changes on this branch)
+**Last updated:** 2026-11-22 · **Nexum version:** 2.0.0 (plus unreleased changes on this branch)

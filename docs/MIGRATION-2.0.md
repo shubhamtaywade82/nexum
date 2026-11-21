@@ -5,8 +5,7 @@
 > adopt the 2.0.0 stable release, relative to the alpha.4 baseline on
 > `main` today.
 >
-> Status: **draft** (2026-11-21). The 2.0.0 cut has not been published yet.
-> This guide will be finalized and dated when the 2.0.0 tag is pushed.
+> Status: **finalized** (2026-11-22). Published with the 2.0.0 stable release.
 
 ## 1. Who this is for
 
