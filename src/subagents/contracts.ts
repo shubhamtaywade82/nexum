@@ -24,6 +24,8 @@ export interface SubagentSpawnRequest {
   maxToolTurns?: number;
   /** Whether the child should be continuable (default false = one-shot). */
   continuable?: boolean;
+  /** Max retries if a one-shot execution fails (default 0). */
+  maxRetries?: number;
   /** Metadata propagated to the provider. */
   metadata?: Record<string, unknown>;
 }
@@ -35,6 +37,8 @@ export interface SubagentResult {
   status: ExecutionResult["status"];
   output: string;
   error?: string;
+  /** Number of retry attempts made if retries were configured. */
+  retryCount?: number;
   /** Provider-specific metadata (token usage, cost, duration). */
   metadata?: Record<string, unknown>;
 }

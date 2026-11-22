@@ -25,6 +25,7 @@ const CLOUD_TRIGGERS: HeuristicPattern[] = [
   { re: /\b(design|architect|plan|build).{0,30}(system|service|api|database)\b/i, label: "system_design" },
   { re: /\b(explain|understand|how does).{0,30}work\b/i, label: "explanation" },
   { re: /\b(write|implement|build).{0,50}(middleware|hook|interceptor|plugin)\b/i, label: "framework_integration" },
+  { re: /\b(review|critique|audit|evaluate|verify)\b/i, label: "code_review" },
 ];
 
 const LOCAL_TRIGGERS: HeuristicPattern[] = [

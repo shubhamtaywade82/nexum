@@ -411,6 +411,38 @@ describe("SubagentService accounting", () => {
       /no subagent provider registered for "acp"/,
     );
   });
+
+  it("retries a failed one-shot subagent up to maxRetries and succeeds", async () => {
+    let callCount = 0;
+    const runtime = {
+      agents: new AgentRegistry(),
+      async execute(request: ExecutionRequest, context: ExecutionContext): Promise<ExecutionResult> {
+        callCount++;
+        if (callCount === 1) throw new Error("transient worker failure");
+        return {
+          runId: context.runId,
+          agentId: request.agentId,
+          strategy: "react" as const,
+          status: "completed",
+          output: "recovered on retry",
+          usage: { toolCalls: 0, modelCalls: 1, totalTokens: 10, costUsd: 0, elapsedMs: 1 },
+        };
+      },
+      cancel: () => true,
+    } as unknown as AgentRuntime;
+    (runtime as any).agents.register({ ...devAgentDescriptor(), capabilities: ["coding"] });
+
+    const service = serviceWith(new InProcessSubagentProvider({ runtime, agents: (runtime as any).agents }), 2);
+    const handle = await service.spawn(
+      { provider: "in-process", goal: "do work", childAgentId: "devagent", maxRetries: 2 },
+      parentContext(),
+    );
+    const result = await handle.promise!;
+    expect(result.status).toBe("completed");
+    expect(result.output).toBe("recovered on retry");
+    expect(result.retryCount).toBe(1);
+    expect(callCount).toBe(2);
+  });
 });
 
 describe("defaultSubagentProviders", () => {

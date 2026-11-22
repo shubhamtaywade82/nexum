@@ -32,12 +32,14 @@ export function inferCapabilities(name: string): Capability[] {
   const caps: Capability[] = ["tools"];
 
   if (/(^|[^a-z])(vl|vision)([^a-z]|$)/.test(n)) caps.push("vision");
-  if (/(r1|reason|thinking|qwq)/.test(n)) caps.push("reasoning");
-  if (/(0\.5b|1b|2b|3b|4b|nano|mini|hermes|opencode)/.test(n) && !/-(summarizer|embed|analyst)/.test(n)) {
+  if (/(r1|reason|thinking|qwq|glm|gemma)/.test(n)) caps.push("reasoning");
+  if (/(0\.5b|1b|2b|3b|4b|nano|mini|hermes|opencode|beam)/.test(n) && !/-(summarizer|embed|analyst)/.test(n)) {
     caps.push("quick");
   }
   if (/(hermes|openhermes|nous-hermes)/.test(n)) caps.push("agentic");
-  if (!caps.includes("vision") && !caps.includes("reasoning")) caps.push("coding");
+  if ((!caps.includes("vision") && !caps.includes("reasoning")) || /(code|coder|kimi)/.test(n)) {
+    if (!caps.includes("coding")) caps.push("coding");
+  }
 
   return caps;
 }

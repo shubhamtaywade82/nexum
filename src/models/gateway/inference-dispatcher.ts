@@ -37,6 +37,8 @@ export interface DispatchTarget {
   purpose: string;
   /** Model to pin for this call. Omitted: the lane provider's configured model. */
   model?: string;
+  /** Optional task identifier for per-task attribution in the usage ledger. */
+  taskId?: string;
 }
 
 /** The narrow port callers depend on instead of a Provider: one chat, already accounted. */
@@ -89,11 +91,12 @@ const PROCESS_GATES = {
 
 // Which run a model call belongs to. The dispatcher is shared by every run in a session, so the
 // run is carried by async context instead of a constructor field; calls outside a run stay "untracked".
-const runAttribution = new AsyncLocalStorage<string>();
+export type RunAttributionTarget = string | { runId: string; taskId?: string };
+const runAttribution = new AsyncLocalStorage<RunAttributionTarget>();
 
-/** Runs `fn` with every model call it makes attributed to `runId` in the usage ledger. */
-export function withRunAttribution<T>(runId: string, fn: () => Promise<T>): Promise<T> {
-  return runAttribution.run(runId, fn);
+/** Runs `fn` with every model call it makes attributed to `runId` (and optional `taskId`) in the usage ledger. */
+export function withRunAttribution<T>(attr: RunAttributionTarget, fn: () => Promise<T>): Promise<T> {
+  return runAttribution.run(attr, fn);
 }
 
 export class InferenceDispatcher {
@@ -218,8 +221,13 @@ export class InferenceDispatcher {
         reading.source === "PROVIDER"
           ? (this.costFor(model, reading.promptTokens ?? 0, reading.completionTokens ?? 0) ?? undefined)
           : undefined;
+      const attr = runAttribution.getStore();
+      const runId = typeof attr === "string" ? attr : (attr?.runId ?? this.budget?.runId ?? "untracked");
+      const taskId = target.taskId ?? (typeof attr === "object" ? attr?.taskId : undefined);
       this.ledger.record({
-        runId: runAttribution.getStore() ?? this.budget?.runId ?? "untracked",
+        runId,
+        taskId,
+        provider: "ollama",
         purpose: target.purpose,
         lane: target.lane,
         tier,

@@ -16,11 +16,11 @@ import { readFileSync } from "node:fs";
 
 /** Historical curation — the shipped default data. */
 export const DEFAULT_CURATED_PREFERENCES: Partial<Record<Capability, string[]>> = {
-  reasoning: ["qwq", "llama3.3:70b", "hermes3:70b", "qwen3:8b", "qwen3"],
-  coding: ["qwen2.5-coder:32b", "qwen2.5-coder:7b", "llama3.3", "qwen3.5", "granite4"],
+  reasoning: ["gemma4", "glm-5.3", "qwq", "kimi-k3.1-pro", "llama3.3:70b", "hermes3:70b", "qwen3:8b", "qwen3"],
+  coding: ["kimi-k2.7-code", "qwen2.5-coder:32b", "qwen2.5-coder:7b", "llama3.3", "qwen3.5", "granite4"],
   agentic: ["hermes3:70b", "llama3.3:70b", "qwq", "qwen3:8b", "llama3.1:70b"],
   tools: ["granite4", "llama3.1:8b", "qwen2.5:7b", "hermes3:8b"],
-  quick: ["llama3.2:1b", "qwen2.5:0.5b", "llama3.2:3b", "minicpm5"],
+  quick: ["gemma4", "beam", "llama3.2:1b", "qwen2.5:0.5b", "llama3.2:3b", "minicpm5"],
 };
 
 export interface ModelPreferenceSource {

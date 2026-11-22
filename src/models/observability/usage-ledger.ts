@@ -32,6 +32,10 @@ export interface ModelUsageRecord {
   /** Ledger line id (distinct from runId — one run has many calls). */
   id: string;
   runId: string;
+  /** Task id associated with this model call, if known. */
+  taskId?: string;
+  /** Provider identifier (e.g. "ollama", "external"). */
+  provider?: string;
   /** Purpose lane the dispatcher dispatched on ("chat.primary", "benchmark", ...). */
   purpose: string;
   lane: string;
@@ -123,6 +127,8 @@ export class ModelUsageLedger {
       id: rec.id ?? `usage_${randomUUID()}`,
       at: rec.at ?? this.now().toISOString(),
       runId: rec.runId,
+      ...(rec.taskId !== undefined ? { taskId: rec.taskId } : {}),
+      ...(rec.provider !== undefined ? { provider: rec.provider } : {}),
       purpose: rec.purpose,
       lane: rec.lane,
       tier: rec.tier,
@@ -233,5 +239,11 @@ export class ModelUsageLedger {
       p95LatencyMs: p95,
       byModel: [...byModel.values()].sort((a, b) => b.costUsd - a.costUsd || b.calls - a.calls),
     };
+  }
+
+  /** Aggregate usage specifically for a single runId across persisted and current records. */
+  forRun(runId: string): UsageAggregate {
+    const matches = this.loadAll().filter((r) => r.runId === runId);
+    return this.aggregate(matches);
   }
 }
