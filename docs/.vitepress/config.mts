@@ -1,11 +1,28 @@
 import { defineConfig } from "vitepress";
 
+const githubRepo = "https://github.com/shubhamtaywade82/nexum";
+
 export default defineConfig({
   base: "/nexum/",
   title: "⚡ Nexum",
+  titleTemplate: ":title · Nexum",
   description: "Open-Source Agent Runtime & Harness for Autonomous Software Engineering",
   lastUpdated: true,
   cleanUrls: true,
+  head: [
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/nexum/favicon.svg" }],
+    ["meta", { name: "theme-color", content: "#7c3aed", media: "(prefers-color-scheme: light)" }],
+    ["meta", { name: "theme-color", content: "#1b1b1f", media: "(prefers-color-scheme: dark)" }],
+    ["meta", { property: "og:site_name", content: "Nexum" }],
+    ["meta", { name: "twitter:card", content: "summary" }],
+  ],
+  markdown: {
+    lineNumbers: true,
+    theme: {
+      light: "github-light",
+      dark: "github-dark",
+    },
+  },
   srcExclude: [
     "**/superpowers/**",
     "**/REBRANDING.md",
@@ -30,6 +47,14 @@ export default defineConfig({
   ],
   themeConfig: {
     siteTitle: "⚡ Nexum",
+    outline: {
+      level: [2, 3],
+      label: "On this page",
+    },
+    editLink: {
+      pattern: `${githubRepo}/edit/main/docs/:path`,
+      text: "Edit this page on GitHub",
+    },
     nav: [
       { text: "Home", link: "/" },
       { text: "Guide", link: "/guide/getting-started" },
@@ -38,7 +63,7 @@ export default defineConfig({
       { text: "Tools", link: "/guide/tools" },
       { text: "Benchmarks", link: "/guide/benchmarks" },
       { text: "Migration & Stability", link: "/MIGRATION-2.0" },
-      { text: "GitHub", link: "https://github.com/shubhamtaywade82/nexum" },
+      { text: "GitHub", link: githubRepo },
     ],
     sidebar: [
       {
@@ -66,6 +91,7 @@ export default defineConfig({
       },
       {
         text: "Core Architecture",
+        collapsed: true,
         items: [
           { text: "System Architecture", link: "/guide/architecture" },
           { text: "Agent Execution Kernel", link: "/guide/kernel" },
@@ -78,6 +104,7 @@ export default defineConfig({
       },
       {
         text: "Code Intelligence & Memory",
+        collapsed: true,
         items: [
           { text: "14 Language Server Protocols (LSP)", link: "/guide/code-intelligence" },
           { text: "Offline DevDocs Search", link: "/guide/devdocs" },
@@ -89,6 +116,7 @@ export default defineConfig({
       },
       {
         text: "Evaluation & Quality",
+        collapsed: true,
         items: [
           { text: "Agent Evaluation Framework", link: "/guide/evaluation" },
           { text: "LLM-as-a-Judge", link: "/guide/llm-judge" },
@@ -98,6 +126,7 @@ export default defineConfig({
       },
       {
         text: "Multi-Agent & Production",
+        collapsed: true,
         items: [
           { text: "Artifacts", link: "/guide/artifacts" },
           { text: "Nexum Server Architecture", link: "/guide/server" },
@@ -107,6 +136,7 @@ export default defineConfig({
       },
       {
         text: "CI Healer",
+        collapsed: true,
         items: [
           { text: "Guide", link: "/guide/ci-healer" },
           { text: "Design", link: "/ci-healer/DESIGN" },
@@ -115,6 +145,7 @@ export default defineConfig({
       },
       {
         text: "Extensibility & Reference",
+        collapsed: true,
         items: [
           { text: "35+ Built-in Tools Reference", link: "/guide/tools" },
           { text: "Model Context Protocol (MCP)", link: "/guide/mcp" },
@@ -134,7 +165,7 @@ export default defineConfig({
       provider: "local",
     },
     socialLinks: [
-      { icon: "github", link: "https://github.com/shubhamtaywade82/nexum" },
+      { icon: "github", link: githubRepo },
       { icon: "npm", link: "https://www.npmjs.com/package/@nemesis-oss/nexum" },
     ],
     footer: {
