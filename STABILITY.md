@@ -1,8 +1,10 @@
 # Nexum API Stability Tiers
 
-> **Status:** Developer Preview. The public API is **not yet** covered by
-> a stability guarantee. This document describes the _intended_ tiers
-> and marks which subsystems currently belong to each.
+> **Status: Stable (2.0.0).** Tier 1 exports are covered by the semver
+> stability guarantee as of the 2.0.0 stable release (2026-11-22). Tier 2
+> remains Experimental and Tier 3 Internal. Consumers should read this
+> document as the contract map: what is safe to depend on in production,
+> and what may still change.
 
 Nexum's public API (everything exported from `src/index.ts`) is organized
 into three stability tiers. Consumers should depend only on **Stable**
@@ -105,8 +107,8 @@ Nexum follows a modified semver:
 - **Minor** (2.0 → 2.1): new features; Experimental exports may break.
 - **Patch** (2.0.0 → 2.0.1): bug fixes only; no API changes.
 
-Until the Stable tier is finalized (target: 2.0.0 stable), all exports
-should be treated as Experimental.
+Tier 1 is finalized and frozen as of 2.0.0 stable; the guarantees above
+have been in force since the 2.0.0 release (2026-11-22).
 
 ## 2.0.0 API Freeze (Phase 4 / RC gate)
 
@@ -129,7 +131,11 @@ All previous gaps identified in §4 (`defineToolPack`, `ToolResult`,
 `ExecutionRecorder`, `DevAgent`, `WorkspaceGuard`, `PathEscapeError`,
 `SensitivePathError`, `CriticService`, `VerifierService`,
 `budgetForProfile`, `contentHash`, `NexumRun`. Each has ≥3 test-file
-references and a stable contract; promotions land in the RC PR.
+references and a stable contract. DevAgent, WorkspaceGuard
+(`PathEscapeError`, `SensitivePathError`), and the strategy boundary
+contracts (`ExecutionRequest`, `ExecutionResult`) were promoted to Tier 1
+in the rc.1 cut; the remaining candidates are tracked for a future
+minor release.
 
 ## Migration Path
 

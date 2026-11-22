@@ -25,7 +25,7 @@ npm install -g @nemesis-oss/nexum
 ### 2. From Source
 
 ```bash
-git clone https://github.com/nemesis-oss/nexum.git
+git clone https://github.com/shubhamtaywade82/nexum.git
 cd nexum
 npm install
 npm run build

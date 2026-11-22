@@ -11,10 +11,22 @@ export default defineConfig({
     "**/REBRANDING.md",
     "**/requirements/**",
     "**/plan/**",
+    "**/evolution/**",
     "SPEC.md",
     "FEATURE_VERIFICATION_GUIDE.md",
     "deep-research-report.md",
     "tui-capability-spec.md",
+    // Release-process internals — kept in the repo, not published to the site:
+    "API-FREEZE-AUDIT.md",
+    "B6-TARBALL-AUDIT.md",
+    "BRAND-AUDIT.md",
+    "HARNESS_EVOLUTION.md",
+    "ISSUE_AUTOMATION.md",
+    "PRODUCTION_AUDIT.md",
+    "SECURITY-AUDIT-MCP.md",
+    "STABLE-RELEASE-HANDOFF.md",
+    "WORKTREES.md",
+    "server-protocol.md",
   ],
   themeConfig: {
     siteTitle: "⚡ Nexum",
@@ -25,6 +37,7 @@ export default defineConfig({
       { text: "Kernel", link: "/guide/kernel" },
       { text: "Tools", link: "/guide/tools" },
       { text: "Benchmarks", link: "/guide/benchmarks" },
+      { text: "Migration & Stability", link: "/MIGRATION-2.0" },
       { text: "GitHub", link: "https://github.com/shubhamtaywade82/nexum" },
     ],
     sidebar: [
@@ -38,11 +51,26 @@ export default defineConfig({
         ],
       },
       {
+        text: "Stability & Migration",
+        items: [
+          { text: "Migration Guide — 2.0.0", link: "/MIGRATION-2.0" },
+          {
+            text: "API Stability Tiers",
+            link: "https://github.com/shubhamtaywade82/nexum/blob/main/STABILITY.md",
+          },
+          {
+            text: "Security & Trust Model",
+            link: "https://github.com/shubhamtaywade82/nexum/blob/main/SECURITY.md",
+          },
+        ],
+      },
+      {
         text: "Core Architecture",
         items: [
           { text: "System Architecture", link: "/guide/architecture" },
           { text: "Agent Execution Kernel", link: "/guide/kernel" },
           { text: "Capability Router & Escalation", link: "/guide/capability-routing" },
+          { text: "Decision Plane (System One)", link: "/guide/decision-plane" },
           { text: "Multi-Key Cloud Pools & Rotation", link: "/guide/model-keys" },
           { text: "DAG Planner & Parallel Execution", link: "/guide/planner" },
           { text: "Docker Sandboxing", link: "/guide/sandboxing" },
@@ -72,6 +100,7 @@ export default defineConfig({
         text: "Multi-Agent & Production",
         items: [
           { text: "Artifacts", link: "/guide/artifacts" },
+          { text: "Nexum Server Architecture", link: "/guide/server" },
           { text: "Telemetry (OpenTelemetry)", link: "/guide/telemetry" },
           { text: "Durable Job Queue", link: "/guide/durable-jobs" },
         ],
@@ -89,6 +118,7 @@ export default defineConfig({
         items: [
           { text: "35+ Built-in Tools Reference", link: "/guide/tools" },
           { text: "Model Context Protocol (MCP)", link: "/guide/mcp" },
+          { text: "MCP Elicitation", link: "/guide/mcp-elicitation" },
           { text: "Credentials & Secret Providers", link: "/guide/credentials" },
           { text: "Plugin Sandbox & Isolation", link: "/guide/plugin-sandbox" },
           { text: "Plugin Marketplace & Signing", link: "/guide/marketplace" },

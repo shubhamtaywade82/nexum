@@ -2,16 +2,13 @@
 
 ### Autonomous software engineering, from task to pull request.
 
-> **Status: Developer Preview (2.0.0-alpha)** — the core agent runtime,
-> tool gateway, and CLI are functional and well-tested, and the agentic
-> intelligence layer (semantic memory, hybrid RAG, evaluation + LLM-judge,
-> in-loop critic, multi-agent coordination, artifacts, OTel telemetry,
-> durable jobs) ships in this branch. Several advertised subsystems
-> (marketplace trust model, plugin sandboxing, keychain/vault
-> credential providers) are explicitly **incomplete** — see
-> [STABILITY.md](./STABILITY.md) and [SECURITY.md](./SECURITY.md) for
-> details. Not yet recommended for production dependency without pinning
-> the exact version.
+> **Status: Stable (2.0.0).** Nexum 2.0.0 is the first production stable
+> release (2026-11-22). The Tier 1 public API is covered by the semver
+> stability guarantee — see [STABILITY.md](./STABILITY.md) for the tier
+> map. Known boundaries and incomplete subsystems (marketplace trust
+> model, plugin sandboxing, keychain/vault credential providers on some
+> platforms) are listed there and in [SECURITY.md](./SECURITY.md); the
+> CLI coding-agent path is the recommended production entry point.
 
 Model transport uses [`@nemesis-oss/ollama-sdk`](https://github.com/shubhamtaywade82/ollama-sdk#readme). Recorded harness validation (Ollama Cloud `gemma4:cloud` and local `minicpm5:2b`) is in [docs/guide/benchmarks.md](./docs/guide/benchmarks.md) and the [validation playbook](./docs/guide/validation.md).
 
