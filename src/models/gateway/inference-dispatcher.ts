@@ -13,6 +13,7 @@
  * Admission (refusing a call the budget cannot cover) is added on top of this point, not in each caller.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { ConcurrencyGate } from "../../core/concurrency/gate.js";
 import type { BudgetTracker } from "../../runtime/budget/budget-tracker.js";
 import { BudgetManager, CloudSpendBudgetError } from "../../runtime/budget/budget-manager.js";
@@ -85,6 +86,15 @@ const PROCESS_GATES = {
   local: new ConcurrencyGate({ maxConcurrent: 8, label: "model:local" }),
   cloud: new ConcurrencyGate({ maxConcurrent: initialCloudConcurrency(), label: "model:cloud" }),
 };
+
+// Which run a model call belongs to. The dispatcher is shared by every run in a session, so the
+// run is carried by async context instead of a constructor field; calls outside a run stay "untracked".
+const runAttribution = new AsyncLocalStorage<string>();
+
+/** Runs `fn` with every model call it makes attributed to `runId` in the usage ledger. */
+export function withRunAttribution<T>(runId: string, fn: () => Promise<T>): Promise<T> {
+  return runAttribution.run(runId, fn);
+}
 
 export class InferenceDispatcher {
   readonly localGate: ConcurrencyGate;
@@ -209,7 +219,7 @@ export class InferenceDispatcher {
           ? (this.costFor(model, reading.promptTokens ?? 0, reading.completionTokens ?? 0) ?? undefined)
           : undefined;
       this.ledger.record({
-        runId: this.budget?.runId ?? "untracked",
+        runId: runAttribution.getStore() ?? this.budget?.runId ?? "untracked",
         purpose: target.purpose,
         lane: target.lane,
         tier,

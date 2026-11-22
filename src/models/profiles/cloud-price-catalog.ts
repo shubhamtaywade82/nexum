@@ -39,32 +39,34 @@ export interface PriceFile {
 export const PRICE_FILE_ENV = "NEXUM_PRICE_FILE";
 
 /**
- * Curated Ollama Cloud standard rates (USD / 1M tokens), 2026-11 snapshot.
- * A model missing from this table has no estimate — unknown, never zero.
+ * Ollama Cloud standard (peak) rates in USD per 1M tokens, keyed by the model ids the cloud lists,
+ * from https://ollama.com/pricing on 2026-11-22. Off-peak discounts and cached-input rates are not
+ * modelled, so estimates err high. A model missing from this table has no estimate: unknown, never zero.
  */
 export const DEFAULT_CLOUD_PRICES: Readonly<Record<string, ModelPrice>> = Object.freeze({
-  // ── inexpensive tier ──
+  beam: { inputPerMillion: 0.125, outputPerMillion: 0.4 },
+  "deepseek-v4.1-flash": { inputPerMillion: 0.3, outputPerMillion: 1.2 },
+  "deepseek-v4-pro": { inputPerMillion: 1.32, outputPerMillion: 3.96 },
   gemma4: { inputPerMillion: 0.14, outputPerMillion: 0.4 },
-  "gemma4:cloud": { inputPerMillion: 0.14, outputPerMillion: 0.4 },
-  "gpt-oss:20b": { inputPerMillion: 0.08, outputPerMillion: 0.28 },
+  "glm-5.3": { inputPerMillion: 1.4, outputPerMillion: 4.4 },
+  "glm-5.3-flash": { inputPerMillion: 0.15, outputPerMillion: 0.5 },
+  "glm-5.2": { inputPerMillion: 1.4, outputPerMillion: 4.4 },
   "gpt-oss:120b": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
-  "gpt-oss:120b-cloud": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
-  "deepseek-v4.1:flash": { inputPerMillion: 0.3, outputPerMillion: 1.2 },
-  minicpm5: { inputPerMillion: 0.05, outputPerMillion: 0.18 },
-  "minicpm5:2b": { inputPerMillion: 0.05, outputPerMillion: 0.18 },
-  beam: { inputPerMillion: 0.15, outputPerMillion: 0.6 },
-  "beam:cloud": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
-
-  // ── mid tier ──
-  "qwen3.5:32b": { inputPerMillion: 0.4, outputPerMillion: 1.4 },
-  "kimi-k2.7:code": { inputPerMillion: 0.95, outputPerMillion: 4.0 },
-  granite4: { inputPerMillion: 0.45, outputPerMillion: 1.6 },
-
-  // ── premium tier ──
-  "glm5.3": { inputPerMillion: 1.4, outputPerMillion: 4.4 },
-  "glm5.3:cloud": { inputPerMillion: 1.4, outputPerMillion: 4.4 },
-  "kimi-k3.1:pro": { inputPerMillion: 2.0, outputPerMillion: 10.0 },
-  qwq: { inputPerMillion: 1.2, outputPerMillion: 4.0 },
+  "gpt-oss:20b": { inputPerMillion: 0.07, outputPerMillion: 0.3 },
+  hy4: { inputPerMillion: 0.834, outputPerMillion: 2.501 },
+  "inkling-2-small": { inputPerMillion: 0.3, outputPerMillion: 1.0 },
+  "kimi-k3.1-pro": { inputPerMillion: 2.0, outputPerMillion: 10.0 },
+  "kimi-k3": { inputPerMillion: 3.0, outputPerMillion: 15.0 },
+  "kimi-k2.7-code": { inputPerMillion: 0.95, outputPerMillion: 4.0 },
+  "kimi-k2.6": { inputPerMillion: 0.95, outputPerMillion: 4.0 },
+  "mimo-v2.6-flash": { inputPerMillion: 0.14, outputPerMillion: 0.28 },
+  "mimo-v2.6-pro": { inputPerMillion: 0.435, outputPerMillion: 0.87 },
+  "minimax-m3.1-flash": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "minimax-m3": { inputPerMillion: 0.6, outputPerMillion: 2.4 },
+  "mistral-large-4": { inputPerMillion: 0.7, outputPerMillion: 2.1 },
+  "muse-spark-open": { inputPerMillion: 1.25, outputPerMillion: 4.25 },
+  "nemotron-3-super": { inputPerMillion: 0.015, outputPerMillion: 0.6 },
+  "nemotron-3-ultra": { inputPerMillion: 0.1, outputPerMillion: 3.0 },
 });
 
 /** Case-insensitive index over the merged table, built once per lookup batch. */

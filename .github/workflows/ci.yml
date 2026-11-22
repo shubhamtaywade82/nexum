@@ -60,6 +60,10 @@ jobs:
           # and would otherwise run on `npm ci` after checkout.
           HUSKY: "0"
 
+      - name: Install Chromium for the browser tests
+        # Without it tests/browser skips itself, which is how a broken suite went unnoticed.
+        run: npx playwright install --with-deps chromium
+
       - name: Lint code
         run: npm run lint
 

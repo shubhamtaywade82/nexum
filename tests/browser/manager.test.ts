@@ -1,18 +1,26 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { BrowserManager, HARDENED_CHROMIUM_ARGS, resolveChromiumExecutablePath } from "../../src/browser/manager.js";
 
 import { chromium } from "playwright";
 
-// Real Chromium, real navigation — data: URLs keep it offline/deterministic,
-// same spirit as the real-process LSP client tests (verify the actual
-// integration, not a mock of it).
-const PAGE = `data:text/html,<html><head><title>Test Page</title></head><body>
+// Real Chromium, real navigation against a loopback HTTP server — offline and deterministic. The manager
+// refuses data: URLs and private addresses by default, so these tests opt into allowPrivateNetwork.
+const HTML = `<html><head><title>Test Page</title></head><body>
   <h1 id="heading">Hello</h1>
   <input id="name" />
   <button id="btn" onclick="document.getElementById('heading').textContent='Clicked'">Click me</button>
 </body></html>`;
+const server = createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/html" });
+  res.end(HTML);
+});
+await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+const PAGE = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
 let hasChromium = false;
 try {
@@ -30,7 +38,7 @@ describeBrowser("BrowserManager", () => {
   let browser: BrowserManager;
 
   beforeEach(() => {
-    browser = new BrowserManager();
+    browser = new BrowserManager({ allowPrivateNetwork: true });
   });
 
   afterEach(async () => {
@@ -46,6 +54,13 @@ describeBrowser("BrowserManager", () => {
     await browser.navigate(PAGE);
     expect(await browser.getText("#heading")).toBe("Hello");
     expect(await browser.getText()).toContain("Hello");
+  }, 30000);
+
+  it("fails fast, naming the selector, when nothing matches it", async () => {
+    await browser.navigate(PAGE);
+    const started = Date.now();
+    await expect(browser.getText("#does-not-exist")).rejects.toThrow(/no element matches "#does-not-exist"/);
+    expect(Date.now() - started).toBeLessThan(10_000);
   }, 30000);
 
   it("fills a form field", async () => {

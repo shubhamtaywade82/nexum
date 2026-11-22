@@ -96,6 +96,51 @@ describe("ReActStrategy + StrategyHooks (product seams)", () => {
     expect(JSON.parse(toolMessages[0].content)).toEqual({ content: "file a" });
   });
 
+  it("records each model call's usage and each tool call's arguments under a distinct id", async () => {
+    const runtime = new DefaultAgentRuntime();
+    runtime.agents.register(devAgentDescriptor());
+    const events: Array<Record<string, unknown>> = [];
+    const model: ModelGateway = {
+      ...fakeModelGateway([]),
+      async route() {
+        const first = events.length === 0;
+        return {
+          message: {
+            role: "assistant",
+            content: first ? "" : "done",
+            tool_calls: first
+              ? [
+                  { function: { name: "read_file", arguments: '{"path":"a"}' } },
+                  { function: { name: "read_file", arguments: '{"path":"b"}' } },
+                ]
+              : undefined,
+          },
+          done: true,
+          prompt_eval_count: 10,
+          eval_count: 5,
+          routedTier: "cloud",
+          routedModel: "m1",
+        };
+      },
+    };
+    const ctx = ctxFor(
+      model,
+      makeGateway((args) => ({ content: String(args.path) })),
+      {
+        events: { publish: (event: unknown) => void events.push(event as Record<string, unknown>) },
+      },
+    );
+
+    await runWith(runtime, ctx, undefined);
+
+    const answered = events.filter((e) => e.type === "model.answered");
+    expect(answered).toHaveLength(2);
+    expect(answered[0]).toMatchObject({ tier: "cloud", model: "m1", promptTokens: 10, completionTokens: 5 });
+    const started = events.filter((e) => e.type === "tool.started");
+    expect(started.map((e) => e.args)).toEqual([{ path: "a" }, { path: "b" }]);
+    expect(new Set(started.map((e) => e.id)).size).toBe(2);
+  });
+
   it("selectTools replaces the advertised schema list and callModel overrides routing", async () => {
     const runtime = new DefaultAgentRuntime();
     runtime.agents.register(devAgentDescriptor());

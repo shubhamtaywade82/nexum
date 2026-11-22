@@ -22,7 +22,16 @@ const dir = mkdtempSync(join(tmpdir(), "nexum-e2e-"));
 try {
   const approvals = new McpApprovalStore(join(dir, "mcp-trust.json"));
   const policy = new McpTrustPolicy({
-    rules: [{ match: SERVER_NAME, trust: "ask", tools: { allow: ["get_quote"] }, maxRisk: "low" }],
+    rules: [
+      {
+        match: SERVER_NAME,
+        trust: "ask",
+        tools: { allow: ["get_quote"] },
+        maxRisk: "low",
+        // Server annotations are never trusted for risk; the local config classifies the tool.
+        toolSecurity: { get_quote: { risk: "low", externalMutation: false } },
+      },
+    ],
     approvals,
   });
   const opts = {

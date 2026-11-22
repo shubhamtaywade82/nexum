@@ -201,8 +201,18 @@ export class ReActStrategy implements ExecutionStrategy {
             });
 
         lastText = response.message?.content || lastText;
-        ctx.budget.consumeModelCall(budgetUsageOf(readUsage(response)));
-        hooks?.onModelUsed?.({ response, elapsedMs: Date.now() - turnStart, turn });
+        const usageReading = readUsage(response);
+        ctx.budget.consumeModelCall(budgetUsageOf(usageReading));
+        const elapsedMs = Date.now() - turnStart;
+        ctx.events.publish({
+          type: "model.answered",
+          tier: typeof response.routedTier === "string" ? response.routedTier : "unknown",
+          model: typeof response.routedModel === "string" ? response.routedModel : String(response.model ?? "unknown"),
+          ...(usageReading.promptTokens !== undefined ? { promptTokens: usageReading.promptTokens } : {}),
+          ...(usageReading.completionTokens !== undefined ? { completionTokens: usageReading.completionTokens } : {}),
+          latencyMs: elapsedMs,
+        });
+        hooks?.onModelUsed?.({ response, elapsedMs, turn });
 
         // Push the assistant message exactly once, with tool_calls attached
         // when present (a response can carry both content and tool_calls —
@@ -257,8 +267,10 @@ export class ReActStrategy implements ExecutionStrategy {
           return { output: hooks?.finalAnswer?.() || lastText || "(no response)", terminal: "answered" };
         }
 
-        for (const call of toolCalls) {
+        for (const [callIndex, call] of toolCalls.entries()) {
           if (ctx.signal.aborted) throw new DOMException("run cancelled", "AbortError");
+          // Unique per call: two calls of one tool in a run must not resolve each other's events.
+          const callId = `${ctx.runId}:${turn}:${callIndex}:${call.name}`;
 
           // Parse/normalize seam (product may replicate legacy tolerant parsing).
           const prepared: PreparedToolCall = (await hooks?.prepareToolCall?.({
@@ -271,9 +283,9 @@ export class ReActStrategy implements ExecutionStrategy {
 
           ctx.events.publish({
             type: "tool.started",
-            id: `${ctx.runId}:${call.name}`,
+            id: callId,
             name: call.name,
-            args: {},
+            args,
           });
 
           // Approval/veto seam: a rejection is fully owned by the hook
@@ -326,7 +338,7 @@ export class ReActStrategy implements ExecutionStrategy {
             );
             ctx.events.publish({
               type: "tool.completed",
-              id: `${ctx.runId}:${call.name}`,
+              id: callId,
               result: result.data,
             });
             await hooks?.onToolFailed?.({ name: call.name, error: err, turn });
@@ -335,7 +347,7 @@ export class ReActStrategy implements ExecutionStrategy {
 
           ctx.events.publish({
             type: "tool.completed",
-            id: `${ctx.runId}:${call.name}`,
+            id: callId,
             result: result.data,
           });
 

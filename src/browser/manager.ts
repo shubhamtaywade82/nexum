@@ -62,6 +62,8 @@ export interface BrowserManagerOptions {
  * private / link-local (cloud metadata) / reserved destinations are blocked
  * both as literal IPs and after DNS resolution (request interception), so a
  * hostname that resolves into the internal network cannot be browsed. */
+const GET_TEXT_TIMEOUT_MS = 5_000;
+
 export class BrowserManager {
   private browser: Browser | null = null;
   private page: Page | null = null;
@@ -162,7 +164,17 @@ export class BrowserManager {
   async getText(selector?: string): Promise<string> {
     const page = await this.ensurePage();
     if (!selector) return (await page.textContent("body")) ?? "";
-    return (await page.textContent(selector)) ?? "";
+    // The page is already loaded when the agent reads it; a missing selector should fail in seconds, not 30s.
+    try {
+      return (await page.textContent(selector, { timeout: GET_TEXT_TIMEOUT_MS })) ?? "";
+    } catch (err) {
+      if (err instanceof Error && err.name === "TimeoutError") {
+        throw new Error(`no element matches "${selector}" on ${page.url()} (waited ${GET_TEXT_TIMEOUT_MS}ms)`, {
+          cause: err,
+        });
+      }
+      throw err;
+    }
   }
 
   async screenshot(): Promise<Buffer> {

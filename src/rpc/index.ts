@@ -621,9 +621,10 @@ export function registerWebhookMethods(
   },
 ): void {
   server.method("webhooks.registerEndpoint", (params) => {
-    const p = params as { endpoint?: { id?: string; path?: string; secret?: string } } | undefined;
+    const p = params as { endpoint?: { id?: string; path?: string; secret?: string; active?: boolean } } | undefined;
     if (!p || !p.endpoint) throw new Error("webhooks.registerEndpoint requires { endpoint }");
-    return whs.registerEndpoint(p.endpoint);
+    // An endpoint registered over RPC is meant to receive; without this it was stored inactive.
+    return whs.registerEndpoint({ active: true, ...p.endpoint });
   });
 
   server.method("webhooks.unregisterEndpoint", (params) => {

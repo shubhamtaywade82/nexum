@@ -80,7 +80,7 @@ import {
 import { ControlPlaneService, registerDefaultMetrics } from "../control-plane/index.js";
 import { CredentialService } from "../credentials/index.js";
 import { JobService } from "../jobs/index.js";
-import { SubagentService } from "../subagents/index.js";
+import { SubagentService, defaultSubagentProviders } from "../subagents/index.js";
 import { CompactionService } from "../compaction/index.js";
 import { SessionQueryService } from "../session-query/index.js";
 import { ContextService, defaultContextProviders } from "../context-providers/index.js";
@@ -560,6 +560,15 @@ export class Agent {
       maxConcurrent: this.settings.get("subagent.maxConcurrent") as number | undefined,
       maxTotalPerSession: this.settings.get("subagent.maxPerSession") as number | undefined,
     });
+    // In-process children run inside a parent run; the process provider serves callers with no
+    // parent run (RPC clients, the host) by starting a child `nexum rpc` in this workspace.
+    for (const provider of defaultSubagentProviders({
+      runtime: this.runtime,
+      agents: this.runtime.agents,
+      process: { cwd: cfg.workspaceRoot },
+    })) {
+      this.subagents.registerProvider(provider);
+    }
 
     // Compaction service.
     this.compaction = new CompactionService();

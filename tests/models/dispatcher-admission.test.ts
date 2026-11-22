@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { InferenceDispatcher } from "../../src/models/gateway/inference-dispatcher.js";
+import { InferenceDispatcher, withRunAttribution } from "../../src/models/gateway/inference-dispatcher.js";
 import { BudgetManager } from "../../src/runtime/budget/budget-manager.js";
 import { BudgetTracker } from "../../src/runtime/budget/budget-tracker.js";
 import { ModelUsageLedger } from "../../src/models/observability/usage-ledger.js";
@@ -36,6 +36,20 @@ function bigPromptChars(): string {
 }
 
 describe("InferenceDispatcher admission + ledger", () => {
+  it("attributes each ledger record to the run it was made in, and prices real cloud ids", async () => {
+    const provider = new ProbeProvider("cloud", "kimi-k2.7-code", okResponse);
+    const ledger = new ModelUsageLedger({ persist: false });
+    const dispatcher = new InferenceDispatcher({ lanes: { cloud: provider }, ledger });
+    const call = () => dispatcher.dispatch({ lane: "cloud", purpose: "test" }, [{ role: "user", content: "hi" }], {});
+
+    await withRunAttribution("run_a", call);
+    await call();
+
+    expect(ledger.all().map((r) => r.runId)).toEqual(["run_a", "untracked"]);
+    expect(ledger.all()[0]).toMatchObject({ costUnknown: false });
+    expect(ledger.all()[0].costUsd).toBeCloseTo((50 * 0.95 + 10 * 4.0) / 1_000_000, 5);
+  });
+
   it("refuses a cloud call BEFORE dispatch when the worst-case estimate cannot fit the remaining budget", async () => {
     const provider = new ProbeProvider("cloud", "gemma4", okResponse);
     const budget = new BudgetManager({ budget: { maxCostUsd: 0.001 } });
@@ -78,7 +92,7 @@ describe("InferenceDispatcher admission + ledger", () => {
   });
 
   it("enforces the ceiling after the call too (post-hoc throw keeps real counts)", async () => {
-    const provider = new ProbeProvider("cloud", "kimi-k3.1:pro", okResponse);
+    const provider = new ProbeProvider("cloud", "kimi-k3.1-pro", okResponse);
     // Admission's worst-case for a "hi" prompt on kimi ($10/M out, 1024-token
     // estimate) is ~$0.0102, so a $0.02 ceiling lets the call through — then
     // the REAL cost... also lands under it. To exercise the post-hoc path we

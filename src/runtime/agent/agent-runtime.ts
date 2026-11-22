@@ -16,6 +16,7 @@
  * or domain directly.
  */
 
+import { withRunAttribution } from "../../models/gateway/inference-dispatcher.js";
 import { randomUUID } from "node:crypto";
 import type {
   AgentId,
@@ -243,14 +244,16 @@ export class DefaultAgentRuntime implements AgentRuntime {
     recorder?.start(context.task.goal, request.agentId, strategyName);
 
     try {
-      const result = await strategy.run({
-        ctx: { ...context, agentId: request.agentId, signal: controller.signal, events },
-        capability: agent.defaultCapability,
-        maxToolTurns: options?.maxToolTurns ?? this.defaultMaxToolTurns,
-        toolCapabilities: request.capabilities ?? agent.capabilities,
-        hooks: options?.hooks,
-        ...(this.criticPolicy ? { critic: this.criticPolicy } : {}),
-      });
+      const result = await withRunAttribution(context.runId, () =>
+        strategy.run({
+          ctx: { ...context, agentId: request.agentId, signal: controller.signal, events },
+          capability: agent.defaultCapability,
+          maxToolTurns: options?.maxToolTurns ?? this.defaultMaxToolTurns,
+          toolCapabilities: request.capabilities ?? agent.capabilities,
+          hooks: options?.hooks,
+          ...(this.criticPolicy ? { critic: this.criticPolicy } : {}),
+        }),
+      );
       recorder?.finish({
         status: result.status,
         output: result.output,

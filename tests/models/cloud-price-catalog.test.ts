@@ -21,7 +21,7 @@ describe("cloud price catalog", () => {
 
   it("matches exact ids case-insensitively", () => {
     const table = loadPriceTable({});
-    expect(priceFor(table, "GLM5.3")).toBeDefined();
+    expect(priceFor(table, "GLM-5.3")).toBeDefined();
     expect(priceFor(table, "gemma4")).toBeDefined();
   });
 
@@ -33,9 +33,9 @@ describe("cloud price catalog", () => {
     // actually resolves: an unlisted variant of a family whose BASE name is
     // itself a table key.
     expect(priceFor(table, "gemma4:some-new-variant")).toEqual(priceFor(table, "gemma4"));
-    expect(priceFor(table, "qwq:32b")).toEqual(priceFor(table, "qwq"));
+    expect(priceFor(table, "deepseek-v4-pro:0813")).toEqual(priceFor(table, "deepseek-v4-pro"));
     // exact match still wins over the fallback
-    expect(priceFor(table, "gpt-oss:20b")).toEqual({ inputPerMillion: 0.08, outputPerMillion: 0.28 });
+    expect(priceFor(table, "gpt-oss:20b")).toEqual({ inputPerMillion: 0.07, outputPerMillion: 0.3 });
     // a base name with no entry and no family entry stays unknown
     expect(priceFor(table, "not-a-family")).toBeUndefined();
   });
@@ -66,7 +66,7 @@ describe("cloud price catalog", () => {
     expect(priceFor(table, "gemma4")).toEqual({ inputPerMillion: 0.2, outputPerMillion: 0.5 });
     expect(priceFor(table, "my-private")).toEqual({ inputPerMillion: 1, outputPerMillion: 2 });
     // untouched entries survive
-    expect(priceFor(table, "qwq")).toBeDefined();
+    expect(priceFor(table, "glm-5.3")).toBeDefined();
   });
 
   it("ignores a corrupt price file (curated defaults stand)", () => {

@@ -32,6 +32,7 @@ npm run e2e     # nexum integration; needs the nexum root built first
       "trust": "ask",
       "tools": { "allow": ["get_quote"] },
       "maxRisk": "low",
+      "toolSecurity": { "get_quote": { "risk": "low", "externalMutation": false } },
       "env": {
         "BROKER_BASE_URL": "https://broker.example.invalid",
         "BROKER_TOKEN": "credential:BROKER_TOKEN"
@@ -43,7 +44,8 @@ npm run e2e     # nexum integration; needs the nexum root built first
 
 - `trust: "ask"`: the server connects only after `nexum mcp trust approve broker-quotes`. Without an approval it is denied, not connected silently.
 - `tools.allow`: an explicit allowlist. `placeOrder` is not registered by the server, and the allowlist keeps it out even if it were.
-- `maxRisk: "low"`: the server's `get_quote` is annotated `readOnlyHint: true`, which nexum maps to risk `low`. The risk ladder is `read < low < medium < high < critical`, so `maxRisk: "read"` would deny `get_quote`.
+- `toolSecurity`: nexum never trusts a server's own annotations (`readOnlyHint` and so on) for risk, so an unclassified MCP tool is `high` risk with confirmation required. This entry classifies `get_quote` locally as `low` risk with no external mutation.
+- `maxRisk: "low"`: the ceiling for this server's tools. The risk ladder is `read < low < medium < high < critical`; without the `toolSecurity` entry, `get_quote` would be `high` and denied.
 - `env.BROKER_TOKEN`: `credential:BROKER_TOKEN` is resolved by nexum's credential service at connect time. The token is never a tool argument and never appears in tool output.
 
 ## Verify the trust decision
@@ -66,7 +68,7 @@ HOME="$SCRATCH_HOME" node "$REPO_ROOT/bin/cli.js" mcp trust policy     # expect:
 
 - `npm test`: 11/11 pass.
 - `nexum mcp trust policy`, scratch HOME, built from this checkout: before approval `connect no` with reason "requires approval (trust: ask)"; after `mcp trust approve broker-quotes` `connect yes`.
-- Per-tool risk: `get_quote` is inferred as `low` from `readOnlyHint`. `maxRisk: "low"` allows it; `maxRisk: "read"` denies it with "exceeds the server's maxRisk". A tool outside `tools.allow` is denied with "matches no allow pattern".
+- Per-tool risk: `get_quote` is `low` only because `toolSecurity` says so. `maxRisk: "low"` allows it; `maxRisk: "read"` denies it with "exceeds the server's maxRisk". A tool outside `tools.allow` is denied with "matches no allow pattern".
 - Mutation check on a scratch copy:
   - Spreading tool input into the contract call (`{ ...input }`) fails test 5 (handler-level). The stdio test 8 still passes, because the MCP SDK's zod schema strips unknown keys before the handler runs. Only the handler-level test guards this.
   - Removing `retry: "never"` from `placeOrder` fails test 3 (429 attempted more than once).

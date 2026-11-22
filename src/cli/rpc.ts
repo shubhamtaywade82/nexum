@@ -36,7 +36,7 @@
 
 import { CliConfig, loadConfig } from "./config.js";
 import { Agent } from "./agent.js";
-import { RpcServer, registerAllServiceMethods, type RpcServerOptions } from "../rpc/index.js";
+import { RpcServer, registerAllServiceMethods, registerCoreMethods, type RpcServerOptions } from "../rpc/index.js";
 
 export interface RpcCliOptions {
   /** Override the workspace root (default: loadConfig().workspaceRoot). */
@@ -113,8 +113,10 @@ export async function startRpcServer(opts: RpcCliOptions = {}): Promise<Agent> {
   // registerAllServiceMethods already calls registerCoreMethods for
   // plugins.list — we add agent.list here directly to avoid duplicating
   // the plugins.list registration.
-  rpcServer.method("agent.list", () => {
-    return agent.runtime.agents.ids();
+  registerCoreMethods(rpcServer, {
+    agents: agent.runtime.agents,
+    tools: { all: () => agent.tools.gateway.discover() },
+    skills: { list: async () => agent.getSkillsRegistry().list() },
   });
   registerAllServiceMethods(rpcServer, {
     jobs: agent.jobs,
@@ -170,7 +172,7 @@ export async function main(argv: string[] = process.argv.slice(3)): Promise<void
           `  nexum rpc                              Start the JSON-RPC server\n` +
           `  nexum rpc --workspace /path/to/repo    Explicit workspace root\n\n` +
           `Methods:\n` +
-          `  agent.execute, agent.cancel\n` +
+          `  agent.execute, agent.cancel, agent.list, tools.list, skills.list\n` +
           `  plugins.list, jobs.*, subagents.*, workflows.*, webhooks.*, control.*\n` +
           `  (see src/rpc/index.ts for the full list)\n`,
       );

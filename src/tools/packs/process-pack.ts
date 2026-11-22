@@ -38,8 +38,9 @@ export function shellMetadata(sandboxed: boolean): LegacyToolMetadata {
 
 /** Metadata for script runners (package.json / bundle): host execution needs confirmation too. */
 export function scriptRunnerMetadata(sandboxed: boolean): LegacyToolMetadata {
+  // Sandboxed runners execute through ShellTool's container, so they are declared sandboxed like run_shell.
   return sandboxed
-    ? { risk: "medium" }
+    ? { risk: "medium", sideEffects: SHELL_SIDE_EFFECTS, execution: { isolation: "sandbox" } }
     : {
         risk: "high",
         sideEffects: SHELL_SIDE_EFFECTS,

@@ -308,4 +308,26 @@ describe("unattended ceilings and the CLI's own policy", () => {
     expect(publish.result.ok).toBe(false);
     expect(publish.executed).toEqual([]);
   });
+
+  it("the CLI's unattended policy permits read-only introspection (docs, Rails index, language server)", async () => {
+    const base = parityPosture();
+    for (const id of ["search_docs", "find_model", "document_symbols", "sqlite_query", "escalate_task"]) {
+      const read = await callUnattended(
+        CLI_UNATTENDED_POLICY,
+        { definition: def(id, { risk: "read" }) },
+        {
+          unattended: true,
+          base,
+        },
+      );
+      expect(read.result.ok).toBe(true);
+      expect(read.executed).toEqual([id]);
+    }
+    const browse = await callUnattended(
+      CLI_UNATTENDED_POLICY,
+      { definition: def("browser_navigate", { risk: "medium", process: true, network: true }) },
+      { unattended: true, base },
+    );
+    expect(browse.result.ok).toBe(false);
+  });
 });
