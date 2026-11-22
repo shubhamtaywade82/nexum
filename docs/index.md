@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: "⚡ Nexum"
-  text: "Autonomous AI Coding Assistant Runtime & TUI"
-  tagline: "Local-first Ollama models, Docker sandboxing, 14 LSP language servers, offline DevDocs FTS5, and parallel DAG planning."
+  text: "Open-Source Agent Runtime for Autonomous Software Engineering"
+  tagline: "Local-first Ollama models, Docker sandboxing, 14 LSP language servers, offline DevDocs FTS5, and parallel DAG planning. Stable since 2.0.0."
   actions:
     - theme: brand
       text: Get Started
@@ -12,6 +12,9 @@ hero:
     - theme: alt
       text: Architecture
       link: /guide/architecture
+    - theme: alt
+      text: Migration to 2.0.0
+      link: /MIGRATION-2.0
     - theme: alt
       text: Tool Reference
       link: /guide/tools
@@ -35,4 +38,10 @@ features:
   - icon: 💾
     title: Memory & Crash Recovery
     details: Atomic step checkpoints and SQLite episode recording allow seamless session resumption without data loss.
+  - icon: 🧭
+    title: API Stability Tiers
+    details: Tier 1 exports follow semver with a frozen contract since 2.0.0; Tier 2 is clearly-marked Experimental so you always know what you can depend on.
+  - icon: 🔐
+    title: Security & Trust Model
+    details: Assume the model can be steered by anything it reads. Boundaries are designed for isolation — sandboxing, workspace guards, fenced tool output, and attestation.
 ---

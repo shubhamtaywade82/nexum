@@ -24,17 +24,16 @@ npm install @nemesis-oss/nexum        # resolves to latest (2.0.0 stable)
 ```
 
 During the alpha/beta/rc window (Phases 1–4 in RELEASE-READINESS.md §3),
-`npm install @nemesis-oss/nexum` **fails by design** — the package is only
-published under the `next` dist-tag, so the bare install resolves to
-nothing. The friction is intentional for a developer preview:
+the package was only published under the `next` dist-tag, so a bare
+`npm install @nemesis-oss/nexum` resolved to nothing — intentional
+friction for the developer preview. Since the 2.0.0 stable release, the
+`latest` dist-tag points at 2.0.0 and the bare install works, as shown
+above. To install a prerelease from the active window (if one is open),
+pin it explicitly:
 
 ```bash
-# During the alpha/beta/rc window (until Phase 5):
 npm install @nemesis-oss/nexum@next
 ```
-
-At Phase 5 (2.0.0 stable), the `latest` dist-tag is added and the bare
-install works.
 
 ### Pin the exact version
 

@@ -1,6 +1,6 @@
 # Nexum Quickstart
 
-> **Status:** Developer Preview. This guide covers the **stable** path
+> **Status: Stable (2.0.0).** This guide covers the **stable** path
 > (using Nexum as a CLI coding agent). For the experimental SDK / runtime
 > embedding path, see [STABILITY.md](./STABILITY.md).
 
