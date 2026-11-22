@@ -6,22 +6,22 @@ Nexum integrates directly with the Language Server Protocol (LSP) to provide tru
 
 ## Supported Languages & Servers
 
-| Language | LSP Server | Binary / Command |
-| :--- | :--- | :--- |
+| Language                    | LSP Server                   | Binary / Command                     |
+| :-------------------------- | :--------------------------- | :----------------------------------- |
 | **TypeScript / JavaScript** | `typescript-language-server` | `typescript-language-server --stdio` |
-| **Python** | `pyright` / `pylsp` | `pyright-langserver --stdio` |
-| **Go** | `gopls` | `gopls` |
-| **Rust** | `rust-analyzer` | `rust-analyzer` |
-| **Ruby** | `solargraph` | `solargraph stdio` |
-| **Java** | `jdtls` | `jdtls` |
-| **C#** | `OmniSharp` / `csharp-ls` | `csharp-ls` |
-| **C / C++** | `clangd` | `clangd` |
-| **PHP** | `intelephense` | `intelephense --stdio` |
-| **Swift** | `sourcekit-lsp` | `sourcekit-lsp` |
-| **Kotlin** | `kotlin-language-server` | `kotlin-language-server` |
-| **Dart** | `dart analysis-server` | `dart language-server` |
-| **YAML** | `yaml-language-server` | `yaml-language-server --stdio` |
-| **Docker** | `dockerfile-language-server`| `docker-langserver --stdio` |
+| **Python**                  | `pyright` / `pylsp`          | `pyright-langserver --stdio`         |
+| **Go**                      | `gopls`                      | `gopls`                              |
+| **Rust**                    | `rust-analyzer`              | `rust-analyzer`                      |
+| **Ruby**                    | `ruby-lsp`                   | `ruby-lsp`                           |
+| **Java**                    | `jdtls`                      | `jdtls`                              |
+| **C#**                      | `OmniSharp` / `csharp-ls`    | `csharp-ls`                          |
+| **C / C++**                 | `clangd`                     | `clangd`                             |
+| **PHP**                     | `intelephense`               | `intelephense --stdio`               |
+| **Swift**                   | `sourcekit-lsp`              | `sourcekit-lsp`                      |
+| **Kotlin**                  | `kotlin-language-server`     | `kotlin-language-server`             |
+| **Dart**                    | `dart analysis-server`       | `dart language-server`               |
+| **YAML**                    | `yaml-language-server`       | `yaml-language-server --stdio`       |
+| **Docker**                  | `dockerfile-language-server` | `docker-langserver --stdio`          |
 
 ---
 
