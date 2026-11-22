@@ -67,6 +67,8 @@ export interface CliConfig {
   /** Preferred local model name (substring match) for the "quick" capability,
    * e.g. "minicpm5" — see ModelCatalog.modelsFor. */
   quickModel?: string;
+  /** Preferred model for independent code review and verification (e.g. "glm-5.3"). */
+  reviewerModel?: string;
 
   // ── Hybrid local-cloud architecture ──────────────────────────────────────
   /** Route trivial tasks through a local worker. On by default; uses quickModel
@@ -187,6 +189,8 @@ interface ConfigFile {
    * drift — but both may be present. */
   accounts?: Array<{ apiKey: string; label?: string }>;
   quickModel?: string;
+  /** Preferred model for independent code review and verification (e.g. "glm-5.3"). */
+  reviewerModel?: string;
   enableLocalWorker?: boolean;
   enableVerifier?: boolean;
   enableSelfConsistency?: boolean;
@@ -519,6 +523,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
   // Quick model: env var wins, then config file. When absent, localWorker and
   // verifier use the configured local primary model rather than staying disabled.
   const quickModel = readEnv("QUICK_MODEL") || file.quickModel;
+  const reviewerModel = readEnv("REVIEWER_MODEL") || file.reviewerModel || (tier === "cloud" ? "glm-5.3" : undefined);
 
   // Theme: env var wins, then config file; unknown values fall back to
   // "default" so a typo can never crash the TUI on startup.
@@ -554,6 +559,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): CliConfig {
     apiKeys: apiKeys.length ? apiKeys : undefined,
     accountLabels: Object.keys(accountLabels).length ? accountLabels : undefined,
     quickModel,
+    reviewerModel,
     // Hybrid architecture flags
     enableLocalWorker: readEnvFlag("LOCAL_WORKER", file.enableLocalWorker ?? true),
     // An explicit env value wins in BOTH directions. The previous

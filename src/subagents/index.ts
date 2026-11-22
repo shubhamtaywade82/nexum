@@ -51,6 +51,13 @@ export interface SubagentServiceOptions {
   maxTotalPerSession?: number;
 }
 
+interface RetryRunnerContext {
+  session: SubagentSession;
+  provider: SubagentProvider;
+  request: SubagentSpawnRequest;
+  parent?: ExecutionContext;
+}
+
 export class SubagentService {
   private readonly providers = new Map<SubagentProviderType, SubagentProvider>();
   private readonly handles = new Map<string, SubagentHandle>();
@@ -104,6 +111,11 @@ export class SubagentService {
     // Reserve before awaiting so concurrent spawn() calls cannot overshoot the limits.
     this.activeCount++;
     this.perSessionCount.set(sessionId, sessionCount + 1);
+
+    if (request.maxRetries && request.maxRetries > 0 && !request.continuable) {
+      return this.spawnWithRetries(provider, request, parent);
+    }
+
     let handle: SubagentHandle;
     try {
       handle = await provider.spawn(request, parent);
@@ -118,6 +130,74 @@ export class SubagentService {
     // finished, failed, was cancelled, or (for a continuable child) its process died.
     const release = () => this.release(handle.subagentId);
     void handle.terminated.then(release);
+
+    return handle;
+  }
+
+  private createRetryingHandle(
+    session: SubagentSession,
+    request: SubagentSpawnRequest,
+    parent: ExecutionContext | undefined,
+    getChild: () => SubagentHandle | undefined,
+  ): SubagentHandle {
+    return session.toHandle({
+      send: async () => {
+        throw new Error("one-shot subagent does not support send()");
+      },
+      interrupt: async (reason = "interrupted") => {
+        session.cancel(reason);
+        const child = getChild();
+        if (child) await child.interrupt(reason).catch(() => {});
+      },
+      resume: async () => {
+        throw new Error("one-shot subagent cannot be resumed");
+      },
+      fork: () => this.spawn({ ...request, goal: `${request.goal} (forked from ${session.subagentId})` }, parent),
+    });
+  }
+
+  private async runWithRetries(
+    ctx: RetryRunnerContext,
+    maxRetries: number,
+    setChild: (child: SubagentHandle) => void,
+  ): Promise<void> {
+    let attempts = 0;
+    while (attempts <= maxRetries && ctx.session.live) {
+      try {
+        const child = await ctx.provider.spawn(ctx.request, ctx.parent);
+        setChild(child);
+        const result = await child.promise!;
+        if (result.status === "completed" || result.status === "cancelled" || attempts >= maxRetries) {
+          ctx.session.complete({ ...result, retryCount: attempts });
+          return;
+        }
+      } catch (err) {
+        if (attempts >= maxRetries || !ctx.session.live) {
+          ctx.session.fail(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+      }
+      attempts++;
+    }
+  }
+
+  private async spawnWithRetries(
+    provider: SubagentProvider,
+    request: SubagentSpawnRequest,
+    parent: ExecutionContext | undefined,
+  ): Promise<SubagentHandle> {
+    const session = new SubagentSession({ provider: request.provider, request, continuable: false });
+    let currentChild: SubagentHandle | undefined;
+
+    const handle = this.createRetryingHandle(session, request, parent, () => currentChild);
+    this.handles.set(handle.subagentId, handle);
+    void handle.terminated.then(() => this.release(handle.subagentId));
+
+    const maxRetries = request.maxRetries ?? 0;
+    const ctx = { session, provider, request: { ...request, maxRetries: 0 }, parent };
+    void this.runWithRetries(ctx, maxRetries, (c) => {
+      currentChild = c;
+    }).catch((e) => session.fail(e instanceof Error ? e : new Error(String(e))));
 
     return handle;
   }
@@ -350,10 +430,15 @@ export class ProcessSubagentProvider extends BaseSubagentProvider {
 
     // `nexum rpc` is the JSON-RPC agent server. Continuable children stay alive between
     // messages; one-shot children exit after their first response.
+    const workspaceRoot = parent?.workspace?.root;
     const child = spawn(binaryPath, ["rpc", ...(this.opts.extraArgs ?? [])], {
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: this.opts.cwd,
-      env: { ...process.env, ...this.opts.env },
+      cwd: this.opts.cwd ?? workspaceRoot,
+      env: {
+        ...process.env,
+        ...(workspaceRoot ? { NEXUM_WORKSPACE: workspaceRoot } : {}),
+        ...this.opts.env,
+      },
     });
     this.children.set(subagentId, child);
 
@@ -796,13 +881,21 @@ export class ExternalAgentSubagentProvider extends BaseSubagentProvider {
       throw new Error("external subagents are one-shot; continuable sessions are not supported");
     }
     const { binary, args, env } = this.invocation(request.goal);
-    const timeoutMs = this.opts.timeoutMs ?? 15 * 60_000;
+    const timeoutMs =
+      typeof request.metadata?.timeoutMs === "number" && request.metadata.timeoutMs > 0
+        ? request.metadata.timeoutMs
+        : (this.opts.timeoutMs ?? 15 * 60_000);
     const maxOutputBytes = this.opts.maxOutputBytes ?? 1024 * 1024;
     const session = new SubagentSession({ provider: "external", request });
+    const workspaceRoot = parent?.workspace?.root;
 
     const child = spawn(binary, args, {
-      cwd: this.opts.cwd,
-      env: { ...process.env, ...env },
+      cwd: this.opts.cwd ?? workspaceRoot ?? process.cwd(),
+      env: {
+        ...process.env,
+        ...(workspaceRoot ? { NEXUM_WORKSPACE: workspaceRoot } : {}),
+        ...env,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     this.children.set(session.subagentId, child);

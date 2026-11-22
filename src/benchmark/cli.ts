@@ -122,7 +122,14 @@ export async function runBenchmarkCli(argv: string[]): Promise<number> {
     driverName === "agent"
       ? createAgentDriver(({ workspaceRoot, target, events }) => {
           const agent = new Agent({
-            config: { ...cfg, workspaceRoot, model: target.model, tier: target.tier, quickModel: target.model },
+            config: {
+              ...cfg,
+              workspaceRoot,
+              model: target.model,
+              tier: target.tier,
+              quickModel: target.model,
+              autoApprove: false,
+            },
             events,
           });
           agent.approvalMode = "auto-edit";

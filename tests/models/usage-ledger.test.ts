@@ -112,4 +112,49 @@ describe("ModelUsageLedger", () => {
     expect(all.some((r) => r.id === written.id)).toBe(true);
     expect(existsSync(join(dir, "ledger.jsonl"))).toBe(true);
   });
+
+  it("aggregates usage for a specific runId via forRun", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nexum-ledger-"));
+    const ledger = new ModelUsageLedger({ dir });
+    ledger.record(
+      rec({
+        runId: "target-run",
+        taskId: "task-1",
+        provider: "ollama",
+        promptTokens: 100,
+        completionTokens: 50,
+        costUsd: 0.001,
+      }),
+    );
+    ledger.record(
+      rec({
+        runId: "target-run",
+        taskId: "task-2",
+        provider: "ollama",
+        promptTokens: 200,
+        completionTokens: 100,
+        costUsd: 0.002,
+      }),
+    );
+    ledger.record(
+      rec({
+        runId: "other-run",
+        taskId: "task-3",
+        provider: "ollama",
+        promptTokens: 50,
+        completionTokens: 20,
+        costUsd: 0.0005,
+      }),
+    );
+
+    const summary = ledger.forRun("target-run");
+    expect(summary.records).toBe(2);
+    expect(summary.totalPromptTokens).toBe(300);
+    expect(summary.totalCompletionTokens).toBe(150);
+    expect(summary.totalCostUsd).toBeCloseTo(0.003, 6);
+
+    const loaded = ledger.loadAll();
+    const task1 = loaded.find((r) => r.taskId === "task-1");
+    expect(task1?.provider).toBe("ollama");
+  });
 });

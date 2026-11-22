@@ -243,8 +243,13 @@ export class ModelStack {
     });
 
     // The quick model runs on the cloud in cloud tier, so these helpers dispatch through the quick lane too.
+    const reviewerPort =
+      cfg.reviewerModel && cfg.tier === "cloud"
+        ? this.dispatcher.port({ lane: "cloud", purpose: "verifier", model: cfg.reviewerModel })
+        : this.quickPort("verifier");
     this.localWorker = cfg.enableLocalWorker ? new LocalWorker(this.quickPort("local-worker")) : undefined;
-    this.verifier = cfg.enableVerifier && this.localWorker ? new Verifier(this.quickPort("verifier")) : undefined;
+    this.verifier =
+      cfg.enableVerifier && (this.localWorker || cfg.reviewerModel) ? new Verifier(reviewerPort) : undefined;
     this.selfConsistency = cfg.enableSelfConsistency
       ? new SelfConsistency(this.quickPort("self-consistency"), {
           n: cfg.selfConsistencyN,
