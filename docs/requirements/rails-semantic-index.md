@@ -109,11 +109,13 @@ Rails Language Intelligence
 ├── Routes Analyzer
 ├── RSpec Analyzer
 ├── RuboCop
-├── Solargraph (optional fallback)
 └── Tree-sitter
 ```
 
-Ruby LSP is only one provider.
+Ruby LSP is the only language-server provider. (Solargraph was listed
+here previously as an "optional fallback", but the registry in
+`src/lsp/registry.ts` only registers `ruby-lsp`, so the fallback was
+never actually wired up.)
 
 ---
 
@@ -169,10 +171,10 @@ loads application
 
 Now DevAgent knows
 
-* Rails version
-* Ruby version
-* Gems
-* Zeitwerk paths
+- Rails version
+- Ruby version
+- Gems
+- Zeitwerk paths
 
 without reading everything.
 
@@ -364,7 +366,7 @@ updated_at
 
 Ruby LSP
 
-*
+-
 
 AST
 
@@ -987,17 +989,17 @@ This is the component I haven't seen implemented well in existing coding agents.
 
 Instead of relying solely on Ruby LSP, build a persistent **Rails Semantic Index** that is incrementally updated as files change. It would maintain:
 
-* Route graph (`routes.rb` → controllers → actions)
-* Active Record model graph (associations, validations, callbacks, scopes)
-* Service object graph
-* Job and Mailer graph
-* Engine boundaries
-* Zeitwerk constant map
-* Gem capabilities
-* RSpec example index
-* Database schema graph
-* Migration history
-* View/component relationships (ERB, ViewComponent, Phlex, etc.)
+- Route graph (`routes.rb` → controllers → actions)
+- Active Record model graph (associations, validations, callbacks, scopes)
+- Service object graph
+- Job and Mailer graph
+- Engine boundaries
+- Zeitwerk constant map
+- Gem capabilities
+- RSpec example index
+- Database schema graph
+- Migration history
+- View/component relationships (ERB, ViewComponent, Phlex, etc.)
 
 Ruby LSP answers **language questions** ("where is this method defined?"). The Rails Semantic Index answers **framework questions** ("which controller handles this route?", "what callbacks fire when this model is saved?", "what service creates this record?", "which specs cover this code?"). Together, they give DevAgent a level of Rails-specific understanding that goes far beyond text search and makes planning substantially more reliable.
 
@@ -1118,27 +1120,27 @@ Build one immutable manifest.
 
 ```typescript
 interface WorkspaceManifest {
-    rubyVersion: string
+  rubyVersion: string;
 
-    railsVersion: string
+  railsVersion: string;
 
-    apiOnly: boolean
+  apiOnly: boolean;
 
-    root: string
+  root: string;
 
-    engines: EngineManifest[]
+  engines: EngineManifest[];
 
-    gems: Gem[]
+  gems: Gem[];
 
-    folders: FolderManifest[]
+  folders: FolderManifest[];
 
-    packageManagers: string[]
+  packageManagers: string[];
 
-    testFramework: "rspec" | "minitest"
+  testFramework: "rspec" | "minitest";
 
-    autoloadPaths: string[]
+  autoloadPaths: string[];
 
-    eagerLoadPaths: string[]
+  eagerLoadPaths: string[];
 }
 ```
 
@@ -1262,23 +1264,21 @@ I would model everything.
 
 ```typescript
 interface ModelEntity {
+  name: string;
 
-    name:string
+  file: string;
 
-    file:string
+  table: string;
 
-    table:string
+  columns: Column[];
 
-    columns:Column[]
+  scopes: Scope[];
 
-    scopes:Scope[]
+  callbacks: Callback[];
 
-    callbacks:Callback[]
+  associations: Association[];
 
-    associations:Association[]
-
-    validations:Validation[]
-
+  validations: Validation[];
 }
 ```
 
@@ -1288,15 +1288,13 @@ Controllers
 
 ```typescript
 interface ControllerEntity {
+  actions: Action[];
 
-    actions:Action[]
+  beforeActions: BeforeAction[];
 
-    beforeActions:BeforeAction[]
+  rescueHandlers: Rescue[];
 
-    rescueHandlers:Rescue[]
-
-    concerns:string[]
-
+  concerns: string[];
 }
 ```
 
@@ -1306,17 +1304,15 @@ Routes
 
 ```typescript
 interface RouteEntity {
+  verb: string;
 
-    verb:string
+  path: string;
 
-    path:string
+  controller: string;
 
-    controller:string
+  action: string;
 
-    action:string
-
-    middleware:string[]
-
+  middleware: string[];
 }
 ```
 
@@ -1326,13 +1322,11 @@ Services
 
 ```typescript
 interface ServiceEntity {
+  className: string;
 
-    className:string
+  publicMethods: string[];
 
-    publicMethods:string[]
-
-    dependencies:string[]
-
+  dependencies: string[];
 }
 ```
 
@@ -1342,13 +1336,11 @@ Jobs
 
 ```typescript
 interface JobEntity {
+  queue: string;
 
-    queue:string
+  retry: number;
 
-    retry:number
-
-    arguments:string[]
-
+  arguments: string[];
 }
 ```
 
@@ -1358,11 +1350,9 @@ Mailers
 
 ```typescript
 interface MailerEntity {
+  actions: string[];
 
-    actions:string[]
-
-    layouts:string[]
-
+  layouts: string[];
 }
 ```
 
@@ -1372,9 +1362,7 @@ Policies
 
 ```typescript
 interface PolicyEntity {
-
-    permissions:string[]
-
+  permissions: string[];
 }
 ```
 
@@ -1787,47 +1775,47 @@ The planner doesn't care whether it's operating on Rails, React, or Go. It issue
 
 ### Milestone 1 — Foundation
 
-* Workspace discovery
-* Manifest generation
-* Entity definitions
-* Graph model
-* Query API
+- Workspace discovery
+- Manifest generation
+- Entity definitions
+- Graph model
+- Query API
 
 ### Milestone 2 — Core Rails
 
-* Gem scanner
-* Routes scanner
-* Schema scanner
-* Model scanner
-* Controller scanner
-* Ruby LSP integration
+- Gem scanner
+- Routes scanner
+- Schema scanner
+- Model scanner
+- Controller scanner
+- Ruby LSP integration
 
 ### Milestone 3 — Application Intelligence
 
-* Services
-* Jobs
-* Mailers
-* Policies
-* Concerns
-* Initializers
-* Engines
+- Services
+- Jobs
+- Mailers
+- Policies
+- Concerns
+- Initializers
+- Engines
 
 ### Milestone 4 — Development Intelligence
 
-* RSpec index
-* RuboCop integration
-* Migrations
-* Fixtures/factories
-* Coverage mapping
+- RSpec index
+- RuboCop integration
+- Migrations
+- Fixtures/factories
+- Coverage mapping
 
 ### Milestone 5 — Advanced Intelligence
 
-* Incremental indexing
-* Event-driven graph updates
-* Planner context builder
-* Cross-reference queries
-* Performance optimizations
-* Persistent on-disk graph cache
+- Incremental indexing
+- Event-driven graph updates
+- Planner context builder
+- Cross-reference queries
+- Performance optimizations
+- Persistent on-disk graph cache
 
 This gives you a reusable semantic foundation that can later be extended to React, TypeScript, Python, Go, and other ecosystems while keeping a consistent planner interface.
 
@@ -1868,12 +1856,13 @@ The **Routes Scanner** is pivotal for understanding the application's entry poin
 Similarly, the **Schema Scanner** moves beyond reading `db/schema.rb` to gain a deeper understanding of the database structure. While `schema.rb` provides a snapshot of the database tables, the proposal suggests that the Schema Analyzer can query the database schema directly, perhaps through ActiveRecord introspection, to gather comprehensive metadata . This allows the scanner to extract not only column names and types but also indexes and foreign key constraints . This information is then used to enrich the `ModelEntity` objects associated with each table. When combined with analysis from the Model Scanner, which parses the `has_many`, `belongs_to`, and other association macros, the Schema Analyzer helps build a complete and accurate **Active Record model graph** . This graph connects models to their database tables and columns, and shows how they relate to one another through associations. This structured knowledge is immensely powerful; instead of guessing a model's attributes, the planner can query for them directly. The `deep_model_extraction` tool in RailsInsight exemplifies this capability, retrieving detailed model information including associations, validations, and scopes [[6]], while the `get_schema` tool in `rails-ai-context` provides a similar ground-truth view of the database structure [[12]].
 
 The **Model Scanner** is arguably the most complex and critical scanner in the suite. Its task is to parse all files in the `app/models` directory (and potentially other autoloading paths) to build a detailed registry of all models. For each model, it extracts a vast amount of semantic information, which populates the `ModelEntity` interface . This includes:
-*   **Columns:** Extracted either from the schema or by parsing the model's `column` declarations.
-*   **Scopes:** Identifying class methods that return ActiveRecord relation objects, such as `published` or `active`.
-*   **Callbacks:** Finding methods defined with `before_save`, `after_create`, etc., and recording their execution order and logic [[13]].
-*   **Validations:** Discovering `validate` and `validates_*` macros to understand the business rules governing the model's data.
-*   **Associations:** Parsing `belongs_to`, `has_many`, `has_one`, `has_and_belongs_to_many`, and more complex variants like `has_many :through` [[6]].
-This scanner likely relies on an AST parser, such as `tree-sitter` or the Prism parser used by `rails-ai-context`, to accurately identify these Ruby metaprogramming constructs [[7,12]]. The output of this scanner is a richly annotated graph of models and their relationships, forming the backbone of the application's domain logic understanding.
+
+- **Columns:** Extracted either from the schema or by parsing the model's `column` declarations.
+- **Scopes:** Identifying class methods that return ActiveRecord relation objects, such as `published` or `active`.
+- **Callbacks:** Finding methods defined with `before_save`, `after_create`, etc., and recording their execution order and logic [[13]].
+- **Validations:** Discovering `validate` and `validates_*` macros to understand the business rules governing the model's data.
+- **Associations:** Parsing `belongs_to`, `has_many`, `has_one`, `has_and_belongs_to_many`, and more complex variants like `has_many :through` [[6]].
+  This scanner likely relies on an AST parser, such as `tree-sitter` or the Prism parser used by `rails-ai-context`, to accurately identify these Ruby metaprogramming constructs [[7,12]]. The output of this scanner is a richly annotated graph of models and their relationships, forming the backbone of the application's domain logic understanding.
 
 Complementing the Model Scanner are a host of other specialized scanners, each contributing a unique piece of the puzzle. The **Controller Scanner** would parse files in `app/controllers` to build `ControllerEntity` objects, documenting their `actions`, `before_actions`, and `rescue_handlers` . The **Service Scanner** would identify classes in directories like `app/services` and attempt to determine their public methods and dependencies, building a `ServiceEntity` and potentially linking it to the controllers or models that use it . The **Job Scanner** would analyze files in `app/jobs` or `lib/tasks` to understand background jobs, including their queue names, retry settings, and arguments . The **Mailer Scanner** would do the same for email-sending logic in `app/mailers` . The **Policy Scanner** would look for authorization policies, typically in `app/policies`, to understand the application's permission structure . Even scanners for `Concerns`, `Initializers`, and `Engines` are included, recognizing that these are integral parts of a typical Rails application's architecture .
 
@@ -1925,14 +1914,14 @@ The most direct conceptual parallel is **RailsInsight**, an open-source tool tha
 
 Finally, the **`rails-ai-context` gem** provides the most direct and exhaustive checklist of the kind of semantic information a Rails-aware agent needs to know [[12]]. With its 38+ read-only tools covering everything from schema introspection (`get_schema`, `get_model_details`) and controller/route analysis (`get_controllers`, `get_routes`) to testing (`get_test_info`) and application configuration (`get_config`), it serves as a definitive specification for the query engine's API [[12]]. The concepts of "ground truth" (via `[VERIFIED]` tags) and "pattern inference" (via `[INFERRED]` tags) are particularly insightful, acknowledging that some knowledge must be inferred from conventions rather than being 100% certain [[12]]. The gem's enforcement of strict rules for the AI client, such as verifying facts before writing and checking inheritance chains, provides a model for the logical rigor that the Planner component should enforce [[12]]. The `rails-ai-context` gem is less of a general-purpose index and more of a specific, pragmatic framework for building agents that query a live Rails application, but its toolset is an invaluable resource for designing the RSI's query API.
 
-| Feature / Component | Proposed Rails Semantic Index | RailsInsight | Roam | SocratiCode | rails-ai-context |
-|---|---|---|---|---|---|
-| **Primary Philosophy** | Proactive, structured intelligence layer for AI agents  | Convention-over-configuration to map Rails architecture [[6]] | Local-first graph facts to reduce agent context [[7]] | Hybrid search and polyglot indexing [[8]] | Ground-truth API for live Rails apps [[12]] |
-| **Core Representation** | Entity Graph with typed relationships  | Relationship graph of entities [[6]] | Queryable code graph in SQLite DB [[7]] | Hybrid search index (vectors + BM25) [[8]] | Not applicable; exposes live app introspection |
-| **Key Differentiator** | Prescriptive 15-phase implementation plan  | Blast Radius analysis tool [[6]] | Task Compiler for context injection [[7]] | Cross-project search, AST-aware chunking [[8]] | 38+ read-only MCP tools for ground truth [[12]] |
-| **Storage Backend** | Implied graph database  | Information not available in provided sources | SQLite [[7]] | Qdrant (vector DB) & Ollama [[8]] | Not applicable; queries live app |
-| **Incremental Update** | Event-driven, incremental graph updates  | Information not available in provided sources | File mtime/hash-based re-indexing [[7]] | File watcher with batched, resumable indexing [[8]] | Not applicable; queries live app |
-| **Interoperability** | Generic Semantic Index Framework roadmap  | MCP server with 17 tools [[6]] | MCP server with 243 tools [[7]] | MCP server [[8]] | MCP server [[12]] |
+| Feature / Component     | Proposed Rails Semantic Index                          | RailsInsight                                                  | Roam                                                  | SocratiCode                                         | rails-ai-context                                |
+| ----------------------- | ------------------------------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------- |
+| **Primary Philosophy**  | Proactive, structured intelligence layer for AI agents | Convention-over-configuration to map Rails architecture [[6]] | Local-first graph facts to reduce agent context [[7]] | Hybrid search and polyglot indexing [[8]]           | Ground-truth API for live Rails apps [[12]]     |
+| **Core Representation** | Entity Graph with typed relationships                  | Relationship graph of entities [[6]]                          | Queryable code graph in SQLite DB [[7]]               | Hybrid search index (vectors + BM25) [[8]]          | Not applicable; exposes live app introspection  |
+| **Key Differentiator**  | Prescriptive 15-phase implementation plan              | Blast Radius analysis tool [[6]]                              | Task Compiler for context injection [[7]]             | Cross-project search, AST-aware chunking [[8]]      | 38+ read-only MCP tools for ground truth [[12]] |
+| **Storage Backend**     | Implied graph database                                 | Information not available in provided sources                 | SQLite [[7]]                                          | Qdrant (vector DB) & Ollama [[8]]                   | Not applicable; queries live app                |
+| **Incremental Update**  | Event-driven, incremental graph updates                | Information not available in provided sources                 | File mtime/hash-based re-indexing [[7]]               | File watcher with batched, resumable indexing [[8]] | Not applicable; queries live app                |
+| **Interoperability**    | Generic Semantic Index Framework roadmap               | MCP server with 17 tools [[6]]                                | MCP server with 243 tools [[7]]                       | MCP server [[8]]                                    | MCP server [[12]]                               |
 
 Strategically, the proposed RSI is positioned to fill a gap between the highly specialized, tool-focused approach of `rails-ai-context` and the more general-purpose, multi-language nature of SocratiCode. It shares the architectural depth of Roam and RailsInsight but adds a more prescriptive and comprehensive implementation plan. The key strategic advantage is the creation of a **generic Semantic Index Framework** (as per Phase 15) . By building the initial Rails index on a foundation of abstract interfaces, the project can evolve into a unified platform for code intelligence across multiple ecosystems. This long-term vision is what makes the project more than just another Rails tool; it aims to become a foundational component for the future of AI-powered software development. The consensus among these tools—that a local-first, graph-based, and event-driven approach is superior to naive file grepping—provides strong validation for the chosen direction. The proposed RSI can succeed by executing this well-understood pattern with exceptional fidelity and by delivering a richer, more deeply integrated toolset specifically for the nuances of the Ruby on Rails framework.
 
@@ -1957,13 +1946,13 @@ It looks like you have the complete architectural blueprint and file inventory f
 Below are the foundational implementations for **Milestone 1 & 2**, along with the code for **Milestone 5 (Persistent Cache)** and the **Tree-sitter integration** you identified in your next steps.
 
 ### 1. Core Contracts & Types
+
 This defines the strict interfaces that all scanners, the graph, and the query engine will use.
 
 ```typescript
 // src/core/types.ts
 export type EntityType =
-  | 'model' | 'controller' | 'route' | 'service'
-  | 'job' | 'mailer' | 'policy' | 'spec' | 'gem' | 'schema';
+  "model" | "controller" | "route" | "service" | "job" | "mailer" | "policy" | "spec" | "gem" | "schema";
 
 export interface Entity {
   id: string;
@@ -1982,12 +1971,12 @@ export interface Relationship {
 }
 
 export interface WorkspaceManifest {
-  type: 'rails' | 'ruby' | 'unknown';
+  type: "rails" | "ruby" | "unknown";
   rubyVersion: string;
   railsVersion: string;
   apiOnly: boolean;
   root: string;
-  testFramework: 'rspec' | 'minitest' | 'unknown';
+  testFramework: "rspec" | "minitest" | "unknown";
   autoloadPaths: string[];
 }
 
@@ -2011,11 +2000,12 @@ export interface WorkspaceEvent {
 ```
 
 ### 2. The In-Memory Graph Database
+
 This is the brain of the RSI. It uses adjacency lists and hash maps to ensure $O(1)$ lookups for entities by name, type, or file, and instant graph traversal.
 
 ```typescript
 // src/graph/KnowledgeGraph.ts
-import { Entity, Relationship, EntityType } from '../core/types.js';
+import { Entity, Relationship, EntityType } from "../core/types.js";
 
 export class KnowledgeGraph {
   private entities = new Map<string, Entity>();
@@ -2082,53 +2072,70 @@ export class KnowledgeGraph {
     this.relationships.delete(relId);
   }
 
-  getEntity(id: string): Entity | undefined { return this.entities.get(id); }
+  getEntity(id: string): Entity | undefined {
+    return this.entities.get(id);
+  }
 
   getEntitiesByType(type: EntityType): Entity[] {
-    return Array.from(this.typeIndex.get(type) || []).map(id => this.entities.get(id)!).filter(Boolean);
+    return Array.from(this.typeIndex.get(type) || [])
+      .map((id) => this.entities.get(id)!)
+      .filter(Boolean);
   }
 
   getEntitiesByFile(file: string): Entity[] {
-    return Array.from(this.fileIndex.get(file) || []).map(id => this.entities.get(id)!).filter(Boolean);
+    return Array.from(this.fileIndex.get(file) || [])
+      .map((id) => this.entities.get(id)!)
+      .filter(Boolean);
   }
 
   getEntitiesByName(name: string): Entity[] {
-    return Array.from(this.nameIndex.get(name) || []).map(id => this.entities.get(id)!).filter(Boolean);
+    return Array.from(this.nameIndex.get(name) || [])
+      .map((id) => this.entities.get(id)!)
+      .filter(Boolean);
   }
 
   getOutgoingRelationships(entityId: string): Relationship[] {
-    return Array.from(this.outgoingEdges.get(entityId) || []).map(id => this.relationships.get(id)!).filter(Boolean);
+    return Array.from(this.outgoingEdges.get(entityId) || [])
+      .map((id) => this.relationships.get(id)!)
+      .filter(Boolean);
   }
 
-  getAllEntities(): Entity[] { return Array.from(this.entities.values()); }
-  getAllRelationships(): Relationship[] { return Array.from(this.relationships.values()); }
+  getAllEntities(): Entity[] {
+    return Array.from(this.entities.values());
+  }
+  getAllRelationships(): Relationship[] {
+    return Array.from(this.relationships.values());
+  }
 
   getStats() {
     return {
       nodes: this.entities.size,
       edges: this.relationships.size,
-      types: Object.fromEntries(
-        Array.from(this.typeIndex.entries()).map(([type, ids]) => [type, ids.size])
-      ),
-      files: this.fileIndex.size
+      types: Object.fromEntries(Array.from(this.typeIndex.entries()).map(([type, ids]) => [type, ids.size])),
+      files: this.fileIndex.size,
     };
   }
 
   clear() {
-    this.entities.clear(); this.relationships.clear();
-    this.outgoingEdges.clear(); this.incomingEdges.clear();
-    this.typeIndex.clear(); this.fileIndex.clear(); this.nameIndex.clear();
+    this.entities.clear();
+    this.relationships.clear();
+    this.outgoingEdges.clear();
+    this.incomingEdges.clear();
+    this.typeIndex.clear();
+    this.fileIndex.clear();
+    this.nameIndex.clear();
   }
 }
 ```
 
 ### 3. The Semantic Query Engine
+
 This exposes the high-level tools (`findModel`, `findDependencies`) that the TUI and Context Builder will use, abstracting away the raw graph traversal.
 
 ```typescript
 // src/query/QueryEngine.ts
-import { KnowledgeGraph } from '../graph/KnowledgeGraph.js';
-import { Entity, Relationship } from '../core/types.js';
+import { KnowledgeGraph } from "../graph/KnowledgeGraph.js";
+import { Entity, Relationship } from "../core/types.js";
 
 export class QueryEngine {
   private graph: KnowledgeGraph;
@@ -2138,28 +2145,26 @@ export class QueryEngine {
   }
 
   findModel(name: string): Entity | undefined {
-    return this.graph.getEntitiesByName(name).find(e => e.type === 'model');
+    return this.graph.getEntitiesByName(name).find((e) => e.type === "model");
   }
 
   findRoute(path: string, verb?: string): Entity | undefined {
-    const routes = this.graph.getEntitiesByType('route');
-    return routes.find(r =>
-      r.metadata.path === path && (!verb || r.metadata.verb === verb)
-    );
+    const routes = this.graph.getEntitiesByType("route");
+    return routes.find((r) => r.metadata.path === path && (!verb || r.metadata.verb === verb));
   }
 
   findController(name: string): Entity | undefined {
-    return this.graph.getEntitiesByName(name).find(e => e.type === 'controller');
+    return this.graph.getEntitiesByName(name).find((e) => e.type === "controller");
   }
 
   findService(name: string): Entity | undefined {
-    return this.graph.getEntitiesByName(name).find(e => e.type === 'service');
+    return this.graph.getEntitiesByName(name).find((e) => e.type === "service");
   }
 
   // BFS traversal to find the "blast radius" or dependency chain
-  findDependencies(entityId: string, depth: number = 1): { entities: Entity[], relationships: Relationship[] } {
+  findDependencies(entityId: string, depth: number = 1): { entities: Entity[]; relationships: Relationship[] } {
     const visited = new Set<string>();
-    const queue: { id: string, currentDepth: number }[] = [{ id: entityId, currentDepth: 0 }];
+    const queue: { id: string; currentDepth: number }[] = [{ id: entityId, currentDepth: 0 }];
     const foundEntities = new Map<string, Entity>();
     const foundRelationships = new Map<string, Relationship>();
 
@@ -2182,21 +2187,22 @@ export class QueryEngine {
 
     return {
       entities: Array.from(foundEntities.values()),
-      relationships: Array.from(foundRelationships.values())
+      relationships: Array.from(foundRelationships.values()),
     };
   }
 }
 ```
 
 ### 4. Milestone 5: Persistent On-Disk Graph Cache
+
 To achieve the "sub-second restart" you mentioned, this class serializes the graph to a compressed JSON file. It checks the version to invalidate the cache if the RSI architecture changes.
 
 ```typescript
 // src/graph/PersistentGraphCache.ts
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as zlib from 'zlib';
-import { KnowledgeGraph } from './KnowledgeGraph.js';
+import * as fs from "fs/promises";
+import * as path from "path";
+import * as zlib from "zlib";
+import { KnowledgeGraph } from "./KnowledgeGraph.js";
 
 export interface CacheConfig {
   cacheDir: string;
@@ -2216,7 +2222,7 @@ export class PersistentGraphCache {
     try {
       await fs.access(this.cacheFilePath);
       const compressed = await fs.readFile(this.cacheFilePath);
-      const json = zlib.gunzipSync(compressed).toString('utf-8');
+      const json = zlib.gunzipSync(compressed).toString("utf-8");
       const data = JSON.parse(json);
 
       if (data.version !== this.version) return false; // Cache invalid
@@ -2238,7 +2244,7 @@ export class PersistentGraphCache {
       version: this.version,
       timestamp: Date.now(),
       entities: graph.getAllEntities(),
-      relationships: graph.getAllRelationships()
+      relationships: graph.getAllRelationships(),
     };
 
     const json = JSON.stringify(data);
@@ -2249,12 +2255,13 @@ export class PersistentGraphCache {
 ```
 
 ### 5. Next Step 2: Tree-sitter Integration (AST Parsing)
+
 Regex will fail on complex Ruby metaprogramming. Here is how you initialize `web-tree-sitter` to parse a Ruby file and extract `has_many` associations with 100% accuracy.
 
 ```typescript
 // src/scanners/TreeSitterHelper.ts
-import Parser from 'web-tree-sitter';
-import * as fs from 'fs/promises';
+import Parser from "web-tree-sitter";
+import * as fs from "fs/promises";
 
 let parserInstance: Parser | null = null;
 
@@ -2265,7 +2272,7 @@ export async function getTreeSitterParser(): Promise<Parser> {
   const parser = new Parser();
 
   // You must download tree-sitter-ruby.wasm and place it in your project
-  const Ruby = await Parser.Language.load('./wasm/tree-sitter-ruby.wasm');
+  const Ruby = await Parser.Language.load("./wasm/tree-sitter-ruby.wasm");
   parser.setLanguage(Ruby);
 
   parserInstance = parser;
@@ -2274,7 +2281,7 @@ export async function getTreeSitterParser(): Promise<Parser> {
 
 export async function parseRubyFile(filePath: string): Promise<Parser.Tree> {
   const parser = await getTreeSitterParser();
-  const code = await fs.readFile(filePath, 'utf-8');
+  const code = await fs.readFile(filePath, "utf-8");
   return parser.parse(code);
 }
 
@@ -2286,14 +2293,14 @@ export function extractAssociations(tree: Parser.Tree): string[] {
   function traverse() {
     const node = cursor.currentNode;
     // Look for method calls like `has_many :orders`
-    if (node.type === 'call') {
-      const methodNode = node.childForFieldName('method');
-      if (methodNode && ['has_many', 'belongs_to', 'has_one'].includes(methodNode.text)) {
-        const argsNode = node.childForFieldName('arguments');
+    if (node.type === "call") {
+      const methodNode = node.childForFieldName("method");
+      if (methodNode && ["has_many", "belongs_to", "has_one"].includes(methodNode.text)) {
+        const argsNode = node.childForFieldName("arguments");
         if (argsNode && argsNode.childCount > 0) {
           const firstArg = argsNode.children[0];
-          if (firstArg.type === 'simple_symbol' || firstArg.type === 'string') {
-            associations.push(firstArg.text.replace(/^[:'"]|['"]$/g, ''));
+          if (firstArg.type === "simple_symbol" || firstArg.type === "string") {
+            associations.push(firstArg.text.replace(/^[:'"]|['"]$/g, ""));
           }
         }
       }
@@ -2313,13 +2320,14 @@ export function extractAssociations(tree: Parser.Tree): string[] {
 ```
 
 ### How to Proceed
+
 You now have the functional skeleton for the orchestrator, the graph database, the query engine, the persistent cache, and the AST parser.
 
 To complete the 21-file inventory, which component would you like to implement next?
+
 1. **The Scanners:** I can write the full `RouteScanner`, `ModelScanner`, and `ControllerScanner` using the Tree-sitter helper above.
 2. **The Context Builder:** I can implement `RailsContextBuilder.ts` to show exactly how it queries the graph and formats the 1,100-token prompt.
 3. **The LSP Bridge:** I can write the `RubyLSPClient.ts` JSON-RPC implementation to handle Go-to-Definition and Find References.
-
 
 I'll synthesize these two design documents into a concrete TypeScript implementation for your DevAgent. This is the Rails Semantic Index (RSI) — the intelligence layer that sits between your TUI and the LLM.
 I cannot write additional files to disk, but I have the core architecture in place. Let me provide the remaining critical components — the **main orchestrator**, **package configuration**, and **integration architecture** — directly here.
@@ -2336,15 +2344,15 @@ I cannot write additional files to disk, but I have the core architecture in pla
  * Publishes events for incremental updates and TUI integration.
  */
 
-import { WorkspaceDiscovery } from './core/WorkspaceDiscovery';
-import { WorkspaceManifest, Scanner, ScanResult, Entity, Relationship, WorkspaceEvent } from './core/types';
-import { KnowledgeGraph } from './graph/KnowledgeGraph';
-import { EventBus } from './events/EventBus';
-import { QueryEngine } from './query/QueryEngine';
-import { RailsContextBuilder } from './context/RailsContextBuilder';
-import { RubyLSPClient } from './lsp/RubyLSPClient';
-import { RouteScanner } from './scanners/RouteScanner';
-import { ModelScanner } from './scanners/ModelScanner';
+import { WorkspaceDiscovery } from "./core/WorkspaceDiscovery";
+import { WorkspaceManifest, Scanner, ScanResult, Entity, Relationship, WorkspaceEvent } from "./core/types";
+import { KnowledgeGraph } from "./graph/KnowledgeGraph";
+import { EventBus } from "./events/EventBus";
+import { QueryEngine } from "./query/QueryEngine";
+import { RailsContextBuilder } from "./context/RailsContextBuilder";
+import { RubyLSPClient } from "./lsp/RubyLSPClient";
+import { RouteScanner } from "./scanners/RouteScanner";
+import { ModelScanner } from "./scanners/ModelScanner";
 
 export interface SemanticIndexOptions {
   root: string;
@@ -2390,13 +2398,13 @@ export class SemanticIndex {
     this.manifest = await discovery.discover();
 
     // Phase 2: Launch Ruby LSP (if available)
-    if (this.manifest.type === 'rails' || this.manifest.type === 'ruby') {
+    if (this.manifest.type === "rails" || this.manifest.type === "ruby") {
       this.lspClient = new RubyLSPClient();
       try {
         await this.lspClient.initialize(this.root);
-        console.log('[SemanticIndex] Ruby LSP connected');
+        console.log("[SemanticIndex] Ruby LSP connected");
       } catch (err) {
-        console.warn('[SemanticIndex] Ruby LSP unavailable, operating without LSP');
+        console.warn("[SemanticIndex] Ruby LSP unavailable, operating without LSP");
         this.lspClient = null;
       }
     }
@@ -2412,7 +2420,7 @@ export class SemanticIndex {
     this.contextBuilder = new RailsContextBuilder(this.queryEngine, this.manifest);
 
     this.initialized = true;
-    console.log('[SemanticIndex] Initialized');
+    console.log("[SemanticIndex] Initialized");
     console.log(this.graph.getStats());
   }
 
@@ -2426,7 +2434,7 @@ export class SemanticIndex {
 
   // ─── Incremental Updates ───────────────────────────────────
 
-  async handleFileChange(filePath: string, changeType: 'created' | 'modified' | 'deleted'): Promise<void> {
+  async handleFileChange(filePath: string, changeType: "created" | "modified" | "deleted"): Promise<void> {
     if (!this.initialized) return;
 
     // Remove old entities for this file
@@ -2436,8 +2444,8 @@ export class SemanticIndex {
     }
 
     // If deleted, we're done
-    if (changeType === 'deleted') {
-      await this.eventBus.emit({ type: 'FileChanged', payload: { path: filePath, changeType } });
+    if (changeType === "deleted") {
+      await this.eventBus.emit({ type: "FileChanged", payload: { path: filePath, changeType } });
       return;
     }
 
@@ -2449,7 +2457,7 @@ export class SemanticIndex {
       }
     }
 
-    await this.eventBus.emit({ type: 'FileChanged', payload: { path: filePath, changeType } });
+    await this.eventBus.emit({ type: "FileChanged", payload: { path: filePath, changeType } });
   }
 
   // ─── Public API ────────────────────────────────────────────
@@ -2459,7 +2467,7 @@ export class SemanticIndex {
   }
 
   getContextBuilder(): RailsContextBuilder {
-    if (!this.contextBuilder) throw new Error('Not initialized');
+    if (!this.contextBuilder) throw new Error("Not initialized");
     return this.contextBuilder;
   }
 
@@ -2468,7 +2476,7 @@ export class SemanticIndex {
   }
 
   getManifest(): WorkspaceManifest {
-    if (!this.manifest) throw new Error('Not initialized');
+    if (!this.manifest) throw new Error("Not initialized");
     return this.manifest;
   }
 
@@ -2493,20 +2501,22 @@ export class SemanticIndex {
     for (const entity of result.entities) {
       const eventType = this.entityTypeToEventType(entity.type);
       if (eventType) {
-        this.eventBus.emit({
-          type: eventType as any,
-          payload: { [entity.type]: entity, action: 'added' } as any,
-        }).catch(console.error);
+        this.eventBus
+          .emit({
+            type: eventType as any,
+            payload: { [entity.type]: entity, action: "added" } as any,
+          })
+          .catch(console.error);
       }
     }
   }
 
   private entityTypeToEventType(type: string): string | null {
     const map: Record<string, string> = {
-      route: 'RouteChanged',
-      model: 'ModelChanged',
-      controller: 'ControllerChanged',
-      spec: 'SpecAdded',
+      route: "RouteChanged",
+      model: "ModelChanged",
+      controller: "ControllerChanged",
+      spec: "SpecAdded",
     };
     return map[type] || null;
   }
@@ -2518,6 +2528,7 @@ export class SemanticIndex {
 ## Package Configuration
 
 **`package.json`**
+
 ```json
 {
   "name": "devagent-rails-semantic-index",
@@ -2544,6 +2555,7 @@ export class SemanticIndex {
 ```
 
 **`tsconfig.json`**
+
 ```json
 {
   "compilerOptions": {
@@ -2575,8 +2587,8 @@ Your DevAgent TUI (built with Ink, Blessed, or similar) should interface with th
 
 ```typescript
 // src/tui/SemanticIndexBridge.ts
-import { SemanticIndex } from '../SemanticIndex';
-import { EventBus } from '../events/EventBus';
+import { SemanticIndex } from "../SemanticIndex";
+import { EventBus } from "../events/EventBus";
 
 export class SemanticIndexBridge {
   private index: SemanticIndex;
@@ -2587,7 +2599,7 @@ export class SemanticIndexBridge {
       onEvent: (event) => {
         // Push to TUI event stream
         this.renderEvent(event);
-      }
+      },
     });
   }
 
@@ -2598,7 +2610,7 @@ export class SemanticIndexBridge {
     const context = await this.index.getContextBuilder().build({
       task: "Fix user creation bug",
       routePath: "/users",
-      routeVerb: "POST"
+      routeVerb: "POST",
     });
 
     // Send to LLM — ~1,100 tokens instead of 15,000
@@ -2623,24 +2635,25 @@ export class SemanticIndexBridge {
 
 ## Architecture Summary
 
-| Component | Responsibility | File |
-|-----------|-------------|------|
-| **WorkspaceDiscovery** | Detect Rails, Ruby version, gems, engines, test framework | `src/core/WorkspaceDiscovery.ts` |
-| **KnowledgeGraph** | In-memory graph DB with O(1) neighbor lookups, type/file indexes | `src/graph/KnowledgeGraph.ts` |
-| **EventBus** | Pub/sub for semantic events (RouteChanged, ModelChanged, etc.) | `src/events/EventBus.ts` |
-| **BaseScanner** | Regex-based Ruby parsing utilities, file globbing | `src/scanners/BaseScanner.ts` |
-| **RouteScanner** | Parses `config/routes.rb` → RouteEntity + `handled_by` relationships | `src/scanners/RouteScanner.ts` |
-| **ModelScanner** | Parses `app/models/*.rb` + `db/schema.rb` → ModelEntity with associations, callbacks, validations | `src/scanners/ModelScanner.ts` |
-| **QueryEngine** | High-level semantic tools: `findModel()`, `findRoute()`, `findController()`, `findService()`, `findDependencies()` | `src/query/QueryEngine.ts` |
-| **RailsContextBuilder** | Assembles ~1,100 token context from graph instead of 15,000 tokens of raw files | `src/context/RailsContextBuilder.ts` |
-| **RubyLSPClient** | JSON-RPC bridge to `ruby-lsp` for Go to Definition, Find References, Hover | `src/lsp/RubyLSPClient.ts` |
-| **SemanticIndex** | Orchestrates discovery → scanning → graph → query → context | `src/SemanticIndex.ts` |
+| Component               | Responsibility                                                                                                     | File                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| **WorkspaceDiscovery**  | Detect Rails, Ruby version, gems, engines, test framework                                                          | `src/core/WorkspaceDiscovery.ts`     |
+| **KnowledgeGraph**      | In-memory graph DB with O(1) neighbor lookups, type/file indexes                                                   | `src/graph/KnowledgeGraph.ts`        |
+| **EventBus**            | Pub/sub for semantic events (RouteChanged, ModelChanged, etc.)                                                     | `src/events/EventBus.ts`             |
+| **BaseScanner**         | Regex-based Ruby parsing utilities, file globbing                                                                  | `src/scanners/BaseScanner.ts`        |
+| **RouteScanner**        | Parses `config/routes.rb` → RouteEntity + `handled_by` relationships                                               | `src/scanners/RouteScanner.ts`       |
+| **ModelScanner**        | Parses `app/models/*.rb` + `db/schema.rb` → ModelEntity with associations, callbacks, validations                  | `src/scanners/ModelScanner.ts`       |
+| **QueryEngine**         | High-level semantic tools: `findModel()`, `findRoute()`, `findController()`, `findService()`, `findDependencies()` | `src/query/QueryEngine.ts`           |
+| **RailsContextBuilder** | Assembles ~1,100 token context from graph instead of 15,000 tokens of raw files                                    | `src/context/RailsContextBuilder.ts` |
+| **RubyLSPClient**       | JSON-RPC bridge to `ruby-lsp` for Go to Definition, Find References, Hover                                         | `src/lsp/RubyLSPClient.ts`           |
+| **SemanticIndex**       | Orchestrates discovery → scanning → graph → query → context                                                        | `src/SemanticIndex.ts`               |
 
 ---
 
 ## What You Have vs. What's Next
 
 **Implemented (Milestone 1-2):**
+
 - Workspace discovery and manifest generation
 - Graph database with adjacency lists and type indexes
 - Event bus for incremental updates
@@ -2650,6 +2663,7 @@ export class SemanticIndexBridge {
 - Ruby LSP client stub
 
 **Next Milestones:**
+
 - **Milestone 3:** `ControllerScanner`, `ServiceScanner`, `JobScanner`, `PolicyScanner`, `RSpecScanner`
 - **Milestone 4:** RuboCop integration, migration tracking, fixture/factory indexing
 - **Milestone 5:** Incremental file watching (chokidar), persistent on-disk graph cache (SQLite/JSON), performance optimization
@@ -2694,29 +2708,29 @@ All components are implemented. Here's the complete **DevAgent Rails Semantic In
 
 ## Complete File Inventory
 
-| # | File | Phase | Purpose |
-|---|------|-------|---------|
-| 1 | `src/core/types.ts` | Foundation | All interfaces: Entity, Relationship, SemanticQuery, RailsContext, WorkspaceEvent |
-| 2 | `src/core/WorkspaceDiscovery.ts` | Phase 1 | Detects Rails, Ruby version, gems, engines, test framework, Zeitwerk paths |
-| 3 | `src/graph/KnowledgeGraph.ts` | Phase 4-7 | In-memory graph DB with adjacency lists, type/file/relationship indexes, traversal engine |
-| 4 | `src/graph/PersistentGraphCache.ts` | Milestone 5 | JSON/gzip on-disk cache with version checking, stale detection, incremental save |
-| 5 | `src/events/EventBus.ts` | Phase 13 | Pub/sub for semantic events with history, filtering, and async waitFor |
-| 6 | `src/query/QueryEngine.ts` | Phase 9-11 | Semantic tools: `findModel`, `findRoute`, `findController`, `findService`, `findDependencies`, `search` |
-| 7 | `src/context/RailsContextBuilder.ts` | Phase 10 | Assembles ~1,100 token context from graph instead of 15,000 raw tokens |
-| 8 | `src/lsp/RubyLSPClient.ts` | Phase 12 | JSON-RPC bridge to `ruby-lsp`: definition, references, hover, workspace symbols |
-| 9 | `src/scanners/BaseScanner.ts` | Milestone 1 | Abstract foundation: file globbing, Ruby AST regex helpers, class/method/association extraction |
-| 10 | `src/scanners/RouteScanner.ts` | Milestone 2 | Parses `config/routes.rb` → RouteEntity + `handled_by` → Controller |
-| 11 | `src/scanners/ModelScanner.ts` | Milestone 2 | Parses `app/models/*.rb` + `db/schema.rb` → ModelEntity with associations, callbacks, validations, scopes |
-| 12 | `src/scanners/ControllerScanner.ts` | Milestone 3 | Parses `app/controllers/**/*.rb` → actions, before_actions, rescue_from, service calls, model references |
-| 13 | `src/scanners/ServiceScanner.ts` | Milestone 3 | Parses `app/services/**/*.rb` → public methods, dependencies, model calls, job enqueues, service calls |
-| 14 | `src/scanners/JobScanner.ts` | Milestone 3 | Parses `app/jobs/**/*.rb` → queue, retry, arguments, sidekiq options, model/mailer calls |
-| 15 | `src/scanners/MailerScanner.ts` | Milestone 3 | Parses `app/mailers/**/*.rb` → actions, layouts, default_from, model references |
-| 16 | `src/scanners/PolicyScanner.ts` | Milestone 3 | Parses `app/policies/**/*.rb` → permission methods, model linkage |
-| 17 | `src/scanners/RSpecScanner.ts` | Milestone 4 | Parses `spec/**/*.rb` → spec type, target entity, example count, tags, `tested_by` relationships |
-| 18 | `src/scanners/GemScanner.ts` | Milestone 2 | Parses `Gemfile.lock` → full dependency graph with transitive deps |
-| 19 | `src/scanners/SchemaScanner.ts` | Milestone 2 | Parses `db/schema.rb` + `db/migrate/*.rb` → tables, columns, indexes, foreign keys, migration history |
-| 20 | `src/SemanticIndex.ts` | Orchestrator | Main coordinator: discovery → cache → LSP → scanners → graph → query → context |
-| 21 | `src/index.ts` | Public API | Exports everything for TUI integration |
+| #   | File                                 | Phase        | Purpose                                                                                                   |
+| --- | ------------------------------------ | ------------ | --------------------------------------------------------------------------------------------------------- |
+| 1   | `src/core/types.ts`                  | Foundation   | All interfaces: Entity, Relationship, SemanticQuery, RailsContext, WorkspaceEvent                         |
+| 2   | `src/core/WorkspaceDiscovery.ts`     | Phase 1      | Detects Rails, Ruby version, gems, engines, test framework, Zeitwerk paths                                |
+| 3   | `src/graph/KnowledgeGraph.ts`        | Phase 4-7    | In-memory graph DB with adjacency lists, type/file/relationship indexes, traversal engine                 |
+| 4   | `src/graph/PersistentGraphCache.ts`  | Milestone 5  | JSON/gzip on-disk cache with version checking, stale detection, incremental save                          |
+| 5   | `src/events/EventBus.ts`             | Phase 13     | Pub/sub for semantic events with history, filtering, and async waitFor                                    |
+| 6   | `src/query/QueryEngine.ts`           | Phase 9-11   | Semantic tools: `findModel`, `findRoute`, `findController`, `findService`, `findDependencies`, `search`   |
+| 7   | `src/context/RailsContextBuilder.ts` | Phase 10     | Assembles ~1,100 token context from graph instead of 15,000 raw tokens                                    |
+| 8   | `src/lsp/RubyLSPClient.ts`           | Phase 12     | JSON-RPC bridge to `ruby-lsp`: definition, references, hover, workspace symbols                           |
+| 9   | `src/scanners/BaseScanner.ts`        | Milestone 1  | Abstract foundation: file globbing, Ruby AST regex helpers, class/method/association extraction           |
+| 10  | `src/scanners/RouteScanner.ts`       | Milestone 2  | Parses `config/routes.rb` → RouteEntity + `handled_by` → Controller                                       |
+| 11  | `src/scanners/ModelScanner.ts`       | Milestone 2  | Parses `app/models/*.rb` + `db/schema.rb` → ModelEntity with associations, callbacks, validations, scopes |
+| 12  | `src/scanners/ControllerScanner.ts`  | Milestone 3  | Parses `app/controllers/**/*.rb` → actions, before_actions, rescue_from, service calls, model references  |
+| 13  | `src/scanners/ServiceScanner.ts`     | Milestone 3  | Parses `app/services/**/*.rb` → public methods, dependencies, model calls, job enqueues, service calls    |
+| 14  | `src/scanners/JobScanner.ts`         | Milestone 3  | Parses `app/jobs/**/*.rb` → queue, retry, arguments, sidekiq options, model/mailer calls                  |
+| 15  | `src/scanners/MailerScanner.ts`      | Milestone 3  | Parses `app/mailers/**/*.rb` → actions, layouts, default_from, model references                           |
+| 16  | `src/scanners/PolicyScanner.ts`      | Milestone 3  | Parses `app/policies/**/*.rb` → permission methods, model linkage                                         |
+| 17  | `src/scanners/RSpecScanner.ts`       | Milestone 4  | Parses `spec/**/*.rb` → spec type, target entity, example count, tags, `tested_by` relationships          |
+| 18  | `src/scanners/GemScanner.ts`         | Milestone 2  | Parses `Gemfile.lock` → full dependency graph with transitive deps                                        |
+| 19  | `src/scanners/SchemaScanner.ts`      | Milestone 2  | Parses `db/schema.rb` + `db/migrate/*.rb` → tables, columns, indexes, foreign keys, migration history     |
+| 20  | `src/SemanticIndex.ts`               | Orchestrator | Main coordinator: discovery → cache → LSP → scanners → graph → query → context                            |
+| 21  | `src/index.ts`                       | Public API   | Exports everything for TUI integration                                                                    |
 
 ---
 
@@ -2754,36 +2768,36 @@ RubyLSPClient.validate() + RuboCop → Apply
 ## Usage in Your DevAgent TUI
 
 ```typescript
-import { SemanticIndex } from 'devagent-rails-semantic-index';
+import { SemanticIndex } from "devagent-rails-semantic-index";
 
 const index = new SemanticIndex({
-  root: '/path/to/algo_scalper_api',
+  root: "/path/to/algo_scalper_api",
   cacheConfig: {
-    cacheDir: '.devagent-cache',
-    format: 'json',
-    version: '1.0.0',
+    cacheDir: ".devagent-cache",
+    format: "json",
+    version: "1.0.0",
     compress: true,
   },
   onEvent: (event) => {
     // Push to your TUI event stream
     tui.updateStatus(event);
-  }
+  },
 });
 
 await index.initialize();
 
 // ─── Semantic Queries ──────────────────────────
-const userModel = index.getQueryEngine().findModel('User');
-const userRoute = index.getQueryEngine().findRoute('/users', 'POST');
-const userController = index.getQueryEngine().findController('UsersController');
-const createUserService = index.getQueryEngine().findService('CreateUser');
-const userDeps = index.getQueryEngine().findDependencies('model:User', 3);
+const userModel = index.getQueryEngine().findModel("User");
+const userRoute = index.getQueryEngine().findRoute("/users", "POST");
+const userController = index.getQueryEngine().findController("UsersController");
+const createUserService = index.getQueryEngine().findService("CreateUser");
+const userDeps = index.getQueryEngine().findDependencies("model:User", 3);
 
 // ─── Context for LLM ───────────────────────────
 const context = await index.getContextBuilder().build({
   task: "Fix user creation bug where email is not normalized",
   routePath: "/users",
-  routeVerb: "POST"
+  routeVerb: "POST",
 });
 
 const prompt = index.getContextBuilder().toPromptString(context);
@@ -2791,7 +2805,7 @@ const prompt = index.getContextBuilder().toPromptString(context);
 // callbacks, specs, related files, gem versions — no raw file reading.
 
 // ─── Incremental on file change ─────────────────
-await index.handleFileChange('app/models/user.rb', 'modified');
+await index.handleFileChange("app/models/user.rb", "modified");
 
 // ─── Stats ───────────────────────────────────────
 console.log(index.getGraphStats());
@@ -2802,16 +2816,16 @@ console.log(index.getGraphStats());
 
 ## What Makes This Different from Claude Code / Cursor
 
-| Feature | Claude Code | DevAgent RSI |
-|--------|-------------|--------------|
-| Route understanding | Reads `routes.rb` as text | `findRoute("/users")` → exact controller + action |
-| Model associations | Greps for `has_many` | Graph traversal: `User` → `has_many` → `Order` → `belongs_to` → `Account` |
-| Service discovery | File search | `findService("CreateUser")` → dependencies, methods, model calls |
-| Callback side effects | Manual reading | `findCallback("User", "after_commit")` → exact method + triggered jobs |
-| Spec coverage | File search | `findSpecsForController("UsersController")` → linked specs |
-| Context tokens | ~15,000 raw files | ~1,100 semantic summary |
-| Startup time | Scans every time | Persistent cache → sub-second restart |
-| Rails conventions | Generic text | Rails-specific semantic index |
+| Feature               | Claude Code               | DevAgent RSI                                                              |
+| --------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| Route understanding   | Reads `routes.rb` as text | `findRoute("/users")` → exact controller + action                         |
+| Model associations    | Greps for `has_many`      | Graph traversal: `User` → `has_many` → `Order` → `belongs_to` → `Account` |
+| Service discovery     | File search               | `findService("CreateUser")` → dependencies, methods, model calls          |
+| Callback side effects | Manual reading            | `findCallback("User", "after_commit")` → exact method + triggered jobs    |
+| Spec coverage         | File search               | `findSpecsForController("UsersController")` → linked specs                |
+| Context tokens        | ~15,000 raw files         | ~1,100 semantic summary                                                   |
+| Startup time          | Scans every time          | Persistent cache → sub-second restart                                     |
+| Rails conventions     | Generic text              | Rails-specific semantic index                                             |
 
 ---
 
@@ -2827,48 +2841,48 @@ console.log(index.getGraphStats());
 
 The entire codebase is in `/mnt/agents/output/devagent-rails-semantic-index/`. Ready to `npm install`, `tsc`, and wire into your TUI.
 
-
---------------------------------------------------------------------------------------------------------------------------------------------
+---
 
 Implementation Plan: Rails Semantic Index
 Location: src/intelligence/rails/
 Structure:
 src/intelligence/rails/
-├── index.ts                    # Public API, re-exports
-├── types.ts                    # Shared types, enums
-├── workspace-discovery.ts      # Phase 1: Detect Rails, Ruby, Bundler, Zeitwerk
-├── manifest.ts                 # Phase 2: WorkspaceManifest interface + builder
+├── index.ts # Public API, re-exports
+├── types.ts # Shared types, enums
+├── workspace-discovery.ts # Phase 1: Detect Rails, Ruby, Bundler, Zeitwerk
+├── manifest.ts # Phase 2: WorkspaceManifest interface + builder
 │
-├── scanners/                   # Phase 3: Domain-specific scanners
-│   ├── gem-scanner.ts          #   Gemfile.lock → gem list + versions
-│   ├── routes-scanner.ts       #   bin/rails routes → RouteEntity[]
-│   ├── schema-scanner.ts       #   db/schema.rb → table/column definitions
-│   ├── model-scanner.ts        #   app/models/ → associations, callbacks, validations, scopes
-│   ├── controller-scanner.ts   #   app/controllers/ → actions, before_actions
-│   └── ...                     #   (service, job, mailer, policy, etc. added later)
+├── scanners/ # Phase 3: Domain-specific scanners
+│ ├── gem-scanner.ts # Gemfile.lock → gem list + versions
+│ ├── routes-scanner.ts # bin/rails routes → RouteEntity[]
+│ ├── schema-scanner.ts # db/schema.rb → table/column definitions
+│ ├── model-scanner.ts # app/models/ → associations, callbacks, validations, scopes
+│ ├── controller-scanner.ts # app/controllers/ → actions, before_actions
+│ └── ... # (service, job, mailer, policy, etc. added later)
 │
-├── entities/                   # Phase 5: Entity interfaces
-│   ├── model-entity.ts         #   ModelEntity
-│   ├── controller-entity.ts    #   ControllerEntity
-│   └── route-entity.ts         #   RouteEntity
+├── entities/ # Phase 5: Entity interfaces
+│ ├── model-entity.ts # ModelEntity
+│ ├── controller-entity.ts # ControllerEntity
+│ └── route-entity.ts # RouteEntity
 │
-├── graph/                      # Phase 4/6/7: Graph database
-│   ├── graph.ts                #   Graph class (nodes + typed relationships)
-│   ├── relationship.ts         #   Relationship types enum
-│   └── graph-store.ts          #   Persistence via better-sqlite3
+├── graph/ # Phase 4/6/7: Graph database
+│ ├── graph.ts # Graph class (nodes + typed relationships)
+│ ├── relationship.ts # Relationship types enum
+│ └── graph-store.ts # Persistence via better-sqlite3
 │
-├── query-engine.ts             # Phase 9: Semantic query API
-├── context-builder.ts          # Phase 10: Rails-aware context builder
-├── event-system.ts             # Phase 13: File watcher → incremental updates
-├── storage/                    # Phase 14: Two-layer storage
-│   ├── cache.ts               #   Raw parser output cache
-│   └── semantic-graph.ts      #   Optimized queryable graph
+├── query-engine.ts # Phase 9: Semantic query API
+├── context-builder.ts # Phase 10: Rails-aware context builder
+├── event-system.ts # Phase 13: File watcher → incremental updates
+├── storage/ # Phase 14: Two-layer storage
+│ ├── cache.ts # Raw parser output cache
+│ └── semantic-graph.ts # Optimized queryable graph
 │
-├── indexer.ts                  # Top-level orchestrator: discover → build → update → query
-└── tools/                      # LLM-callable tools for planner
-    └── semantic-tools.ts       #   find_model, find_route, find_controller, etc.
+├── indexer.ts # Top-level orchestrator: discover → build → update → query
+└── tools/ # LLM-callable tools for planner
+└── semantic-tools.ts # find_model, find_route, find_controller, etc.
 Milestone 1 — Foundation (Workspace Discovery + Core Types)
 Files to create:
+
 - src/intelligence/rails/types.ts — shared enums, type aliases
 - src/intelligence/rails/workspace-discovery.ts — detect Rails, Ruby version, Rails version, Bundler, Zeitwerk, engines, monorepo
 - src/intelligence/rails/manifest.ts — WorkspaceManifest interface + builder
@@ -2877,9 +2891,9 @@ Files to create:
 - src/intelligence/rails/entities/route-entity.ts — RouteEntity (verb, path, controller, action, middleware)
 - src/intelligence/rails/graph/relationship.ts — relationship type enum (belongs_to, has_many, calls, creates, enqueues, etc.)
 - src/intelligence/rails/graph/graph.ts — in-memory graph class with typed nodes/edges, traversal queries
-What it enables: The system can identify a Rails project, generate a manifest, model entities, and build a graph structure ready for population.
-Milestone 2 — Core Rails Scanners (Gem + Routes + Schema + Model + Controller)
-Files to create:
+  What it enables: The system can identify a Rails project, generate a manifest, model entities, and build a graph structure ready for population.
+  Milestone 2 — Core Rails Scanners (Gem + Routes + Schema + Model + Controller)
+  Files to create:
 - src/intelligence/rails/scanners/gem-scanner.ts — parse Gemfile.lock, extract gems + versions + dependencies
 - src/intelligence/rails/scanners/routes-scanner.ts — shell out to bin/rails routes, parse output into RouteEntity[]
 - src/intelligence/rails/scanners/schema-scanner.ts — parse db/schema.rb using AST (tree-sitter or regex-based), extract tables, columns, indexes
@@ -2887,11 +2901,11 @@ Files to create:
 - src/intelligence/rails/scanners/controller-scanner.ts — parse controller files, extract actions, before_actions, rescue_handlers, concerns
 - src/intelligence/rails/graph/graph-store.ts — persist graph to better-sqlite3
 - src/intelligence/rails/indexer.ts — orchestrator: runs scanners, populates graph, handles errors
-Tests:
+  Tests:
 - tests/intelligence/rails/ — mirror structure, mock scanner outputs
-What it enables: The RSI knows all gems, routes, database schema, models (with associations/validations/callbacks), and controllers. The graph is populated and queryable.
-Milestone 3 — Query Engine + Planner Integration
-Files to create:
+  What it enables: The RSI knows all gems, routes, database schema, models (with associations/validations/callbacks), and controllers. The graph is populated and queryable.
+  Milestone 3 — Query Engine + Planner Integration
+  Files to create:
 - src/intelligence/rails/query-engine.ts — semantic query API:
 - findModel(name) → ModelEntity
 - findRoute(path, verb) → RouteEntity
@@ -2903,20 +2917,20 @@ Files to create:
 - src/intelligence/rails/context-builder.ts — takes user request + query engine → minimal context (~1200 tokens)
 - src/intelligence/rails/tools/semantic-tools.ts — wraps query engine as LLM-callable tools (register in tools/registry.ts)
 - Update src/intelligence/context-builder.ts to delegate Rails queries to RSI
-Integration points:
+  Integration points:
 - Wire RailsIndexer into IntelligenceRouter as a fallback/co-provider for Ruby files
 - Add RSI tools to the tool registry so the planner can call find_model("User") directly
 - Extend AgentStepRunner to use RSI context for Ruby/Rails steps
-What it enables: The planner can now issue semantic queries instead of reading files. Context for the LLM drops from ~15K tokens to ~1.2K tokens for Rails tasks.
-Milestone 4 — Incremental Updates + Event System
-Files to create:
+  What it enables: The planner can now issue semantic queries instead of reading files. Context for the LLM drops from ~15K tokens to ~1.2K tokens for Rails tasks.
+  Milestone 4 — Incremental Updates + Event System
+  Files to create:
 - src/intelligence/rails/event-system.ts — event types (RouteChanged, ModelChanged, SchemaChanged, MigrationApplied, SpecAdded, GemUpdated, ControllerChanged)
 - Integrate with EventBus (existing in src/runtime/events.ts)
 - File watcher → detect changes → re-run affected scanner → update graph incrementally
 - Wire into src/runtime/store.ts with new RSI-specific state and lsp.diagnostics-style events
-What it enables: The index stays live as the user edits files, without full rebuilds. The planner always has an up-to-date graph.
-Milestone 5 — Advanced Scanners + RuboCop + RSpec
-Files to create:
+  What it enables: The index stays live as the user edits files, without full rebuilds. The planner always has an up-to-date graph.
+  Milestone 5 — Advanced Scanners + RuboCop + RSpec
+  Files to create:
 - src/intelligence/rails/scanners/service-scanner.ts
 - src/intelligence/rails/scanners/job-scanner.ts
 - src/intelligence/rails/scanners/mailer-scanner.ts
@@ -2927,40 +2941,42 @@ Files to create:
 - src/intelligence/rails/scanners/migration-scanner.ts
 - RSpec integration: bundle exec rspec loop with failure analysis
 - RuboCop integration: rubocop --autocorrect before final apply
-Milestone 6 — Storage Optimization + Performance
+  Milestone 6 — Storage Optimization + Performance
 - src/intelligence/rails/storage/cache.ts — raw parser output cache
 - src/intelligence/rails/storage/semantic-graph.ts — optimized graph queries with persistent on-disk state
 - Performance tuning: batch scanning, debounced updates, lazy graph loading
-Files to Modify (Existing Integrations)
-File	Change
-src/intelligence/router.ts	Add RSI as a co-provider for .rb files
-src/intelligence/context-builder.ts	Delegate to RSI ContextBuilder for Rails files
-src/intelligence/provider.ts	Optionally extend LanguageIntelligenceProvider for Rails-aware operations
-src/tools/registry.ts	Register find_model, find_route, find_controller etc.
-src/orchestrator/agent-planner.ts	Optionally use RSI for step planning
-src/lsp/registry.ts	Already has Ruby LSP — no change needed
-src/runtime/events.ts	Add RSI event types
-src/runtime/store.ts	Add RSI state / handle RSI events
-package.json	better-sqlite3 already present — verify typings
-Key Design Decisions
+  Files to Modify (Existing Integrations)
+  File Change
+  src/intelligence/router.ts Add RSI as a co-provider for .rb files
+  src/intelligence/context-builder.ts Delegate to RSI ContextBuilder for Rails files
+  src/intelligence/provider.ts Optionally extend LanguageIntelligenceProvider for Rails-aware operations
+  src/tools/registry.ts Register find_model, find_route, find_controller etc.
+  src/orchestrator/agent-planner.ts Optionally use RSI for step planning
+  src/lsp/registry.ts Already has Ruby LSP — no change needed
+  src/runtime/events.ts Add RSI event types
+  src/runtime/store.ts Add RSI state / handle RSI events
+  package.json better-sqlite3 already present — verify typings
+  Key Design Decisions
+
 1. Scanner output → Graph: Each scanner returns typed entities; the indexer merges them into the graph and infers relationships (e.g., if a controller action name matches a service name, add a calls edge).
 2. LSP bridge: Ruby LSP handles language-level queries (definition, references, hover, rename). RSI handles framework-level queries (route→controller, model→callbacks, service→model). IntelligenceRouter uses the decision matrix from the document.
 3. Tool surface area: Each find_* function becomes an LLM-callable tool via tools/registry.ts, so the planner can query without file reads.
 4. Context budget: The context builder targets ≤1500 tokens for typical Rails queries (route + controller + model + associations + relevant specs).
-Does this plan align with what you had in mind? I'm ready to start with Milestone 1 (Workspace Discovery + core types) when you are.
+   Does this plan align with what you had in mind? I'm ready to start with Milestone 1 (Workspace Discovery + core types) when you are.
+
 ---
 
 # Implementation Status (2026-07-05)
 
 Implemented on branch `feat/rails-semantic-index` at `src/intelligence/rails/`. All five milestones are complete; `npm run build`, `npm test` (320 tests / 55 suites), and `npm run lint` are green.
 
-| Milestone | Status | Delivered |
-|---|---|---|
-| M1 Foundation | ✅ | `types.ts`, `scanners/ruby-source.ts` (line-based Ruby DSL parser: comment/heredoc stripping, continuation joining, class/module nesting, inflection), `workspace-discovery.ts`, `manifest.ts` (stat-only freshness hash), `graph/graph.ts` (typed entities/edges, name/type/file indexes, BFS `traverse`, `removeByFile`) |
-| M2 Core scanners + indexer | ✅ | gem (Gemfile.lock), schema (db/schema.rb), model (associations/validations/callbacks/scopes/concerns, `class_name:`/`through:`/polymorphic, `self.table_name`), controller (actions/before_actions/rescue_from/concerns), routes (static routes.rb parser: resources/resource with only/except, namespace, scope, member/collection, nested `:parent_id` params, explicit verbs, root). `indexer.ts` orchestrates: scanner isolation (one failure never kills the build), two-pass intent resolution (scanner order irrelevant; unresolved intents kept as dangling diagnostics) |
-| M3 Query + context + tools + wiring | ✅ | `query-engine.ts` (findModel/findController/findService/findRoute with `:param` matching, routesFor, findAssociations/findCallbacks/findSpecs, traceDependency, search), `context-builder.ts` (~1200-token budgeted markdown context from a task description), 9 LLM tools (`find_model`, `find_route`, `find_controller`, `find_service`, `find_spec`, `find_association`, `find_callback`, `rails_context`, `rails_index_status`) registered in `src/cli/agent.ts`; non-Rails workspaces get a disabled index whose tools return `{ enabled: false }` at zero cost |
-| M4 Remaining scanners | ✅ | service (public methods, `.call` convention, calls/enqueues/delivers intents), job (queue_as, perform args), mailer (actions, default from), policy (Pundit permissions, `authorizes`), concern (ActiveSupport::Concern macros), rspec (subject/type/example counts, `tested_by`), migration (timestamp, operations, table links) |
-| M5 Persistence + incremental + events | ✅ | `graph/graph-store.ts` (better-sqlite3 at `.devagent/rails-index.db`: nodes/edges/intents/meta, single-transaction save, load-if-fresh via manifest hash — warm starts skip scanning), `indexer.update(changedFiles)` (removeByFile → rescan → re-resolve intents → persist), agent feeds updates after file-mutating tools (`write_file`, `patch_file`, ...), `rails.index` runtime event + `RuntimeState.rails` |
+| Milestone                             | Status | Delivered                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1 Foundation                         | ✅     | `types.ts`, `scanners/ruby-source.ts` (line-based Ruby DSL parser: comment/heredoc stripping, continuation joining, class/module nesting, inflection), `workspace-discovery.ts`, `manifest.ts` (stat-only freshness hash), `graph/graph.ts` (typed entities/edges, name/type/file indexes, BFS `traverse`, `removeByFile`)                                                                                                                                                                                                                                                       |
+| M2 Core scanners + indexer            | ✅     | gem (Gemfile.lock), schema (db/schema.rb), model (associations/validations/callbacks/scopes/concerns, `class_name:`/`through:`/polymorphic, `self.table_name`), controller (actions/before_actions/rescue_from/concerns), routes (static routes.rb parser: resources/resource with only/except, namespace, scope, member/collection, nested `:parent_id` params, explicit verbs, root). `indexer.ts` orchestrates: scanner isolation (one failure never kills the build), two-pass intent resolution (scanner order irrelevant; unresolved intents kept as dangling diagnostics) |
+| M3 Query + context + tools + wiring   | ✅     | `query-engine.ts` (findModel/findController/findService/findRoute with `:param` matching, routesFor, findAssociations/findCallbacks/findSpecs, traceDependency, search), `context-builder.ts` (~1200-token budgeted markdown context from a task description), 9 LLM tools (`find_model`, `find_route`, `find_controller`, `find_service`, `find_spec`, `find_association`, `find_callback`, `rails_context`, `rails_index_status`) registered in `src/cli/agent.ts`; non-Rails workspaces get a disabled index whose tools return `{ enabled: false }` at zero cost             |
+| M4 Remaining scanners                 | ✅     | service (public methods, `.call` convention, calls/enqueues/delivers intents), job (queue_as, perform args), mailer (actions, default from), policy (Pundit permissions, `authorizes`), concern (ActiveSupport::Concern macros), rspec (subject/type/example counts, `tested_by`), migration (timestamp, operations, table links)                                                                                                                                                                                                                                                |
+| M5 Persistence + incremental + events | ✅     | `graph/graph-store.ts` (better-sqlite3 at `.devagent/rails-index.db`: nodes/edges/intents/meta, single-transaction save, load-if-fresh via manifest hash — warm starts skip scanning), `indexer.update(changedFiles)` (removeByFile → rescan → re-resolve intents → persist), agent feeds updates after file-mutating tools (`write_file`, `patch_file`, ...), `rails.index` runtime event + `RuntimeState.rails`                                                                                                                                                                |
 
 ## Design decisions vs. the original sketch
 
