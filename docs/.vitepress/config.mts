@@ -128,6 +128,16 @@ export default defineConfig({
         text: "Multi-Agent & Production",
         collapsed: true,
         items: [
+          {
+            text: "MAC v1 — ADR-0001: Three-Agent Coordination Layer",
+            link: "/adr/ADR-0001-multi-agent-coordination-layer",
+          },
+          { text: "MAC v1 — Specification", link: "/multi-agent/SPEC" },
+          { text: "MAC v1 — Roadmap (P0–P8)", link: "/multi-agent/ROADMAP" },
+          { text: "MAC v1 — Test & Evaluation Strategy", link: "/multi-agent/TEST-STRATEGY" },
+          { text: "MAC v1 — Threat Model", link: "/multi-agent/THREAT-MODEL" },
+          { text: "MAC v1 — Risk Register", link: "/multi-agent/RISK-REGISTER" },
+          { text: "MAC v1 — Ops Runbook", link: "/multi-agent/OPS-RUNBOOK" },
           { text: "Artifacts", link: "/guide/artifacts" },
           { text: "Nexum Server Architecture", link: "/guide/server" },
           { text: "Telemetry (OpenTelemetry)", link: "/guide/telemetry" },
