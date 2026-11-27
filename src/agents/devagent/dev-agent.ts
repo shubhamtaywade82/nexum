@@ -52,7 +52,21 @@ export const DEVAGENT_DESCRIPTOR: AgentDescriptor = {
   description: "Software-engineering agent: filesystem, git, tests, LSP, browser.",
   defaultCapability: "agentic",
   defaultStrategy: "react",
-  capabilities: ["coding", "filesystem", "git", "build", "code-intelligence"],
+  // MAC v1 §8.3 (SPEC): worker capability tags for capability-driven
+  // delegation — mission-declared requirements use the same vocabulary.
+  // Existing tags kept (non-breaking); code-edit/test-execution/repository/
+  // diagnostics added alongside.
+  capabilities: [
+    "coding",
+    "filesystem",
+    "git",
+    "build",
+    "code-intelligence",
+    "code-edit",
+    "test-execution",
+    "repository",
+    "diagnostics",
+  ],
   requiredTools: ["read_file", "write_file", "apply_patch", "run_shell"],
   allowedPolicies: ["parity", "standard", "restricted"],
   supportedStrategies: ["react", "plan_execute", "graph"],
