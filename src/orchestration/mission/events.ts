@@ -29,11 +29,9 @@ export type EvidenceRef =
   | `run:${string}` // recorded run id
   | `checkpoint:${string}`; // mission checkpoint id
 
-export const evidenceRefSchema = z
-  .string()
-  .refine((v) => /^(artifact|event|run|checkpoint):.+/.test(v), {
-    message: "evidence ref must be artifact:|event:|run:|checkpoint: prefixed",
-  }) as z.ZodType<EvidenceRef>;
+export const evidenceRefSchema = z.string().refine((v) => /^(artifact|event|run|checkpoint):.+/.test(v), {
+  message: "evidence ref must be artifact:|event:|run:|checkpoint: prefixed",
+}) as z.ZodType<EvidenceRef>;
 
 // ── Report refs (SPEC §5.2 — reference-passing rule) ───────────────────────
 // Agents exchange references, never full transcripts. Enough to route and
