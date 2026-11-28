@@ -137,3 +137,11 @@ export {
   type LifecycleTransitionResult,
   type MissionCancelResult,
 } from "./mission/mission-lifecycle.js";
+export {
+  reValidateDecision,
+  type DecisionCandidate,
+  type DecisionValidationContext,
+  type DecisionValidationResult,
+  type RevalidationGate,
+  type VerificationVerdictSummary,
+} from "./mission/mission-coordinator.js";
