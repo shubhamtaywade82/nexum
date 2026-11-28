@@ -232,12 +232,17 @@ export class Healer {
       await git.addDetachedWorktree(worktree, `origin/${name}`);
       if ((await git.remoteHead(name)) !== head) {
         log.warn("heal branch moved after the failure was observed; not touching it", { heal_branch: name });
-      } else if (
-        (await this.attemptFix(worktree, { run, digest, attempt, base: lineage.baseBranch })) === "committed"
-      ) {
-        await git.push(worktree, `HEAD:refs/heads/${name}`);
-        store.update(this.repo, name, { lastPushedSha: await git.headSha(worktree) });
-        log.info("pushed in-place fix", { heal_branch: name, attempt, max: config.max_heal_attempts_per_lineage });
+      } else {
+        // A fresh worktree has no untracked node_modules from the previous
+        // attempt. Re-run setup before Nexum and verification, just as healNew does.
+        await this.setup(worktree);
+        if (
+          (await this.attemptFix(worktree, { run, digest, attempt, base: lineage.baseBranch })) === "committed"
+        ) {
+          await git.push(worktree, `HEAD:refs/heads/${name}`);
+          store.update(this.repo, name, { lastPushedSha: await git.headSha(worktree) });
+          log.info("pushed in-place fix", { heal_branch: name, attempt, max: config.max_heal_attempts_per_lineage });
+        }
       }
       store.transition(this.repo, name, "PR_OPEN");
     } catch (error) {
