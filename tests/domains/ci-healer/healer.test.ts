@@ -151,6 +151,18 @@ describe("Healer end to end (real git, real rpc client, router, fake GitHub)", (
       expect(await git(["branch", "--list", AGENT_BRANCH], fx.work)).toBe("");
       expect(await readdir(join(root, "wt"))).toEqual([]);
     });
+    it("commits deterministic setup fixes without invoking the agent when verification passes", async () => {
+      const m1 = await remoteSha("main");
+      overrides = { setup_commands: ["printf 'fixed by auto-fix\\n' > fixed.txt"] };
+      mode = "crash";
+      mainFailure(m1);
+      await healer().tick();
+
+      expect(await git(["show", `${AGENT_BRANCH}:fixed.txt`], fx.origin)).toBe("fixed by auto-fix");
+      expect(await nexumInvocations()).toBe(0);
+      expect(github.created).toEqual([expect.objectContaining({ base: "main", head: AGENT_BRANCH })]);
+    });
+
 
     it("never re-invokes the agent for a failing commit it has already handled", async () => {
       mainFailure(await remoteSha("main"));
