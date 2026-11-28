@@ -280,6 +280,26 @@ export interface MissionPolicyRequest {
   overrides?: MissionPolicyOverrides;
 }
 
+/**
+ * The deployment's enabled autonomy profiles from the environment (SPEC §9
+ * "who enables"): `supervised` always; `controlled-autonomous` only behind
+ * the explicit `NEXUM_MISSION_AUTONOMY=controlled` opt-in; `research` only
+ * behind `NEXUM_MISSION_AUTONOMY=research` AND a declared isolated worktree
+ * (the caller passes `researchWorktree` — the workspace declaration is
+ * config, not ambient state). The pilot (P8) runs `supervised` by default.
+ */
+export function resolveEnabledProfiles(opts: {
+  env?: { NEXUM_MISSION_AUTONOMY?: string };
+  /** The isolated-worktree declaration required for the research profile. */
+  researchWorktree?: boolean;
+}): readonly AutonomyProfile[] {
+  const enabled: AutonomyProfile[] = ["supervised"];
+  const requested = opts.env?.NEXUM_MISSION_AUTONOMY;
+  if (requested === "controlled") enabled.push("controlled-autonomous");
+  if (requested === "research" && opts.researchWorktree === true) enabled.push("research");
+  return enabled;
+}
+
 export interface MissionPolicyResolution {
   ok: boolean;
   policy?: MissionPolicy;

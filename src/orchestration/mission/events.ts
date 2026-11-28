@@ -68,6 +68,8 @@ export const missionIntentSchema = z
     objective: z.string().min(1).max(2_000),
     constraints: z.array(z.string()).default([]),
     autonomyProfile: z.string().default("standard"),
+    /** Pilot class label (P8, SPEC §9 graduation criterion dimension). */
+    pilotClass: z.string().min(1).max(200).optional(),
   })
   .strict();
 

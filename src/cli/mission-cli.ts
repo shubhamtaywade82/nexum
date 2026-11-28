@@ -15,12 +15,27 @@
  *   audit <missionId>        Reconstruct transitions, decisions +
  *                             re-validation verdicts, and budget consumption
  *                             from events + artifacts only — no LLM (§14).
+ *   pilot                     The supervised-pilot report (P8): every mission
+ *                             reconstructed from disk (SPEC §6 rule 2), the
+ *                             SPEC §9 graduation verdict per class, and a
+ *                             go/no-go recommendation. Exit 2 = stop-the-line
+ *                             (false success / escalation finding).
+ *
+ * Autonomy gating (SPEC §9 "who enables", P8): `supervised` is the shipped
+ * default and needs no flag; `controlled-autonomous` requires the explicit
+ * NEXUM_MISSION_AUTONOMY=controlled opt-in; `research` additionally requires
+ * --worktree (isolated workspace). An explicit CLI request alone never
+ * escalates a profile.
  */
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { findWorkspaceRoot, workspaceStateDir } from "../platform/paths.js";
-import { resolveMissionPolicy, type MissionPolicy } from "../orchestration/mission/mission-policy.js";
+import {
+  resolveEnabledProfiles,
+  resolveMissionPolicy,
+  type MissionPolicy,
+} from "../orchestration/mission/mission-policy.js";
 import { MissionBudgetLedger } from "../orchestration/mission/mission-budget.js";
 import {
   MissionCoordinator,
@@ -96,7 +111,7 @@ export async function runMissionCli(argv: string[], cliOpts: MissionCliOptions =
     const goal = rest[0] && !rest[0].startsWith("--") ? rest[0] : "";
     if (!goal) {
       console.error(
-        'usage: nexum mission start "<goal>" [--autonomy profile] [--criteria a,b] [--constraint c] [--kit feature:FEATURE-001]',
+        'usage: nexum mission start "<goal>" [--autonomy profile] [--criteria a,b] [--constraint c] [--kit feature:FEATURE-001] [--class pilot-class] [--worktree path]',
       );
       return 1;
     }
@@ -118,27 +133,49 @@ export async function runMissionCli(argv: string[], cliOpts: MissionCliOptions =
     }
     const requested = (flag("autonomy") ?? "supervised") as AutonomyName;
     if (!(AUTONOMY_PROFILES as readonly string[]).includes(requested)) {
-      console.error(`refused: unknown autonomy profile "${requested}" (enabled: ${AUTONOMY_PROFILES.join(", ")})`);
+      console.error(`refused: unknown autonomy profile "${requested}" (known: ${AUTONOMY_PROFILES.join(", ")})`);
       return 1;
     }
-    // An explicit CLI request IS explicit human config (SPEC §9 "Who enables").
+    // SPEC §9 "who enables" — an explicit CLI request is NOT enough to
+    // escalate: controlled-autonomous needs NEXUM_MISSION_AUTONOMY=controlled,
+    // and research needs NEXUM_MISSION_AUTONOMY=research AND an isolated
+    // worktree declaration (--worktree). The pilot (P8) runs supervised.
+    const worktree = flag("worktree");
+    const enabledProfiles = resolveEnabledProfiles({
+      env: process.env,
+      ...(worktree !== undefined ? { researchWorktree: true } : {}),
+    });
+    if (requested === "research" && worktree === undefined) {
+      console.error(
+        "refused: the research profile requires an isolated worktree — re-run with --worktree <path> (SPEC §9)",
+      );
+      return 1;
+    }
     // A Kit binding makes the Kit workflow REQUIRED (SPEC §10.5: bound runs
     // never proceed ungated).
     const resolved = resolveMissionPolicy({
       profile: requested,
-      enabledProfiles: ["supervised", requested],
+      enabledProfiles,
       ...(kitBinding ? { overrides: { requireKitWorkflow: true } } : {}),
     });
     if (!resolved.ok || !resolved.policy) {
-      console.error(`refused: ${resolved.reason}`);
+      console.error(
+        `refused: ${resolved.reason} (enable via NEXUM_MISSION_AUTONOMY=controlled${
+          requested === "research" ? " + --worktree" : ""
+        })`,
+      );
       return 1;
     }
+    // The pilot class label (P8): bug-investigation | test-flake-diagnosis |
+    // bounded-refactor — recorded on the intent, aggregated by the pilot report.
+    const pilotClass = flag("class");
     const intent: MissionIntent = {
       goal,
       successCriteria: (flag("criteria") ?? "").split(",").filter(Boolean),
       constraints: (flag("constraint") ?? "").split(",").filter(Boolean),
       submittedBy: "user",
       ...(kitBinding ? { kitBinding } : {}),
+      ...(pilotClass !== undefined ? { pilotClass } : {}),
     };
     // Mount the adapter ONLY for a bound run (SPEC §10.5). An unavailable
     // Kit is surfaced here, never silently ignored — the mission will abort
@@ -283,6 +320,19 @@ export async function runMissionCli(argv: string[], cliOpts: MissionCliOptions =
     return 0;
   }
 
-  console.error(`unknown subcommand "${String(sub)}" — usage: nexum mission <start|status|resume|cancel|audit>`);
+  if (sub === "pilot") {
+    // The P8 supervised-pilot report (issue #86): deterministic reconstruction
+    // from every mission's journal + checkpoint on disk (SPEC §6 rule 2), the
+    // SPEC §9 graduation verdict per class, and a go/no-go recommendation.
+    // Exit code: 2 on stop-the-line (false success / escalation finding),
+    // 1 when no class graduates yet, 0 when any class is GO.
+    const { writePilotReport } = await import("../orchestration/mission/pilot-report.js");
+    const out = writePilotReport(missionsDir);
+    console.log(out.markdown);
+    console.log(`report saved: ${out.path}`);
+    return out.report.stopTheLine ? 2 : out.report.classes.some((c) => c.goNoGo === "go") ? 0 : 1;
+  }
+
+  console.error(`unknown subcommand "${String(sub)}" — usage: nexum mission <start|status|resume|cancel|audit|pilot>`);
   return 1;
 }
