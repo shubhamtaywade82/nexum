@@ -58,6 +58,7 @@ import {
 } from "./report-artifacts.js";
 import { MissionBudgetLedger, MissionLoopGuard } from "./mission-budget.js";
 import { MissionLifecycle, type MissionCheckpoint, type MissionLifecycleState } from "./mission-lifecycle.js";
+import { KIT_JOURNAL_GATE, KitMissionVerification, type KitPort } from "./verification.js";
 import { createMissionState } from "../../runtime/mission-derive.js";
 import type { MissionPhaseId, MissionState } from "../../runtime/types.js";
 import { findWorkspaceRoot, workspaceStateDir } from "../../platform/paths.js";
@@ -455,11 +456,16 @@ export interface WorkerPort {
 
 /** Deterministic verification gates (production: gateTaskCompletion / Kit verify — P6/P7). */
 export interface VerificationPort {
-  verify(input: {
-    missionId: string;
-    goal: string;
-    taskIds: string[];
-  }): Promise<Array<{ gate: string; passed: boolean; summary: string; evidenceRefs: EvidenceRef[] }>>;
+  verify(input: { missionId: string; goal: string; taskIds: string[] }): Promise<
+    Array<{
+      gate: string;
+      passed: boolean;
+      summary: string;
+      evidenceRefs: EvidenceRef[];
+      /** Present when the verdict demands stop-the-line (T8 journal tamper). */
+      escalate?: string;
+    }>
+  >;
 }
 
 /** Approval resolution — a human in production; never the decision layer (INV-5). */
@@ -638,6 +644,13 @@ export interface MissionCoordinatorOptions {
   /** External sink (e.g. the P2 event router / TUI store); every journaled event also passes here. */
   emit?: (event: MissionEvent) => void;
   now?: () => number;
+  /**
+   * The Kit adapter port (SPEC §10.2/§10.5). Mounted only when the mission
+   * intent binds a Kit feature/fix id or the policy requires the Kit
+   * workflow — otherwise it has no effect. Production wiring passes the
+   * domains-plane `SdlcKitAdapter` (structurally assignable, sync-tested).
+   */
+  kit?: { port: KitPort };
 }
 
 interface CoordinatorRunState {
@@ -647,6 +660,8 @@ interface CoordinatorRunState {
   retriesByTask: Record<string, number>;
   childrenInFlight: number;
   childrenStarted: number;
+  /** Kit journal verification observed (required for completion when bound, SPEC §10.4). */
+  kitJournalVerified: boolean;
   lastRejection?: { reason: string; gate: string };
 }
 
@@ -664,6 +679,8 @@ export class MissionCoordinator {
   private readonly opts: MissionCoordinatorOptions;
   private cycle: CoordinatorRunState;
   private artifactSeq = 0;
+  /** Kit gates for a Kit-bound mission (mounted in the loop prelude, SPEC §10.5). */
+  private kitVerification?: KitMissionVerification;
 
   constructor(opts: MissionCoordinatorOptions, missionId = `ms_${randomUUID()}`) {
     this.missionId = missionId;
@@ -681,6 +698,7 @@ export class MissionCoordinator {
       retriesByTask: {},
       childrenInFlight: 0,
       childrenStarted: 0,
+      kitJournalVerified: false,
     };
   }
 
@@ -788,6 +806,45 @@ export class MissionCoordinator {
   // ── the loop ─────────────────────────────────────────────────────────────
 
   private async loop(intent: MissionIntent): Promise<MissionOutcome> {
+    // Kit workflow gating (SPEC §10.5 row 1): the adapter is mounted only
+    // when a Kit feature/fix id is bound or the policy requires the Kit
+    // workflow. A requireKitWorkflow mission NEVER proceeds ungated —
+    // missing binding or missing Kit aborts. A bound-but-optional mission
+    // degrades instead (the §7.1 overlay forces re-observation).
+    const kitBinding = intent.kitBinding ?? null;
+    const kitPort = this.opts.kit?.port ?? null;
+    if (this.policy.requireKitWorkflow && kitBinding === null) {
+      this.lifecycle.abort("requireKitWorkflow without a Kit feature/fix binding");
+      return this.finish(
+        "requireKitWorkflow mission has no Kit feature/fix binding — refused ungated (SPEC §10.5)",
+        "aborted",
+      );
+    }
+    if (kitBinding !== null) {
+      if (kitPort === null || !kitPort.available()) {
+        if (this.policy.requireKitWorkflow) {
+          this.lifecycle.abort("Kit CLI unavailable (external-unavailable)");
+          return this.finish(
+            "Kit CLI unavailable (external-unavailable) — requireKitWorkflow missions abort rather than proceed ungated (SPEC §10.5)",
+            "aborted",
+          );
+        }
+        // Bound but optional, and the Kit is missing: the degraded overlay
+        // forces re-observation (§7.1) — never a silent ungated proceed.
+        this.lifecycle.markDegraded();
+      } else {
+        this.kitVerification = new KitMissionVerification({
+          missionId: this.missionId,
+          port: kitPort,
+          binding: kitBinding,
+          artifactStore: this.artifactStore,
+          allocateSeq: () => {
+            this.artifactSeq += 1;
+            return this.artifactSeq;
+          },
+        });
+      }
+    }
     for (let turn = 0; turn < MAX_COORDINATION_TURNS; turn += 1) {
       const preflight = this.ledger.preflight();
       if (!preflight.ok) {
@@ -943,17 +1000,52 @@ export class MissionCoordinator {
           if (workerResult.status === "failed") {
             // failure honesty: recorded, fed back to the next decision
             this.cycle.lastRejection = { reason: `worker failed: ${workerResult.error ?? "unknown"}`, gate: "budget" };
+          } else if (this.kitVerification) {
+            // Kit phase advancement (SPEC §10.3): only the adapter-observed
+            // exit code can advance a TDD phase — the worker's claim is
+            // never evidence. The Kit's requiredAction dictates the step and
+            // the Kit itself refuses invalid transitions (no GREEN before an
+            // observed RED); a refused or misaligned step is surfaced to the
+            // next decision turn, never retried here (bounded by budgets).
+            try {
+              const advanced = await this.kitVerification.advanceRequiredPhase(
+                (this.opts.planSteps ?? []).map((s) => s.id),
+              );
+              if (!advanced.ok) {
+                this.cycle.lastRejection = { reason: `kit phase refused: ${advanced.reason}`, gate: "policy" };
+              } else if (advanced.alignment?.mismatch) {
+                this.cycle.lastRejection = {
+                  reason: `kit alignment: ${advanced.alignment.mismatch}`,
+                  gate: "policy",
+                };
+              }
+            } catch (err) {
+              this.cycle.lastRejection = {
+                reason: `kit phase advancement failed: ${err instanceof Error ? err.message : String(err)}`,
+                gate: "policy",
+              };
+            }
           }
           continue;
         }
         case "verify": {
-          const verdicts = await this.opts.verification.verify({
+          // Kit-bound missions verify through the Kit gates (SPEC §10.4);
+          // every verdict is adapter-observed evidence, journaled as events.
+          const verifier = this.kitVerification ?? this.opts.verification;
+          const verdicts = await verifier.verify({
             missionId: this.missionId,
             goal: intent.goal,
             taskIds: decision.taskIds ?? [],
           });
+          let escalation: string | null = null;
           for (const verdict of verdicts) {
             this.cycle.verificationVerdicts.push({ gate: verdict.gate, passed: verdict.passed });
+            if (verdict.gate === KIT_JOURNAL_GATE && verdict.passed) {
+              // the completion gate reads this (SPEC §10.4: journal-verify
+              // required for mission.completed on Kit-bound missions)
+              this.cycle.kitJournalVerified = true;
+            }
+            if (verdict.escalate) escalation = verdict.escalate;
             this.emit({
               type: "mission.verification",
               missionId: this.missionId,
@@ -961,6 +1053,12 @@ export class MissionCoordinator {
               payload: verdict,
               evidenceRefs: verdict.evidenceRefs,
             });
+          }
+          if (escalation !== null) {
+            // T8 stop-the-line: journal tamper — the mission aborts with a
+            // human escalation; the journal itself is the incident record.
+            this.lifecycle.abort(`verification escalation: ${escalation}`);
+            return this.finish(`mission aborted — ${escalation}`, "aborted");
           }
           continue;
         }
@@ -971,7 +1069,10 @@ export class MissionCoordinator {
           return this.finish("mission report assembled by the coordinator (not self-declared)", "completed");
         }
         case "abort": {
-          this.transition("aborted", "decision(abort) validated");
+          // An accepted commander abort: deterministic termination from any
+          // active state (the escape hatch, like fail — §7.1 table edges do
+          // not cover aborting from executing/verifying).
+          this.lifecycle.abort(decision.rationale);
           return this.finish(decision.rationale, "aborted");
         }
         case "replan": {
@@ -1070,7 +1171,7 @@ export class MissionCoordinator {
       retriesByTask: this.cycle.retriesByTask,
       childrenInFlight: this.cycle.childrenInFlight,
       childrenStarted: this.cycle.childrenStarted,
-      kitJournalVerified: false,
+      kitJournalVerified: this.cycle.kitJournalVerified,
     };
   }
 
