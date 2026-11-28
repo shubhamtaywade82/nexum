@@ -259,7 +259,7 @@ describe("Healer end to end (real git, real rpc client, router, fake GitHub)", (
       await healer().tick();
 
       const retrySetupLog = await git(["show", `${AGENT_BRANCH}:.ci-healer-setup.log`], fx.origin);
-      expect(retrySetupLog).toBe("prepared\\nprepared");
+      expect(retrySetupLog).toBe("prepared\nprepared");
       expect(await nexumInvocations()).toBe(1);
     });
 
