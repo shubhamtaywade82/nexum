@@ -236,9 +236,7 @@ export class Healer {
         // A fresh worktree has no untracked node_modules from the previous
         // attempt. Re-run setup before Nexum and verification, just as healNew does.
         await this.setup(worktree);
-        if (
-          (await this.attemptFix(worktree, { run, digest, attempt, base: lineage.baseBranch })) === "committed"
-        ) {
+        if ((await this.attemptFix(worktree, { run, digest, attempt, base: lineage.baseBranch })) === "committed") {
           await git.push(worktree, `HEAD:refs/heads/${name}`);
           store.update(this.repo, name, { lastPushedSha: await git.headSha(worktree) });
           log.info("pushed in-place fix", { heal_branch: name, attempt, max: config.max_heal_attempts_per_lineage });
