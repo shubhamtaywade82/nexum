@@ -234,6 +234,23 @@ describe("Healer end to end (real git, real rpc client, router, fake GitHub)", (
   });
 
   describe("in-place iteration on agent PRs", () => {
+    it("runs setup commands again before every in-place repair attempt", async () => {
+      overrides = { setup_commands: ["printf 'prepared\\n' >> .ci-healer-setup.log"] };
+      mainFailure(await remoteSha("main"));
+      await healer().tick();
+
+      expect(await git(["show", `${AGENT_BRANCH}:.ci-healer-setup.log`], fx.origin)).toBe("prepared");
+
+      const head = await remoteSha(AGENT_BRANCH);
+      failOnHead(head, 210);
+      await healer().tick();
+
+      expect(await git(["show", `${AGENT_BRANCH}:.ci-healer-setup.log`], fx.origin)).toBe(
+        "prepared\nprepared",
+      );
+      expect(await nexumInvocations()).toBe(2);
+    });
+
     it("spends at most max_heal_attempts_per_lineage attempts, then stops and reports EXHAUSTED", async () => {
       mainFailure(await remoteSha("main"));
       await healer().tick();
