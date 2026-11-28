@@ -31,12 +31,36 @@
  * DecisionRejection reason (wired with the coordinator loop in PR 5.3).
  */
 
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { z } from "zod";
 import { validatePlanDag } from "../dag-validator.js";
 import type { PlanStep } from "../../core/plan/plan-contracts.js";
 import type { DelegationRequest } from "../delegation/delegator.js";
 import type { CommanderAction, MissionPolicy } from "./mission-policy.js";
-import { evidenceRefSchema } from "./events.js";
+import {
+  evidenceRefSchema,
+  isMissionEvent,
+  validateMissionEvent,
+  type EvidenceRef,
+  type MissionEvent,
+  type TrackerReportRef,
+  type PredictionReportRef,
+} from "./events.js";
+import { assessComplexity } from "../complexity.js";
+import { newDelegationId } from "../../core/identity.js";
+import {
+  buildReportArtifact,
+  ReportArtifactStore,
+  type ReportArtifact,
+  type ReportArtifactKind,
+} from "./report-artifacts.js";
+import { MissionBudgetLedger, MissionLoopGuard } from "./mission-budget.js";
+import { MissionLifecycle, type MissionCheckpoint, type MissionLifecycleState } from "./mission-lifecycle.js";
+import { createMissionState } from "../../runtime/mission-derive.js";
+import type { MissionPhaseId, MissionState } from "../../runtime/types.js";
+import { findWorkspaceRoot, workspaceStateDir } from "../../platform/paths.js";
 
 // ── Mirrored decision contract (structural twin of agents/commander) ────────
 
@@ -364,4 +388,772 @@ export function reValidateDecision(
     default:
       return REJECTED("schema", decisionId, `unknown action "${String(d.action)}"`);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The coordination loop (SPEC §11.1–11.2) — PR 5.3
+//
+// Deterministic: no LLM calls inside the coordinator (§11.1) — every model
+// turn happens inside the injected role agents / worker port. The loop is
+// bounded three ways: the ledger envelope (preflight before every dispatch),
+// the decision/rejection budgets, and a hard turn bound. A role crash never
+// fails the mission silently: it suspends at a checkpoint, resumable.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Mission intent + outcome (SPEC §11.1) ────────────────────────────────────
+
+export interface MissionIntent {
+  /** `ms_` + uuid (generated when omitted). */
+  missionId?: string;
+  /** Verbatim user objective. */
+  goal: string;
+  successCriteria: string[];
+  constraints: string[];
+  autonomy?: string;
+  kitBinding?: { kind: "feature" | "fix"; id: string };
+  submittedBy: "user" | "ci" | "webhook" | "schedule";
+}
+
+export interface MissionOutcome {
+  missionId: string;
+  /** Terminal state, or null when the mission is suspended mid-flight (resumable). */
+  outcome: "completed" | "failed" | "aborted" | "cancelled" | null;
+  summary: string;
+  state: MissionLifecycleState;
+  /** True when a crash suspended the mission at a checkpoint. */
+  resumable: boolean;
+  checkpoint: MissionCheckpoint;
+}
+
+// ── Injected ports (production wiring is the P8 pilot; tests script them) ──
+
+/** The trio. Production: delegated role runs; tests: scripted fakes. */
+export interface MissionRoleAgents {
+  observe(input: { missionId: string; goal: string }): Promise<{
+    report: TrackerReportRef;
+    artifactPayload: unknown;
+  }>;
+  assess(input: { missionId: string; goal: string; trackerReport: TrackerReportRef }): Promise<{
+    report: PredictionReportRef;
+    artifactPayload: unknown;
+  }>;
+  decide(input: {
+    missionId: string;
+    goal: string;
+    trackerReport: TrackerReportRef;
+    predictionReport: PredictionReportRef;
+    /** Feedback from the previous rejected decision, if any (bounded loop). */
+    lastRejection?: { reason: string; gate: string };
+  }): Promise<DecisionCandidate>;
+}
+
+/** Worker delegation port. `review` runs before every `delegate` (Delegator semantics, §11.4). */
+export interface WorkerPort {
+  review(request: DelegationRequest): { allowed: boolean; reason: string; childAgentId?: string };
+  delegate(request: DelegationRequest): Promise<{ status: "completed" | "failed"; output?: string; error?: string }>;
+}
+
+/** Deterministic verification gates (production: gateTaskCompletion / Kit verify — P6/P7). */
+export interface VerificationPort {
+  verify(input: {
+    missionId: string;
+    goal: string;
+    taskIds: string[];
+  }): Promise<Array<{ gate: string; passed: boolean; summary: string; evidenceRefs: EvidenceRef[] }>>;
+}
+
+/** Approval resolution — a human in production; never the decision layer (INV-5). */
+export interface ApprovalPort {
+  resolve(request: { subject: string; riskClass: string; description: string }): Promise<"approved" | "denied">;
+}
+
+// ── Journal (events.jsonl under .nexum/missions/<id>/) ──────────────────────
+
+/** Append-only mission event journal: one validated MissionEvent JSON per line. */
+export class MissionJournal {
+  readonly path: string;
+  private readonly events: MissionEvent[] = [];
+
+  constructor(missionDir: string) {
+    this.path = join(missionDir, "events.jsonl");
+    mkdirSync(missionDir, { recursive: true });
+    if (existsSync(this.path)) {
+      for (const line of readFileSync(this.path, "utf8").split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed) as unknown;
+          if (isMissionEvent(parsed)) this.events.push(parsed as MissionEvent);
+        } catch {
+          // corrupt line: skipped on load; audit reports only validated events
+        }
+      }
+    }
+  }
+
+  append(event: MissionEvent): void {
+    const validation = validateMissionEvent(event);
+    if (!validation.valid) throw new Error(`refusing to journal invalid mission event: ${validation.reason}`);
+    this.events.push(event);
+    appendFileSync(this.path, `${JSON.stringify(event)}\n`);
+  }
+
+  /** Validated events, journal order. */
+  load(): MissionEvent[] {
+    return [...this.events];
+  }
+}
+
+// ── Audit reconstruction (SPEC §14 — events + artifacts only, no LLM) ────────
+
+export interface MissionAudit {
+  missionId: string;
+  objective: string;
+  outcome: MissionOutcome["outcome"];
+  /** State transitions in order (mission.phase events). */
+  transitions: Array<{ from: string; to: string; reason: string }>;
+  /** Decisions with their re-validation verdicts (accepted + rejected). */
+  decisions: Array<{
+    decisionId: string;
+    action: string;
+    kind: "accepted" | "rejected";
+    gate?: string;
+    reason?: string;
+  }>;
+  /** Budget consumption from the last checkpoint. */
+  budgetConsumed?: MissionCheckpoint["budgetConsumed"];
+  degraded: boolean;
+}
+
+/** Reconstruct the mission audit record from the journal + last checkpoint alone. */
+export function reconstructMissionAudit(journal: MissionJournal, checkpoint: MissionCheckpoint | null): MissionAudit {
+  const events = journal.load();
+  const audit: MissionAudit = {
+    missionId: checkpoint?.missionId ?? (events[0]?.missionId as string | undefined) ?? "",
+    objective: "",
+    outcome: null,
+    transitions: [],
+    decisions: [],
+    degraded: checkpoint?.degraded ?? false,
+  };
+  for (const e of events) {
+    const payload = (e as { payload?: Record<string, unknown> }).payload ?? {};
+    if (e.type === "mission.created") {
+      audit.objective = String(payload.objective ?? "");
+    } else if (e.type === "mission.phase") {
+      if (String(payload.from) !== String(payload.to)) {
+        audit.transitions.push({
+          from: String(payload.from ?? ""),
+          to: String(payload.to ?? ""),
+          reason: String(payload.reason ?? ""),
+        });
+      }
+    } else if (e.type === "commander.decision") {
+      audit.decisions.push({
+        decisionId: String(payload.decisionId ?? ""),
+        action: String(payload.kind ?? ""),
+        kind: "accepted",
+      });
+    } else if (e.type === "commander.decision.rejected") {
+      audit.decisions.push({
+        decisionId: String(payload.decisionId ?? ""),
+        action: "",
+        kind: "rejected",
+        gate: String(payload.gate ?? ""),
+        reason: String(payload.reason ?? ""),
+      });
+    } else if (
+      e.type === "mission.completed" ||
+      e.type === "mission.failed" ||
+      e.type === "mission.aborted" ||
+      e.type === "mission.cancelled"
+    ) {
+      audit.outcome = e.type.split(".")[1] as MissionAudit["outcome"];
+    }
+  }
+  if (checkpoint) audit.budgetConsumed = checkpoint.budgetConsumed;
+  return audit;
+}
+
+// ── TUI phase mapping (SPEC §11.5) ──────────────────────────────────────────
+
+/** Lifecycle state → TUI MissionPhaseId (the existing vocabulary, F-2 — no second mission vocabulary). */
+export function missionPhaseForLifecycleState(state: MissionLifecycleState): MissionPhaseId {
+  switch (state) {
+    case "created":
+    case "triaging":
+      return "understand";
+    case "observing":
+    case "assessing":
+    case "single_agent":
+      return "inspect";
+    case "planning":
+      return "plan";
+    case "executing":
+      return "execute";
+    case "verifying":
+      return "validate";
+    case "awaiting_approval":
+      return "review";
+    case "completed":
+    case "failed":
+    case "aborted":
+    case "cancelled":
+      return "complete";
+  }
+}
+
+/** Build the TUI-compatible MissionState from the lifecycle history (F-2: reuse, don't invent). */
+export function buildTuiMissionState(goal: string, states: MissionLifecycleState[]): MissionState {
+  let mission = createMissionState(goal);
+  for (const state of states) {
+    const phaseId = missionPhaseForLifecycleState(state);
+    if (mission.phases.find((p) => p.id === phaseId)?.status === "pending") {
+      mission = {
+        ...mission,
+        phases: mission.phases.map((p) => (p.id === phaseId ? { ...p, status: "running" } : p)),
+      };
+    }
+    if (state === "completed" || state === "failed" || state === "aborted" || state === "cancelled") {
+      mission = {
+        ...mission,
+        phases: mission.phases.map((p) => (p.status === "running" ? { ...p, status: "completed" } : p)),
+      };
+    }
+  }
+  return mission;
+}
+
+// ── The coordinator ─────────────────────────────────────────────────────────
+
+export interface MissionCoordinatorOptions {
+  policy: MissionPolicy;
+  roles: MissionRoleAgents;
+  workers: WorkerPort;
+  verification: VerificationPort;
+  approvals: ApprovalPort;
+  /** Directory holding <missionId>/{checkpoint.json,events.jsonl,artifacts/}; default .nexum/missions. */
+  missionsDir?: string;
+  planSteps?: PlanStep[];
+  /** External sink (e.g. the P2 event router / TUI store); every journaled event also passes here. */
+  emit?: (event: MissionEvent) => void;
+  now?: () => number;
+}
+
+interface CoordinatorRunState {
+  verificationVerdicts: Array<{ gate: string; passed: boolean }>;
+  replansUsed: number;
+  replansUsedByTask: Record<string, number>;
+  retriesByTask: Record<string, number>;
+  childrenInFlight: number;
+  childrenStarted: number;
+  lastRejection?: { reason: string; gate: string };
+}
+
+/** Hard deterministic bound on the coordination loop itself (belt beyond the budgets). */
+const MAX_COORDINATION_TURNS = 100;
+
+export class MissionCoordinator {
+  readonly missionId: string;
+  private readonly policy: MissionPolicy;
+  private readonly ledger: MissionBudgetLedger;
+  private readonly loopGuard = new MissionLoopGuard();
+  private lifecycle: MissionLifecycle;
+  private readonly journal: MissionJournal;
+  private readonly artifactStore: ReportArtifactStore;
+  private readonly opts: MissionCoordinatorOptions;
+  private cycle: CoordinatorRunState;
+  private artifactSeq = 0;
+
+  constructor(opts: MissionCoordinatorOptions, missionId = `ms_${randomUUID()}`) {
+    this.missionId = missionId;
+    this.opts = opts;
+    this.policy = opts.policy;
+    this.ledger = new MissionBudgetLedger(opts.policy, { now: opts.now });
+    const missionsDir = opts.missionsDir ?? join(workspaceStateDir(findWorkspaceRoot(process.cwd())), "missions");
+    this.lifecycle = this.newLifecycle(missionsDir);
+    this.journal = new MissionJournal(join(missionsDir, missionId));
+    this.artifactStore = new ReportArtifactStore(join(missionsDir, missionId, "artifacts"));
+    this.cycle = {
+      verificationVerdicts: [],
+      replansUsed: 0,
+      replansUsedByTask: {},
+      retriesByTask: {},
+      childrenInFlight: 0,
+      childrenStarted: 0,
+    };
+  }
+
+  private newLifecycle(missionsDir: string): MissionLifecycle {
+    return MissionLifecycle.begin({
+      missionId: this.missionId,
+      policy: this.policy,
+      ledger: this.ledger,
+      missionsDir,
+      now: this.opts.now,
+      emit: (event) => this.journal.append(event),
+    });
+  }
+
+  /**
+   * The deterministic management surface (PR 5.3 CLI): create + gate +
+   * activate. No model work happens here — `run()` drives the trio.
+   */
+  async begin(intent: MissionIntent): Promise<MissionOutcome> {
+    this.emit({
+      type: "mission.created",
+      missionId: this.missionId,
+      agentId: "coordinator",
+      payload: {
+        missionId: this.missionId,
+        objective: intent.goal,
+        constraints: intent.constraints,
+        autonomyProfile: this.policy.profile,
+      },
+    });
+    this.transition("triaging", "complexity + policy gate");
+    const gate = assessComplexity(intent.goal);
+    if (!gate.multiStep) {
+      // INV-13: below threshold and no risk signals — the trio is never
+      // instantiated; the worker continues on the ordinary interactive path.
+      this.emit({ type: "mission.single_agent_fallback", missionId: this.missionId, agentId: "coordinator" });
+      this.transition("single_agent", `complexity gate: single-step (score ${gate.score})`);
+      return this.suspendedOutcome(
+        "single-agent fallback: the trio is not instantiated; continue on the ordinary path",
+      );
+    }
+    this.emit({ type: "mission.activated", missionId: this.missionId, agentId: "coordinator" });
+    this.transition("observing", `complexity gate: multi-step (score ${gate.score})`);
+    return this.suspendedOutcome("mission activated; awaiting role turns (drive with run())");
+  }
+
+  /** The §11.2 coordination loop: observe → assess → decide → re-validate → act. */
+  async run(intent: MissionIntent, resume?: MissionCheckpoint): Promise<MissionOutcome> {
+    if (resume) {
+      const resumed = MissionLifecycle.resume(resume, {
+        missionId: this.missionId,
+        policy: this.policy,
+        ledger: this.ledger,
+        missionsDir: this.opts.missionsDir,
+        now: this.opts.now,
+        emit: (event) => this.journal.append(event),
+      });
+      if (!resumed.ok) {
+        return this.finish(`resume refused: ${resumed.reason}`, "failed");
+      }
+      // In-flight delegations of the previous incarnation are orphaned
+      // (§7.3): they are never re-run; the idempotency keys of the tool
+      // pipeline protect double execution.
+      this.lifecycle = resumed.lifecycle;
+      this.cycle.childrenInFlight = 0;
+    } else {
+      const begin = await this.begin(intent);
+      if (begin.state === "single_agent" || begin.outcome === "failed") return begin;
+    }
+    return this.loop(intent);
+  }
+
+  cancel(reason: string): MissionOutcome {
+    const result = this.lifecycle.cancel(reason);
+    if (!result.changed) {
+      // I7: a late cancel on a terminal mission is a no-op recorded as a warning
+      return this.finish(result.warning?.message ?? "late cancel no-op", this.lifecycle.state as "failed");
+    }
+    return {
+      missionId: this.missionId,
+      outcome: "cancelled",
+      summary: reason,
+      state: "cancelled",
+      resumable: false,
+      checkpoint: this.lifecycle.checkpoint(),
+    };
+  }
+
+  audit(): MissionAudit {
+    return reconstructMissionAudit(this.journal, this.lifecycle.checkpointStore.load());
+  }
+
+  journalEvents(): MissionEvent[] {
+    return this.journal.load();
+  }
+
+  /** The TUI-compatible mission view (§11.5): existing MissionState vocabulary. */
+  tuiMissionState(goal: string): MissionState {
+    return buildTuiMissionState(
+      goal,
+      this.lifecycle.record.history.map((h) => h.to),
+    );
+  }
+
+  // ── the loop ─────────────────────────────────────────────────────────────
+
+  private async loop(intent: MissionIntent): Promise<MissionOutcome> {
+    for (let turn = 0; turn < MAX_COORDINATION_TURNS; turn += 1) {
+      const preflight = this.ledger.preflight();
+      if (!preflight.ok) {
+        this.fail("budget_exhausted", preflight.exceeded);
+        return this.finish(
+          `budget_exhausted (${preflight.exceeded.map((e) => `${e.dimension} ${e.consumed}/${e.limit}`).join(", ")})`,
+          "failed",
+        );
+      }
+
+      // 1. observe (Tracker first) — every role turn is a bounded child
+      let tracker: Awaited<ReturnType<MissionRoleAgents["observe"]>>;
+      try {
+        if (!this.beginChild()) return this.budgetTerminated();
+        tracker = await this.opts.roles.observe({ missionId: this.missionId, goal: intent.goal });
+      } catch (err) {
+        return this.suspend(err);
+      }
+      if (this.lifecycle.state === "observing") this.lifecycle.clearDegradedAfterObservation();
+      this.persistArtifact("tracker-report", tracker.artifactPayload, (artifact) => {
+        this.emit({
+          type: "tracker.report",
+          missionId: this.missionId,
+          agentId: "tracker",
+          payload: tracker.report,
+          evidenceRefs: [`artifact:${artifact.artifactId}`],
+        });
+      });
+      if (tracker.report.health === "degraded") {
+        // §7.1: forces re-observation before the next decision; never
+        // unblocks by itself. The next turn observes again.
+        this.lifecycle.markDegraded();
+        continue;
+      }
+      if (this.lifecycle.state === "observing") {
+        const done = this.transitionOr("assessing", "tracker report published");
+        if (done) return done;
+      }
+
+      // 2. assess (Predictor)
+      let prediction: Awaited<ReturnType<MissionRoleAgents["assess"]>>;
+      try {
+        if (!this.beginChild()) return this.budgetTerminated();
+        prediction = await this.opts.roles.assess({
+          missionId: this.missionId,
+          goal: intent.goal,
+          trackerReport: tracker.report,
+        });
+      } catch (err) {
+        return this.suspend(err);
+      }
+      this.persistArtifact("prediction-report", prediction.artifactPayload, (artifact) => {
+        this.emit({
+          type: "prediction.report",
+          missionId: this.missionId,
+          agentId: "predictor",
+          payload: prediction.report,
+          evidenceRefs: [`artifact:${artifact.artifactId}`],
+        });
+      });
+      if (this.lifecycle.state === "assessing") {
+        const done = this.transitionOr("planning", "prediction report in");
+        if (done) return done;
+      }
+
+      // 3. decide (Commander — a proposal, never an authority)
+      let decision: DecisionCandidate;
+      try {
+        decision = await this.opts.roles.decide({
+          missionId: this.missionId,
+          goal: intent.goal,
+          trackerReport: tracker.report,
+          predictionReport: prediction.report,
+          ...(this.cycle.lastRejection ? { lastRejection: this.cycle.lastRejection } : {}),
+        });
+      } catch (err) {
+        return this.suspend(err);
+      }
+
+      // 4. loop admission (§12.2): flagged decisions cannot re-enter the loop
+      const admitted = this.loopGuard.admitDecision({
+        action: decision.action,
+        taskIds: decision.taskIds ?? [],
+        rationale: decision.rationale,
+      });
+      if (!admitted.admitted) {
+        const outcome = this.rejectDecision(decision.decisionId, admitted.reason ?? "decision loop", "policy");
+        if (outcome) return outcome;
+        continue;
+      }
+
+      // 5. re-validate (§11.4 — the authorization step)
+      const validated = reValidateDecision(decision, this.context());
+      if (!validated.ok) {
+        const outcome = this.rejectDecision(decision.decisionId, validated.reason, validated.gate);
+        if (outcome) return outcome;
+        continue;
+      }
+      this.ledger.acceptDecision();
+      this.cycle.lastRejection = undefined;
+
+      // 6. the accepted decision persists as an immutable artifact + event
+      const action = decision.action;
+      this.persistArtifact("commander-decision", decision, (artifact) => {
+        this.emit({
+          type: "commander.decision",
+          missionId: this.missionId,
+          agentId: "commander",
+          payload: { decisionId: decision.decisionId, artifactId: artifact.artifactId, kind: action },
+          evidenceRefs: [`artifact:${artifact.artifactId}`],
+        });
+      });
+
+      // 7. execute the validated action
+      switch (action) {
+        case "delegate": {
+          const request = validated.delegationRequest!;
+          const review = this.opts.workers.review(request);
+          if (!review.allowed) {
+            const outcome = this.rejectDecision(
+              decision.decisionId,
+              `delegator review refused: ${review.reason}`,
+              "budget",
+            );
+            if (outcome) return outcome;
+            continue;
+          }
+          if (!this.beginChild()) return this.budgetTerminated();
+          const delegationId = newDelegationId();
+          this.lifecycle.trackDelegation(delegationId);
+          this.transition("executing", "decision(delegate) validated");
+          this.emit({
+            type: "mission.delegation",
+            missionId: this.missionId,
+            agentId: "coordinator",
+            payload: {
+              delegateId: delegationId,
+              targetAgentId: review.childAgentId ?? "worker",
+              requiredCapabilities: request.requiredCapabilities ?? [],
+              contextHandoff: (request.contextHandoff ?? []).join("\n").slice(0, this.policy.maxContextHandoffChars),
+              evidenceRefs: [`event:${decision.decisionId}`],
+            },
+          });
+          let workerResult: Awaited<ReturnType<WorkerPort["delegate"]>>;
+          try {
+            workerResult = await this.opts.workers.delegate(request);
+          } catch (err) {
+            this.lifecycle.settleDelegation(delegationId);
+            return this.suspend(err);
+          }
+          this.lifecycle.settleDelegation(delegationId);
+          this.transition("verifying", "delegation results in");
+          if (workerResult.status === "failed") {
+            // failure honesty: recorded, fed back to the next decision
+            this.cycle.lastRejection = { reason: `worker failed: ${workerResult.error ?? "unknown"}`, gate: "budget" };
+          }
+          continue;
+        }
+        case "verify": {
+          const verdicts = await this.opts.verification.verify({
+            missionId: this.missionId,
+            goal: intent.goal,
+            taskIds: decision.taskIds ?? [],
+          });
+          for (const verdict of verdicts) {
+            this.cycle.verificationVerdicts.push({ gate: verdict.gate, passed: verdict.passed });
+            this.emit({
+              type: "mission.verification",
+              missionId: this.missionId,
+              agentId: "coordinator",
+              payload: verdict,
+              evidenceRefs: verdict.evidenceRefs,
+            });
+          }
+          continue;
+        }
+        case "complete": {
+          if (this.lifecycle.state === "verifying") {
+            this.transition("completed", "deterministic gates passed");
+          }
+          return this.finish("mission report assembled by the coordinator (not self-declared)", "completed");
+        }
+        case "abort": {
+          this.transition("aborted", "decision(abort) validated");
+          return this.finish(decision.rationale, "aborted");
+        }
+        case "replan": {
+          const replan = this.ledger.requestReplan(decision.replan?.changedNodes[0]);
+          if (!replan.ok) {
+            this.fail("replan budget exhausted", this.ledger.exceededDimensions());
+            return this.finish(replan.reason ?? "replan budget exhausted", "failed");
+          }
+          this.cycle.replansUsed += 1;
+          const cycle = this.loopGuard.admitReplan(hashPlanDag(this.opts.planSteps ?? []));
+          if (!cycle.admitted) {
+            this.fail("decision_loop", this.ledger.exceededDimensions());
+            return this.finish(cycle.reason ?? "replan cycle", "failed");
+          }
+          continue;
+        }
+        case "retry": {
+          const taskId = decision.retry?.taskId ?? "unknown";
+          this.cycle.retriesByTask[taskId] = (this.cycle.retriesByTask[taskId] ?? 0) + 1;
+          continue;
+        }
+        case "request_approval": {
+          const routing = validated.approvalRouting!;
+          const approvalId = `apr_${randomUUID()}`;
+          this.emit({
+            type: "mission.approval.requested",
+            missionId: this.missionId,
+            agentId: "coordinator",
+            payload: { approvalId, subject: routing.subject, posture: routing.riskClass, resolvedAs: "pending" },
+          });
+          this.transition("awaiting_approval", "approval-class action");
+          const resolution = await this.opts.approvals.resolve(routing);
+          this.emit({
+            type: "mission.approval.resolved",
+            missionId: this.missionId,
+            agentId: "coordinator",
+            payload: { approvalId, subject: routing.subject, posture: routing.riskClass, resolvedAs: resolution },
+          });
+          if (resolution === "approved") {
+            this.transition("executing", "approved");
+          } else {
+            this.transition("aborted", "approval denied");
+            return this.finish("approval denied", "aborted");
+          }
+          continue;
+        }
+        default:
+          return this.finish(`unhandled action ${String(action)}`, "failed");
+      }
+    }
+    this.fail("coordination loop bound exceeded", this.ledger.exceededDimensions());
+    return this.finish("coordination loop bound exceeded", "failed");
+  }
+
+  // ── internals ─────────────────────────────────────────────────────────────
+
+  /** Record one bounded delegated child (role turn or worker); false when the cap is hit. */
+  private beginChild(): boolean {
+    const child = this.ledger.recordChild();
+    if (child.ok) {
+      this.cycle.childrenStarted += 1;
+      return true;
+    }
+    return false;
+  }
+
+  private budgetTerminated(): MissionOutcome {
+    this.fail("budget_exhausted", this.ledger.exceededDimensions());
+    return this.finish("budget_exhausted", "failed");
+  }
+
+  /** Record a rejected decision; returns a terminal outcome when the rejection budget is spent. */
+  private rejectDecision(decisionId: string, reason: string, gate: RevalidationGate): MissionOutcome | null {
+    this.emit({
+      type: "commander.decision.rejected",
+      missionId: this.missionId,
+      agentId: "coordinator",
+      payload: { decisionId, reason, gate },
+    });
+    const budget = this.ledger.recordDecisionRejection();
+    this.cycle.lastRejection = { reason, gate };
+    if (!budget.ok) {
+      this.fail("decision_loop", this.ledger.exceededDimensions());
+      return this.finish(budget.reason ?? "decision-failure budget exhausted", "failed");
+    }
+    return null;
+  }
+
+  private context(): DecisionValidationContext {
+    return {
+      policy: this.policy,
+      planSteps: this.opts.planSteps ?? [],
+      verificationVerdicts: this.cycle.verificationVerdicts,
+      replansUsed: this.cycle.replansUsed,
+      replansUsedByTask: this.cycle.replansUsedByTask,
+      retriesByTask: this.cycle.retriesByTask,
+      childrenInFlight: this.cycle.childrenInFlight,
+      childrenStarted: this.cycle.childrenStarted,
+      kitJournalVerified: false,
+    };
+  }
+
+  private transition(to: MissionLifecycleState, reason: string): boolean {
+    const result = this.lifecycle.transition(to, reason);
+    if (result.ok) return true;
+    // A refused transition is a coordination failure: fail the mission
+    // rather than continuing against a desynchronized lifecycle.
+    this.fail(`transition refused: ${result.reason ?? "unknown"}`);
+    return false;
+  }
+
+  /** Apply a lifecycle transition; a terminal outcome when it fails. */
+  private transitionOr(to: MissionLifecycleState, reason: string): MissionOutcome | null {
+    const result = this.lifecycle.transition(to, reason);
+    if (result.ok) return null;
+    if (result.exceeded && result.exceeded.length > 0) {
+      // The budget gate refused the transition — deterministic exhaustion.
+      this.lifecycle.fail("budget_exhausted", result.exceeded);
+      return this.finish(
+        `budget_exhausted (${result.exceeded.map((e) => `${e.dimension} ${e.consumed}/${e.limit}`).join(", ")})`,
+        "failed",
+      );
+    }
+    this.lifecycle.fail(`transition refused: ${result.reason ?? "unknown"}`);
+    return this.finish(`transition refused: ${result.reason ?? "unknown"}`, "failed");
+  }
+
+  private fail(reason: string, exceeded?: Array<{ dimension: string; consumed: number; limit: number }>): void {
+    // The lifecycle records the failure (mission.failed event + warnings);
+    // a double-fail on a terminal lifecycle is recorded as a warning only.
+    this.lifecycle.fail(reason, exceeded);
+  }
+
+  private finish(summary: string, outcome: MissionOutcome["outcome"]): MissionOutcome {
+    return {
+      missionId: this.missionId,
+      outcome,
+      summary,
+      state: this.lifecycle.state,
+      resumable: false,
+      checkpoint: this.lifecycle.checkpoint(),
+    };
+  }
+
+  private suspendedOutcome(summary: string): MissionOutcome {
+    return {
+      missionId: this.missionId,
+      outcome: null,
+      summary,
+      state: this.lifecycle.state,
+      resumable: true,
+      checkpoint: this.lifecycle.checkpoint(),
+    };
+  }
+
+  /** A role/worker crash suspends the mission at a checkpoint — resumable, never a silent failure. */
+  private suspend(err: unknown): MissionOutcome {
+    const reason = err instanceof Error ? err.message : String(err);
+    return this.suspendedOutcome(`suspended: ${reason}`);
+  }
+
+  private emit(event: MissionEvent): void {
+    this.journal.append(event);
+    this.opts.emit?.(event);
+  }
+
+  private persistArtifact(
+    kind: ReportArtifactKind,
+    payload: unknown,
+    onStored: (artifact: ReportArtifact) => void,
+  ): void {
+    this.artifactSeq += 1;
+    const built = buildReportArtifact(kind, this.missionId, this.artifactSeq, payload);
+    if (!built.ok) return; // artifact write refused: the event is skipped, never fabricated
+    const write = this.artifactStore.write(built.artifact);
+    if (write.ok) onStored(write.artifact);
+  }
+}
+
+/** Stable hash of the live plan (replan-cycle detection, §12.2). */
+function hashPlanDag(steps: PlanStep[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(steps.map((s) => ({ id: s.id, dependencies: [...s.dependencies].sort() }))))
+    .digest("hex");
 }

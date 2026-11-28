@@ -139,9 +139,22 @@ export {
 } from "./mission/mission-lifecycle.js";
 export {
   reValidateDecision,
+  MissionCoordinator,
+  MissionJournal,
+  reconstructMissionAudit,
+  missionPhaseForLifecycleState,
+  buildTuiMissionState,
   type DecisionCandidate,
   type DecisionValidationContext,
   type DecisionValidationResult,
   type RevalidationGate,
   type VerificationVerdictSummary,
+  type MissionIntent,
+  type MissionOutcome,
+  type MissionRoleAgents,
+  type WorkerPort,
+  type VerificationPort,
+  type ApprovalPort,
+  type MissionAudit,
+  type MissionCoordinatorOptions,
 } from "./mission/mission-coordinator.js";

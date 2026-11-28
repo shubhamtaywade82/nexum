@@ -239,6 +239,8 @@ export interface LifecycleTransitionResult {
   phaseEvent?: MissionEvent;
   /** The mission.checkpoint event emitted on success. */
   checkpointEvent?: MissionEvent;
+  /** The terminal event (mission.completed/failed/aborted) when the transition is terminal. */
+  terminalEvent?: MissionEvent;
   checkpoint?: MissionCheckpoint;
 }
 
@@ -301,6 +303,28 @@ export class MissionLifecycle {
       warnings: [],
       history: [],
     });
+  }
+
+  /**
+   * Restore a lifecycle positioned at a checkpoint — the deterministic
+   * management surface (status/cancel). The coordination loop resumes via
+   * `resume` instead (fresh observation forced); `fromCheckpoint` restores
+   * the recorded state verbatim, in-flight delegations included.
+   */
+  static fromCheckpoint(checkpoint: MissionCheckpoint, opts: MissionLifecycleOptions): MissionLifecycle {
+    return new MissionLifecycle(
+      { ...opts, startSeq: checkpoint.seq },
+      {
+        state: checkpoint.state,
+        degraded: checkpoint.degraded,
+        replanCount: 0,
+        pendingDelegations: [...checkpoint.pendingDelegations],
+        ...(checkpoint.taskGraph ? { taskGraph: checkpoint.taskGraph } : {}),
+        artifacts: [...checkpoint.artifacts],
+        warnings: [],
+        history: [],
+      },
+    );
   }
 
   /**
@@ -448,6 +472,17 @@ export class MissionLifecycle {
       agentId: "coordinator",
       payload: { from, to, reason },
     });
+    // A table-driven transition into a terminal state emits the terminal
+    // event (mission.completed/failed/aborted) with the transition reason.
+    let terminalEvent: MissionEvent | undefined;
+    if (isTerminalMissionState(to) && to !== "cancelled") {
+      terminalEvent = this.emit({
+        type: `mission.${to}`,
+        missionId: this.missionId,
+        agentId: "coordinator",
+        payload: { outcome: to, summary: reason, evidenceRefs: [] },
+      });
+    }
     const checkpointEvent = this.emit({
       type: "mission.checkpoint",
       missionId: this.missionId,
@@ -456,7 +491,14 @@ export class MissionLifecycle {
     });
     // Persisted last so checkpoint.seq matches the last emitted mission event.
     const checkpoint = this.checkpoint();
-    return { ok: true, record: this.rec, phaseEvent, checkpointEvent, checkpoint };
+    return {
+      ok: true,
+      record: this.rec,
+      phaseEvent,
+      checkpointEvent,
+      ...(terminalEvent ? { terminalEvent } : {}),
+      checkpoint,
+    };
   }
 
   /**
