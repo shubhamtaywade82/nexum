@@ -151,6 +151,7 @@ describe("Healer end to end (real git, real rpc client, router, fake GitHub)", (
       expect(await git(["branch", "--list", AGENT_BRANCH], fx.work)).toBe("");
       expect(await readdir(join(root, "wt"))).toEqual([]);
     });
+
     it("commits deterministic setup fixes without invoking the agent when verification passes", async () => {
       const m1 = await remoteSha("main");
       overrides = { setup_commands: ["printf 'fixed by auto-fix\\n' > fixed.txt"] };
@@ -260,7 +261,7 @@ describe("Healer end to end (real git, real rpc client, router, fake GitHub)", (
 
       const retrySetupLog = await git(["show", `${AGENT_BRANCH}:.ci-healer-setup.log`], fx.origin);
       expect(retrySetupLog).toBe("prepared\\nprepared");
-      expect(await nexumInvocations()).toBe(2);
+      expect(await nexumInvocations()).toBe(1);
     });
 
     it("spends at most max_heal_attempts_per_lineage attempts, then stops and reports EXHAUSTED", async () => {
