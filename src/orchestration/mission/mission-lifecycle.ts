@@ -539,6 +539,41 @@ export class MissionLifecycle {
   }
 
   /**
+   * Deterministic abort (P6, SPEC §10.5 / THREAT-MODEL T8): reachable from
+   * ANY active state, bypassing the §7.1 table — exactly like `fail`, only
+   * the coordinator's deterministic arms use it (Kit unavailable on a
+   * requireKitWorkflow-bound mission, journal-tamper escalation, approval
+   * denial, and an accepted commander abort decision). Emits
+   * `mission.aborted` with the reason; a late abort on a terminal mission
+   * is a no-op recorded as a warning (I7 — terminal states are immutable).
+   */
+  abort(reason: string): LifecycleTransitionResult {
+    if (isTerminalMissionState(this.rec.state)) {
+      const warning: LifecycleWarning = {
+        kind: "terminal-transition",
+        message: `abort refused: mission is already terminal (${this.rec.state}) and immutable (I7)`,
+        at: this.now(),
+      };
+      this.rec.warnings.push(warning);
+      return { ok: false, reason: warning.message, record: this.rec };
+    }
+    const from = this.rec.state;
+    this.rec = {
+      ...this.rec,
+      state: "aborted",
+      history: [...this.rec.history, { from, to: "aborted", reason, at: this.now() }],
+    };
+    const event = this.emit({
+      type: "mission.aborted",
+      missionId: this.missionId,
+      agentId: "coordinator",
+      payload: { outcome: "aborted", summary: reason, evidenceRefs: [] },
+    });
+    const checkpoint = this.checkpoint();
+    return { ok: true, record: this.rec, phaseEvent: event, checkpoint };
+  }
+
+  /**
    * Cancellation (§7.4): reachable from any active state, mapped onto
    * `DefaultAgentRuntime.cancel(runId)` semantics by the coordinator (the
    * mission's cancellation scope reaches in-flight model calls, tool calls,

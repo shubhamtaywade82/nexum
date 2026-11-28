@@ -34,9 +34,27 @@ import {
   MissionLifecycle,
   type MissionCheckpoint,
 } from "../orchestration/mission/mission-lifecycle.js";
+import { SdlcKitAdapter, type SdlcKitCommand } from "../domains/agentic-sdlc-kit/adapter.js";
+import type { KitPort } from "../orchestration/mission/verification.js";
 
 const AUTONOMY_PROFILES = ["supervised", "controlled-autonomous", "research"] as const;
 type AutonomyName = (typeof AUTONOMY_PROFILES)[number];
+
+/**
+ * Bridge the typed adapter onto the mission plane's `KitPort` (composition
+ * root — this file may import both planes). The adapter re-validates every
+ * id and op at runtime (deny-by-default allowlist, regex before spawn), so
+ * the cross-plane handoff stays fail-closed; a mirror-sync test proves the
+ * surfaces agree behaviorally.
+ */
+function kitPortFor(adapter: SdlcKitAdapter): { port: KitPort } {
+  return {
+    port: {
+      available: () => adapter.available(),
+      execute: (command) => adapter.execute(command as SdlcKitCommand),
+    },
+  };
+}
 
 export interface MissionCliOptions {
   cwd?: string;
@@ -77,22 +95,39 @@ export async function runMissionCli(argv: string[], cliOpts: MissionCliOptions =
   if (sub === "start") {
     const goal = rest[0] && !rest[0].startsWith("--") ? rest[0] : "";
     if (!goal) {
-      console.error('usage: nexum mission start "<goal>" [--autonomy profile] [--criteria a,b] [--constraint c]');
+      console.error(
+        'usage: nexum mission start "<goal>" [--autonomy profile] [--criteria a,b] [--constraint c] [--kit feature:FEATURE-001]',
+      );
       return 1;
     }
     const flag = (name: string): string | undefined => {
       const i = rest.indexOf(`--${name}`);
       return i >= 0 ? rest[i + 1] : undefined;
     };
+    // Kit binding (SPEC §10.5): `--kit feature:<FEATURE-ID>` or `--kit fix:<BUG-ID>`
+    // — the adapter is mounted only when a run id is bound.
+    const kitFlag = flag("kit");
+    let kitBinding: NonNullable<MissionIntent["kitBinding"]> | undefined;
+    if (kitFlag !== undefined) {
+      const parsed = /^(feature|fix):([A-Z0-9][A-Z0-9-]*)$/.exec(kitFlag);
+      if (parsed === null) {
+        console.error("refused: --kit must be feature:<FEATURE-ID> or fix:<BUG-ID> (e.g. --kit feature:FEATURE-001)");
+        return 1;
+      }
+      kitBinding = { kind: parsed[1] as "feature" | "fix", id: parsed[2] };
+    }
     const requested = (flag("autonomy") ?? "supervised") as AutonomyName;
     if (!(AUTONOMY_PROFILES as readonly string[]).includes(requested)) {
       console.error(`refused: unknown autonomy profile "${requested}" (enabled: ${AUTONOMY_PROFILES.join(", ")})`);
       return 1;
     }
     // An explicit CLI request IS explicit human config (SPEC §9 "Who enables").
+    // A Kit binding makes the Kit workflow REQUIRED (SPEC §10.5: bound runs
+    // never proceed ungated).
     const resolved = resolveMissionPolicy({
       profile: requested,
       enabledProfiles: ["supervised", requested],
+      ...(kitBinding ? { overrides: { requireKitWorkflow: true } } : {}),
     });
     if (!resolved.ok || !resolved.policy) {
       console.error(`refused: ${resolved.reason}`);
@@ -103,11 +138,23 @@ export async function runMissionCli(argv: string[], cliOpts: MissionCliOptions =
       successCriteria: (flag("criteria") ?? "").split(",").filter(Boolean),
       constraints: (flag("constraint") ?? "").split(",").filter(Boolean),
       submittedBy: "user",
+      ...(kitBinding ? { kitBinding } : {}),
     };
+    // Mount the adapter ONLY for a bound run (SPEC §10.5). An unavailable
+    // Kit is surfaced here, never silently ignored — the mission will abort
+    // ungated when it is driven (requireKitWorkflow).
+    const kitAdapter = kitBinding !== undefined ? new SdlcKitAdapter({ cwd }) : null;
+    if (kitBinding !== undefined && (kitAdapter === null || !kitAdapter.available())) {
+      console.error(
+        `warning: Kit CLI unavailable (external-unavailable) — the bound run ${kitBinding.kind}:${kitBinding.id} ` +
+          `will abort rather than proceed ungated when driven (SPEC §10.5)`,
+      );
+    }
     const coordinator = new MissionCoordinator({
       policy: resolved.policy,
       ...unwiredPorts(),
       missionsDir,
+      ...(kitAdapter !== null && kitAdapter.available() ? kitPortFor(kitAdapter) : {}),
     });
     const outcome = await coordinator.begin(intent);
     console.log(`mission:   ${outcome.missionId}`);

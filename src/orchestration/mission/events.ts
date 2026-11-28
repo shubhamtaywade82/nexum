@@ -125,6 +125,8 @@ export const verificationVerdictSchema = z
     passed: z.boolean(),
     summary: z.string().min(1).max(2_000),
     evidenceRefs: z.array(evidenceRefSchema),
+    /** Stop-the-line demand (P6): present iff the verdict requires mission abort + human escalation (T8). */
+    escalate: z.string().min(1).max(2_000).optional(),
   })
   .strict();
 
