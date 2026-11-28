@@ -86,8 +86,12 @@ export interface EvalCliDeps {
 }
 
 const USAGE = `Usage: nexum eval <dataset.json> [options]
+       nexum eval --multi-agent [options]
 
 Options:
+  --multi-agent           Run the deterministic multi-agent evaluation suite
+                          (SPEC §15: no model, no network; labeled outcomes
+                          accumulate under --out/multi-agent)
   --baseline <file>      Compare against a saved report (regression gate)
   --max-regression <n>   Allowed drop per metric average vs baseline (default 0.05)
   --out <dir>            Report directory (default .nexum/evals)
@@ -104,6 +108,7 @@ export async function runEvalCli(argv: string[], deps: EvalCliDeps): Promise<num
       args: argv,
       allowPositionals: true,
       options: {
+        "multi-agent": { type: "boolean" },
         baseline: { type: "string" },
         "max-regression": { type: "string" },
         out: { type: "string" },
@@ -118,6 +123,9 @@ export async function runEvalCli(argv: string[], deps: EvalCliDeps): Promise<num
     return 2;
   }
   const { values, positionals } = parsed;
+  if (values["multi-agent"]) {
+    return runMultiAgentEvalMode({ out: values.out, log });
+  }
   if (values.help || positionals.length !== 1) {
     log(USAGE);
     return values.help ? 0 : 2;
@@ -166,6 +174,21 @@ export async function runEvalCli(argv: string[], deps: EvalCliDeps): Promise<num
     regressionPass = regression.pass;
   }
   return report.pass && regressionPass ? 0 : 1;
+}
+
+/**
+ * The deterministic multi-agent mode (SPEC §15): runs the seeded-fixture
+ * suite, records labeled outcomes (idempotently — re-runs never inflate the
+ * calibration dataset), and writes the markdown + JSON report. Exit code:
+ * 0 when every development-set case passed, 1 otherwise. Calibration metrics
+ * are reported, never gated, until their dataset exists (≥ 100 labels).
+ */
+async function runMultiAgentEvalMode(opts: { out?: string; log: (line: string) => void }): Promise<number> {
+  const { runMultiAgentEvaluation } = await import("./multi-agent/runner.js");
+  const { renderMultiAgentMarkdown } = await import("./multi-agent/report.js");
+  const result = await runMultiAgentEvaluation({ outDir: opts.out });
+  opts.log(renderMultiAgentMarkdown(result.report, result.caseResults));
+  return result.allDevelopmentCasesPassed ? 0 : 1;
 }
 
 /** Default composition: fresh CLI Agents on the configured workspace. */
