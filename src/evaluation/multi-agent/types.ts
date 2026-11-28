@@ -214,6 +214,8 @@ export interface MultiAgentCase {
   id: string;
   subject: MultiAgentSubject;
   description: string;
+  /** Docker-gated case: runs only under NEXUM_DOCKER_TESTS=1 (sandboxed shell collectors). */
+  requiresDocker?: boolean;
   /** Runs the REAL deterministic machinery against seeded inputs. */
   run(): Promise<CaseOutcome>;
 }

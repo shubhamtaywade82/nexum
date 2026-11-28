@@ -179,16 +179,23 @@ export async function runEvalCli(argv: string[], deps: EvalCliDeps): Promise<num
 /**
  * The deterministic multi-agent mode (SPEC §15): runs the seeded-fixture
  * suite, records labeled outcomes (idempotently — re-runs never inflate the
- * calibration dataset), and writes the markdown + JSON report. Exit code:
- * 0 when every development-set case passed, 1 otherwise. Calibration metrics
- * are reported, never gated, until their dataset exists (≥ 100 labels).
+ * calibration dataset), applies the SPEC §15 promotion gates, and writes the
+ * markdown + JSON report. Exit code: 0 when every gate passes (calibration
+ * metrics are report-only until their dataset exists — the ≥ 100 rule).
  */
 async function runMultiAgentEvalMode(opts: { out?: string; log: (line: string) => void }): Promise<number> {
   const { runMultiAgentEvaluation } = await import("./multi-agent/runner.js");
   const { renderMultiAgentMarkdown } = await import("./multi-agent/report.js");
+  const { evaluateGates } = await import("./multi-agent/gates.js");
   const result = await runMultiAgentEvaluation({ outDir: opts.out });
-  opts.log(renderMultiAgentMarkdown(result.report, result.caseResults));
-  return result.allDevelopmentCasesPassed ? 0 : 1;
+  const gates = evaluateGates(result.report);
+  opts.log(renderMultiAgentMarkdown(result.report, result.caseResults, gates));
+  for (const gate of gates.gates.filter((g) => g.mode === "gate" && g.pass !== true)) {
+    opts.log(
+      `GATE FAILED: ${gate.gateId} (${gate.value ?? "—"} vs ${gate.comparison} ${gate.threshold}) — ${gate.details}`,
+    );
+  }
+  return gates.pass ? 0 : 1;
 }
 
 /** Default composition: fresh CLI Agents on the configured workspace. */

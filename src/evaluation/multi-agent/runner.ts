@@ -47,6 +47,8 @@ export interface MultiAgentEvalResult {
   labelsRecorded: LabeledOutcome[];
   /** True when every development-set case passed (the PR 7.2 gate input). */
   allDevelopmentCasesPassed: boolean;
+  /** Docker-gated cases skipped this run (NEXUM_DOCKER_TESTS unset) — never failures. */
+  skippedDockerCases: string[];
 }
 
 /** Merge one case's count deltas into the running subject totals. */
@@ -85,8 +87,14 @@ async function evaluate(
   const caseResults: CaseOutcome[] = [];
   const heldOutIds: string[] = [];
   const developmentIds: string[] = [];
+  const skippedDockerCases: string[] = [];
+  const dockerEnabled = process.env.NEXUM_DOCKER_TESTS === "1";
 
   for (const testCase of cases) {
+    if (testCase.requiresDocker === true && !dockerEnabled) {
+      skippedDockerCases.push(testCase.id);
+      continue; // docker-gated: skipped without the daemon, never a failure
+    }
     const result = await testCase.run();
     caseResults.push(result);
     if (isHeldOutCase(testCase.id)) {
@@ -120,7 +128,7 @@ async function evaluate(
     generatedAt: now,
     heldOutSplitDigest: heldOutSplitDigest(cases.map((c) => c.id)),
     subjects,
-    counters: missionCounters(counts, caseResults, heldOutIds.length),
+    counters: missionCounters(counts, caseResults, heldOutIds.length, skippedDockerCases.length),
     calibration,
     totalCases: caseResults.length,
     totalPassed: caseResults.filter((r) => !heldOutIds.includes(r.caseId) && r.pass).length,
@@ -131,6 +139,7 @@ async function evaluate(
     caseResults,
     labelsRecorded: labels,
     allDevelopmentCasesPassed: developmentIds.every((id) => caseResults.find((r) => r.caseId === id)?.pass === true),
+    skippedDockerCases,
   };
 }
 
@@ -138,11 +147,17 @@ async function evaluate(
  * mission_* telemetry counters — the P8 pilot dashboard criteria read these
  * (issue #85: "false-success counter wired into the pilot dashboard criteria").
  */
-function missionCounters(counts: SubjectCounts, caseResults: CaseOutcome[], heldOut: number): Record<string, number> {
+function missionCounters(
+  counts: SubjectCounts,
+  caseResults: CaseOutcome[],
+  heldOut: number,
+  dockerSkipped: number,
+): Record<string, number> {
   return {
     mission_eval_cases_total: caseResults.length,
     mission_eval_cases_passed: caseResults.filter((r) => r.pass).length,
     mission_eval_heldout_cases: heldOut,
+    mission_eval_docker_skipped_cases: dockerSkipped,
     mission_false_success_total: counts.mission.falseSuccesses,
     mission_verified_completions_total: counts.mission.verifiedCompletions,
     mission_claims_refused_without_evidence_total: counts.mission.claimsRefusedWithoutEvidence,
