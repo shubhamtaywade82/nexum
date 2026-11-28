@@ -66,3 +66,74 @@ export type {
   Planner as OrchestratorPlanner,
   HistoryEntry,
 } from "./types.js";
+
+// Mission plane (MAC v1, SPEC §5–§7, §9, §11–§12)
+export {
+  MISSION_EVENT_TYPES,
+  missionPayloadSchemas,
+  validateMissionEvent,
+  isMissionEvent,
+  newMissionEventId,
+  type MissionEvent,
+  type MissionEventType,
+  type EvidenceRef,
+  type MissionEventValidation,
+} from "./mission/events.js";
+export { MissionEventRouter } from "./mission/event-router.js";
+export type { MissionEventRouterOptions, MissionEventDrop } from "./mission/event-router.js";
+export {
+  ReportArtifactStore,
+  buildReportArtifact,
+  hashPayload,
+  newArtifactId,
+  REPORT_ARTIFACT_SCHEMA_VERSION,
+} from "./mission/report-artifacts.js";
+export { EvidenceResolver, refFamily, refId } from "./mission/evidence-refs.js";
+export type { RefFamily, RefResolution, EvidenceResolverOptions } from "./mission/evidence-refs.js";
+export {
+  SUPERVISED_DEFAULTS,
+  CONTROLLED_AUTONOMOUS_DEFAULTS,
+  RESEARCH_DEFAULTS,
+  DEFAULT_ENABLED_PROFILES,
+  COMMANDER_ACTIONS,
+  profileDefaults,
+  resolveMissionPolicy,
+  validateMissionPolicy,
+  amendMissionPolicy,
+  type AutonomyProfile,
+  type CommanderAction,
+  type MissionBudgetEnvelope,
+  type MissionPolicy,
+  type MissionPolicyRequest,
+  type MissionPolicyResolution,
+  type MissionPolicyOverrides,
+  type PolicyAmendmentSource,
+} from "./mission/mission-policy.js";
+export {
+  MissionBudgetLedger,
+  MissionLoopGuard,
+  type BudgetSnapshot,
+  type BudgetDimensionExceeded,
+  type PreflightResult,
+  type DecisionSignature,
+  type LoopGuardVerdict,
+} from "./mission/mission-budget.js";
+export {
+  MissionLifecycle,
+  MissionCheckpointStore,
+  MISSION_LIFECYCLE_STATES,
+  TERMINAL_MISSION_STATES,
+  canTransitionMission,
+  isTerminalMissionState,
+  type MissionLifecycleState,
+  type TerminalMissionState,
+  type MissionLifecycleRecord,
+  type MissionLifecycleOptions,
+  type MissionCheckpoint,
+  type TaskGraphSnapshot,
+  type TaskGraphSnapshotNode,
+  type TaskNodeStatus,
+  type LifecycleWarning,
+  type LifecycleTransitionResult,
+  type MissionCancelResult,
+} from "./mission/mission-lifecycle.js";
