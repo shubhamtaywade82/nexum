@@ -399,6 +399,40 @@ export class Healer {
     input: { run: WorkflowRun; digest: string; attempt: number; base: string },
   ): Promise<AttemptResult> {
     const { agent, git, log, config } = this.deps;
+
+    // Prefer deterministic setup changes (formatters, linters, code generators)
+    // over an LLM repair. If they changed tracked files and those changes pass
+    // every configured verification command, commit them without invoking a model.
+    const setupChanges = await git.stageAllAndList(worktree);
+    if (setupChanges.length > 0) {
+      log.info("deterministic setup changes found; verifying before agent", { files: setupChanges.length });
+      if (setupChanges.length > config.max_changed_files) {
+        return giveUp(log, "deterministic patch too large", {
+          files: setupChanges.length,
+          cap: config.max_changed_files,
+        });
+      }
+      const forbidden = forbiddenPaths(setupChanges, config.forbidden_paths);
+      if (forbidden.length > 0) {
+        return giveUp(log, "deterministic patch touches forbidden paths", { paths: forbidden });
+      }
+      if (await this.verify(worktree)) {
+        try {
+          await git.commit(worktree, commitMessage(input.run));
+        } catch (error) {
+          if (!(error instanceof CommandError)) throw error;
+          return giveUp(log, "deterministic commit rejected by repository hooks", {
+            error: error.stderr.split("\\n")[0]?.trim(),
+          });
+        }
+        log.info("deterministic patch verified and committed", { files: setupChanges.length });
+        return "committed";
+      }
+      log.info("deterministic setup changes did not clear verification; invoking repair agent", {
+        files: setupChanges.length,
+      });
+    }
+
     const goal = buildPrompt({
       repo: this.repo,
       sourceBranch: input.base,
