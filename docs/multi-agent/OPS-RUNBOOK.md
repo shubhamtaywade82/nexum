@@ -6,13 +6,13 @@ Nexum-managed workspace.
 
 ## 1. Enabling and configuring
 
-| Setting | Default | Notes |
-| --- | --- | --- |
-| Autonomy profile | `supervised` | `NEXUM_MISSION_AUTONOMY=controlled` or config for controlled-autonomous; `research` requires worktree isolation |
-| `autoApprove` | off | unchanged from the host; keep off for missions; headless approval-less sessions fail closed |
-| Kit path | auto-detected | `NEXUM_SDLC_KIT_PATH` overrides; `NEXUM_SDLC_KIT_DISABLED=true` disables (Kit-bound missions then abort, never proceed ungated) |
-| Budgets | 30 min / 400 model calls / 1500 tool calls / 2M tokens / 8 children | override per mission via mission policy config, never above the envelope caps |
-| Token budget | `NEXUM_TOKEN_BUDGET` | global ceiling still applies |
+| Setting          | Default                                                             | Notes                                                                                                                           |
+| ---------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Autonomy profile | `supervised`                                                        | `NEXUM_MISSION_AUTONOMY=controlled` or config for controlled-autonomous; `research` requires worktree isolation                 |
+| `autoApprove`    | off                                                                 | unchanged from the host; keep off for missions; headless approval-less sessions fail closed                                     |
+| Kit path         | auto-detected                                                       | `NEXUM_SDLC_KIT_PATH` overrides; `NEXUM_SDLC_KIT_DISABLED=true` disables (Kit-bound missions then abort, never proceed ungated) |
+| Budgets          | 30 min / 400 model calls / 1500 tool calls / 2M tokens / 8 children | override per mission via mission policy config, never above the envelope caps                                                   |
+| Token budget     | `NEXUM_TOKEN_BUDGET`                                                | global ceiling still applies                                                                                                    |
 
 ## 2. Daily operation
 
@@ -29,14 +29,14 @@ Nexum-managed workspace.
 
 ## 3. Health signals and what to do
 
-| Signal | Meaning | Action |
-| --- | --- | --- |
-| Mission `degraded` | Tracker reported failing collectors | Check blockers in status; usually environment (Kit missing, permissions, CI unreachable) |
-| Mission `blocked` | Blockers with no recovery path | Read the blocker's `suggestedUnblock`; abort if environmental |
-| `awaiting_approval` long | Approval pending | Approve or let the 24 h timeout abort it — do not leave pending overnight |
+| Signal                                   | Meaning                                 | Action                                                                                                      |
+| ---------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Mission `degraded`                       | Tracker reported failing collectors     | Check blockers in status; usually environment (Kit missing, permissions, CI unreachable)                    |
+| Mission `blocked`                        | Blockers with no recovery path          | Read the blocker's `suggestedUnblock`; abort if environmental                                               |
+| `awaiting_approval` long                 | Approval pending                        | Approve or let the 24 h timeout abort it — do not leave pending overnight                                   |
 | High `commander.decision.rejected` count | Commander flailing (or injection noise) | Inspect rejections in audit; if patterned/identical, loop detection will terminate; investigate role inputs |
-| `mission_failed(budget_exhausted)` | Budget hit | Read the itemized consumption; if legitimate, re-submit with a scoped goal, not a bigger budget |
-| `mission_false_success` > 0 | **Stop-the-line** | Freeze autonomy expansion; incident review (this is the north-star safety metric) |
+| `mission_failed(budget_exhausted)`       | Budget hit                              | Read the itemized consumption; if legitimate, re-submit with a scoped goal, not a bigger budget             |
+| `mission_false_success` > 0              | **Stop-the-line**                       | Freeze autonomy expansion; incident review (this is the north-star safety metric)                           |
 
 ## 4. Resume and recovery
 
@@ -87,3 +87,27 @@ Nexum-managed workspace.
 - [ ] Approval latency (fatigue indicator) and approval outcomes
 - [ ] Cost per mission (tokens, model calls) vs. single-agent baseline
 - [ ] Autonomy graduation recommendations with evidence (SPEC §9 thresholds)
+
+## 8. The pilot report (P8)
+
+`nexum mission pilot` builds the weekly review artifact deterministically —
+every mission reconstructed from `events.jsonl` + `checkpoint.json` on disk
+alone (SPEC §6 rule 2, no LLM), aggregated by pilot class (`--class` on
+`mission start`), with the SPEC §9 graduation verdict per class:
+
+- **Exit 0** — at least one class meets all graduation criteria
+  (≥ 20 missions · verified completion ≥ 90% · zero false successes · zero
+  escalation findings): GO to expand `controlled-autonomous` for that class
+  (after enabling it via `NEXUM_MISSION_AUTONOMY=controlled`).
+- **Exit 1** — no class graduates yet: continue supervised missions; the
+  report names the unmet criteria per class.
+- **Exit 2** — stop-the-line: a false success or escalation finding is
+  present. Freeze autonomy expansion and run §6 (incident playbook); the
+  report is the first artifact of the incident record.
+
+The report is written next to the mission stores (`pilot-report.md`).
+An **escalation finding** is an approval that resolved `approved` without a
+matching request event — a resolution path that bypassed the human (INV-5).
+A **false success** is a `mission.completed` without any passing
+verification verdict — the north-star safety metric (P7 gates hard-refuse
+this; a finding here means a gate was bypassed: security incident).

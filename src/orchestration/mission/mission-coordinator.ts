@@ -413,6 +413,8 @@ export interface MissionIntent {
   autonomy?: string;
   kitBinding?: { kind: "feature" | "fix"; id: string };
   submittedBy: "user" | "ci" | "webhook" | "schedule";
+  /** Pilot class label (P8): bug-investigation | test-flake-diagnosis | bounded-refactor. */
+  pilotClass?: string;
 }
 
 export interface MissionOutcome {
@@ -727,6 +729,7 @@ export class MissionCoordinator {
         objective: intent.goal,
         constraints: intent.constraints,
         autonomyProfile: this.policy.profile,
+        ...(intent.pilotClass !== undefined ? { pilotClass: intent.pilotClass } : {}),
       },
     });
     this.transition("triaging", "complexity + policy gate");

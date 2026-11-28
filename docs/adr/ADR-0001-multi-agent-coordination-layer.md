@@ -41,8 +41,8 @@ explicitly removed.
 
 Nexum's `CHANGELOG.md` (2.0.0-alpha.5, "Removed: the unused multi-agent
 subsystem") records the removal of `src/multiagent` — a message bus, shared
-state, consensus and supervisor loop — because *no CLI command, host
-endpoint, TUI view or runtime path used it*. The restore path is preserved
+state, consensus and supervisor loop — because _no CLI command, host
+endpoint, TUI view or runtime path used it_. The restore path is preserved
 (`git checkout 01b42ab -- src/multiagent tests/multiagent`) precisely so the
 decision is reversible. Any new multi-agent work must justify why it will not
 repeat that outcome.
@@ -90,7 +90,7 @@ Nexum's existing control plane:
 6. **The Agentic SDLC Kit remains the workflow authority.** Integration goes
    through an allowlisted adapter (extending `src/tools/sdlc-tools.ts`) that
    exposes typed commands (`kit next --json`, `kit feature … start|red|green|
-   refactor|verify`, `kit journal --verify`, …). TDD phase transitions stay
+refactor|verify`, `kit journal --verify`, …). TDD phase transitions stay
    with the Kit; agents cannot declare GREEN or VERIFIED.
 7. **Autonomy is profiled and starts supervised.** Three profiles —
    `supervised` (default), `controlled-autonomous`, `research` — map onto
@@ -103,20 +103,20 @@ Nexum's existing control plane:
 
 ### Non-negotiable invariants (testable)
 
-| # | Invariant | Enforced by | Verified by |
-| --- | --- | --- | --- |
-| I1 | No unbounded autonomous loops: every mission has hard wall-clock, model-call, tool-call, token, child-count and replan limits | Mission budget envelope over `BudgetManager`; `LoopDetector`; `DelegationPolicy` caps | Invariant tests INV-1..INV-3 (`TEST-STRATEGY.md`) |
-| I2 | No self-authorized execution: a model-generated decision never bypasses `PolicyEngine`, `ApprovalManager` or `ToolGateway` | Decision re-validation in the coordinator; tool pipeline (`registry → schema → capability → policy → budget → idempotency → executor`) | INV-4..INV-6 |
-| I3 | No unverified predictions: Predictor output classifies its basis and cites evidence; insufficient evidence ⇒ abstention, not invented confidence | Contract validation (`evidenceRefs` non-empty per prediction; `basis` enum) | INV-7..INV-9 |
-| I4 | No unrestricted shared tools: the capability matrix is enforced by the runtime, not by prompts | Per-role `allowedPackIds`, execution profiles, policy postures, `DelegationPolicy.inheritPolicy` (narrow-only) | INV-10..INV-12 |
-| I5 | No unnecessary multi-agent execution: trivial requests run single-agent | `assessComplexity` + mission policy gate | INV-13..INV-14 |
+| #   | Invariant                                                                                                                                        | Enforced by                                                                                                                            | Verified by                                       |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| I1  | No unbounded autonomous loops: every mission has hard wall-clock, model-call, tool-call, token, child-count and replan limits                    | Mission budget envelope over `BudgetManager`; `LoopDetector`; `DelegationPolicy` caps                                                  | Invariant tests INV-1..INV-3 (`TEST-STRATEGY.md`) |
+| I2  | No self-authorized execution: a model-generated decision never bypasses `PolicyEngine`, `ApprovalManager` or `ToolGateway`                       | Decision re-validation in the coordinator; tool pipeline (`registry → schema → capability → policy → budget → idempotency → executor`) | INV-4..INV-6                                      |
+| I3  | No unverified predictions: Predictor output classifies its basis and cites evidence; insufficient evidence ⇒ abstention, not invented confidence | Contract validation (`evidenceRefs` non-empty per prediction; `basis` enum)                                                            | INV-7..INV-9                                      |
+| I4  | No unrestricted shared tools: the capability matrix is enforced by the runtime, not by prompts                                                   | Per-role `allowedPackIds`, execution profiles, policy postures, `DelegationPolicy.inheritPolicy` (narrow-only)                         | INV-10..INV-12                                    |
+| I5  | No unnecessary multi-agent execution: trivial requests run single-agent                                                                          | `assessComplexity` + mission policy gate                                                                                               | INV-13..INV-14                                    |
 
 Two derived invariants with the same standing:
 
-| # | Invariant | Enforced by |
-| --- | --- | --- |
-| I6 | No agent declares its own success: mission completion requires deterministic verification evidence (verification gate / Kit journal), never an agent's claim | `gateTaskCompletion` (`src/runtime/verification-gate.ts`) + Kit evidence chain |
-| I7 | Terminal mission states are immutable (late cancellation cannot rewrite a completed mission) | Lifecycle state machine, mirroring the `SubagentSession` terminal-state rule |
+| #   | Invariant                                                                                                                                                    | Enforced by                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| I6  | No agent declares its own success: mission completion requires deterministic verification evidence (verification gate / Kit journal), never an agent's claim | `gateTaskCompletion` (`src/runtime/verification-gate.ts`) + Kit evidence chain |
+| I7  | Terminal mission states are immutable (late cancellation cannot rewrite a completed mission)                                                                 | Lifecycle state machine, mirroring the `SubagentSession` terminal-state rule   |
 
 ## Rejected alternatives
 
@@ -165,3 +165,29 @@ This ADR must land with the layering rules respected:
 `tests/architecture/layering.test.ts` must be extended to assert that
 `src/orchestration/mission/**` imports no UI or domain plane, and that the
 three role modules import only runtime/core contracts.
+
+## Acceptance (P8 pilot exit)
+
+This ADR is **Proposed** until the supervised pilot (ROADMAP P8, issue #86)
+produces its evidence; it flips to **Accepted** when all of the following hold,
+linked from the pilot report (`nexum mission pilot` output):
+
+1. **Pilot evidence published** — `nexum mission pilot` over the pilot
+   missions directory: ≥ 20 supervised missions across at least three classes
+   (bug investigation, test-flake diagnosis, bounded refactor), with the Kit
+   workflow bound on at least half.
+2. **Zero successful permission escalations** across the pilot (the report's
+   escalation-finding count = 0; INV-5 held in production telemetry).
+3. **Zero false successes** across the pilot (the north-star safety metric;
+   any finding is a P0-class defect and freezes autonomy expansion).
+4. **Invariants green in production telemetry** — the P7 evaluation gates
+   (`nexum eval --multi-agent`, nightly) passing over the pilot window.
+5. **Graduation is per class, evidence-first** (SPEC §9): a class expands to
+   `controlled-autonomous` only at ≥ 20 missions, verified completion ≥ 90%,
+   zero false successes, zero escalation findings — the pilot report names
+   the unmet criteria otherwise.
+
+The pilot runs `supervised` (the shipped default); autonomy expansion
+requires the explicit `NEXUM_MISSION_AUTONOMY=controlled` opt-in, and
+`research` additionally requires an isolated worktree (SPEC §9 "who
+enables"). An explicit CLI request alone never escalates a profile.
