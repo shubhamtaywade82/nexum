@@ -164,7 +164,6 @@ describe("Healer end to end (real git, real rpc client, router, fake GitHub)", (
       expect(github.created).toEqual([expect.objectContaining({ base: "main", head: AGENT_BRANCH })]);
     });
 
-
     it("never re-invokes the agent for a failing commit it has already handled", async () => {
       mainFailure(await remoteSha("main"));
       await healer().tick();
