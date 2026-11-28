@@ -422,7 +422,7 @@ export class Healer {
         } catch (error) {
           if (!(error instanceof CommandError)) throw error;
           return giveUp(log, "deterministic commit rejected by repository hooks", {
-            error: error.stderr.split("\\n")[0]?.trim(),
+            error: error.stderr.split("\n")[0]?.trim(),
           });
         }
         log.info("deterministic patch verified and committed", { files: setupChanges.length });
