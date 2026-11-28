@@ -9,8 +9,13 @@
  */
 
 import type { CaseOutcome, MultiAgentEvalReport } from "./types.js";
+import type { GatesResult } from "./gates.js";
 
-export function renderMultiAgentMarkdown(report: MultiAgentEvalReport, caseResults: CaseOutcome[]): string {
+export function renderMultiAgentMarkdown(
+  report: MultiAgentEvalReport,
+  caseResults: CaseOutcome[],
+  gates?: GatesResult,
+): string {
   const lines: string[] = [];
   lines.push(`# Multi-agent evaluation — ${report.datasetVersion}`);
   lines.push("");
@@ -55,6 +60,23 @@ export function renderMultiAgentMarkdown(report: MultiAgentEvalReport, caseResul
     lines.push(`| ${counter} | ${value} |`);
   }
   lines.push("");
+
+  if (gates !== undefined) {
+    lines.push(
+      `## Promotion gates (SPEC §15 — ${gates.pass ? "PASS" : "FAIL"}; ${gates.evaluated} gate(s), ${gates.reported} report-only)`,
+    );
+    lines.push("");
+    lines.push("| Gate | Subject | Value | Threshold | Mode | Result |");
+    lines.push("| --- | --- | --- | --- | --- | --- |");
+    for (const gate of gates.gates) {
+      const value = gate.value === null ? "—" : formatMetric(gate.value);
+      const result = gate.mode === "report" ? "report" : gate.pass === true ? "pass" : "FAIL";
+      lines.push(
+        `| ${gate.gateId} | ${gate.subject} | ${value} | ${gate.comparison} ${formatMetric(gate.threshold)} | ${gate.mode} | ${result} |`,
+      );
+    }
+    lines.push("");
+  }
 
   lines.push("## Case audit trail");
   lines.push("");

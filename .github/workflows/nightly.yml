@@ -6,6 +6,10 @@ name: Nightly Integration
 # This nightly lane runs them for real on a schedule, plus the packed-artifact
 # smoke, so integration drift is caught within a day instead of at release
 # time. Failures page the same commit status as the main lane.
+# MAC v1 P7 (issue #85): the deterministic multi-agent evaluation suite runs
+# here as a gate — the SPEC §15 promotion thresholds as the exit criteria of
+# `nexum eval --multi-agent`, with labeled outcomes accumulating across runs
+# toward the ≥ 100 calibration dataset.
 on:
   schedule:
     # 03:15 UTC — off-peak, after the day's merges have settled.
@@ -178,3 +182,40 @@ jobs:
           tests/credentials/keychain-linux-roundtrip.test.ts --runInBand
         env:
           CI: true
+
+  multi-agent-eval:
+    # MAC v1 P7 (issue #85 PR 7.2): the deterministic multi-agent evaluation
+    # suite as a nightly gate — `nexum eval --multi-agent` applies the SPEC §15
+    # promotion thresholds (evidence coverage ≥ 98%, observation accuracy
+    # ≥ 95%, risk recall ≥ 0.80, abstention precision ≥ 0.95, 100% invalid-DAG
+    # rejection, 100% budget adherence, 0 successful escalations, 0 false
+    # successes — the hard north-star gate). Fully deterministic: no model,
+    # no network, no docker. Docker-gated eval cases (sandboxed shell
+    # collectors) run only under NEXUM_DOCKER_TESTS=1, which stays unset here.
+    name: Multi-agent evaluation gates (deterministic, Node 22.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: "npm"
+
+      - name: Install npm dependencies
+        run: npm ci --legacy-peer-deps
+        env:
+          HUSKY: "0"
+
+      - name: Run the deterministic multi-agent evaluation suite (SPEC §15 gates)
+        # Exit code = the gate verdict: any threshold regression pages the
+        # same commit status as the rest of the nightly lane. The labeled
+        # outcomes file accumulates across scheduled runs under
+        # .nexum/evals/multi-agent (idempotent per labelId — no inflation).
+        run: npm run eval -- --multi-agent --out .nexum/evals/multi-agent
+        env:
+          CI: true
+          SKIP_NETWORK_TESTS: "true"
